@@ -314,10 +314,15 @@ class ExtractorDockWidget(QDockWidget):
         self._prev_tool = canvas.mapTool()
 
         def _finish(rect: QgsRectangle | None):
+            # Only restore previous tool if it's not a drawing tool
+            from virtughan_qgis.common.aoi import AoiRectTool, AoiPolygonTool
             try:
-                canvas.setMapTool(self._prev_tool)
+                if self._prev_tool and not isinstance(self._prev_tool, (AoiRectTool, AoiPolygonTool)):
+                    canvas.setMapTool(self._prev_tool)
+                else:
+                    canvas.setMapTool(None)  # Reset to default tool
             except Exception:
-                pass
+                canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
             self.iface.messageBar().clearWidgets()
@@ -351,10 +356,15 @@ class ExtractorDockWidget(QDockWidget):
         self._prev_tool = canvas.mapTool()
 
         def _done(geom_map: QgsGeometry | None):
+            # Only restore previous tool if it's not a drawing tool
+            from virtughan_qgis.common.aoi import AoiRectTool, AoiPolygonTool
             try:
-                canvas.setMapTool(self._prev_tool)
+                if self._prev_tool and not isinstance(self._prev_tool, (AoiRectTool, AoiPolygonTool)):
+                    canvas.setMapTool(self._prev_tool)
+                else:
+                    canvas.setMapTool(None)  # Reset to default tool
             except Exception:
-                pass
+                canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
             self.iface.messageBar().clearWidgets()

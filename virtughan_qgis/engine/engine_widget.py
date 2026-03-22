@@ -225,6 +225,8 @@ class EngineDockWidget(QDockWidget):
         self._aoi_fill_color = QColor(0, 102, 255, 60)      # light blue with transparency
         self._aoi_stroke_color = QColor(0, 102, 255, 200)   # darker blue stroke
         self._aoi = AoiManager(self.iface, layer_name="Engine AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
+        self._prev_tool = None  # Track previous map tool
+        self._drawing_tool = None  # Track active drawing tool
 
         # Convert dropdown to 3 options at runtime (no .ui change required)
         self.aoiModeCombo.clear()
@@ -348,10 +350,15 @@ class EngineDockWidget(QDockWidget):
         self._prev_tool = canvas.mapTool()
 
         def _finish(rect: QgsRectangle | None):
+            # Only restore previous tool if it's not a drawing tool
+            from virtughan_qgis.common.aoi import AoiRectTool, AoiPolygonTool
             try:
-                canvas.setMapTool(self._prev_tool)
+                if self._prev_tool and not isinstance(self._prev_tool, (AoiRectTool, AoiPolygonTool)):
+                    canvas.setMapTool(self._prev_tool)
+                else:
+                    canvas.setMapTool(None)  # Reset to default tool
             except Exception:
-                pass
+                canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
             self.iface.messageBar().clearWidgets()
@@ -387,10 +394,15 @@ class EngineDockWidget(QDockWidget):
         self._prev_tool = canvas.mapTool()
 
         def _done(geom_map: QgsGeometry | None):
+            # Only restore previous tool if it's not a drawing tool
+            from virtughan_qgis.common.aoi import AoiRectTool, AoiPolygonTool
             try:
-                canvas.setMapTool(self._prev_tool)
+                if self._prev_tool and not isinstance(self._prev_tool, (AoiRectTool, AoiPolygonTool)):
+                    canvas.setMapTool(self._prev_tool)
+                else:
+                    canvas.setMapTool(None)  # Reset to default tool
             except Exception:
-                pass
+                canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
             self.iface.messageBar().clearWidgets()
