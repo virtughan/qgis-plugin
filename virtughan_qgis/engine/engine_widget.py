@@ -40,6 +40,7 @@ from ..common.aoi import (
 )
 
 from ..common.map_setup import setup_default_map
+from ..common.scene_preview_dialog import ScenePreviewDialog
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -793,9 +794,23 @@ class EngineDockWidget(QDockWidget):
                 params["cloud_cover"],
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
+
+            dlg = ScenePreviewDialog(
+                parent=self,
+                scenes=scenes,
+                title="Engine Scene Preview",
+                fill_color=QColor(156, 39, 176, 14),
+                stroke_color=QColor(156, 39, 176, 170),
+            )
+            if dlg.exec_() != dlg.Accepted:
+                _log(self, "Scene preview canceled by user.")
+                return
+
+            selected_scenes = dlg.selected_scenes()
+            _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
             if self.showSceneFootprintsCheck.isChecked():
-                self._render_scene_footprints(scenes)
-                _log(self, "Scene footprints layer updated.")
+                self._render_scene_footprints(selected_scenes)
+                _log(self, "Scene footprints layer updated from preview selection.")
             else:
                 self._clear_scene_footprints_layer()
                 _log(self, "Footprint display is disabled (checkbox unchecked).")

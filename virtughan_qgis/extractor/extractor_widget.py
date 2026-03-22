@@ -49,6 +49,7 @@ from ..common.aoi import (
     rect_to_wgs84_bbox,
     geom_to_wgs84_bbox,
 )
+from ..common.scene_preview_dialog import ScenePreviewDialog
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -797,9 +798,23 @@ class ExtractorDockWidget(QDockWidget):
                 params["cloud_cover"],
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
+
+            dlg = ScenePreviewDialog(
+                parent=self,
+                scenes=scenes,
+                title="Extractor Scene Preview",
+                fill_color=QColor(0, 150, 136, 14),
+                stroke_color=QColor(0, 150, 136, 170),
+            )
+            if dlg.exec_() != dlg.Accepted:
+                _log(self, "Scene preview canceled by user.")
+                return
+
+            selected_scenes = dlg.selected_scenes()
+            _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
             if self.showSceneFootprintsCheck.isChecked():
-                self._render_scene_footprints(scenes)
-                _log(self, "Scene footprints layer updated.")
+                self._render_scene_footprints(selected_scenes)
+                _log(self, "Scene footprints layer updated from preview selection.")
             else:
                 self._clear_scene_footprints_layer()
                 _log(self, "Footprint display is disabled (checkbox unchecked).")
