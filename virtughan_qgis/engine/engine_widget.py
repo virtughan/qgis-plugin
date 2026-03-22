@@ -760,9 +760,9 @@ class EngineDockWidget(QDockWidget):
         layer.updateExtents()
         try:
             sym = layer.renderer().symbol()
-            sym.setColor(QColor(0, 102, 255, 20))
-            sym.symbolLayer(0).setStrokeColor(QColor(0, 102, 255, 180))
-            sym.symbolLayer(0).setStrokeWidth(0.4)
+            sym.setColor(QColor(156, 39, 176, 10))
+            sym.symbolLayer(0).setStrokeColor(QColor(156, 39, 176, 120))
+            sym.symbolLayer(0).setStrokeWidth(0.35)
             layer.triggerRepaint()
             layer.emitStyleChanged()
         except Exception:
@@ -781,6 +781,9 @@ class EngineDockWidget(QDockWidget):
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
 
+        self.progressBar.setVisible(True)
+        self.progressBar.setRange(0, 0)
+        self.previewScenesButton.setEnabled(False)
         _log(self, "Searching matching scenes...")
         try:
             scenes = engine_search_stac_api(
@@ -789,15 +792,17 @@ class EngineDockWidget(QDockWidget):
                 params["end_date"],
                 params["cloud_cover"],
             )
+            _log(self, f"Matching scenes found: {len(scenes)}")
+            if self.showSceneFootprintsCheck.isChecked():
+                self._render_scene_footprints(scenes)
+                _log(self, "Scene footprints layer updated.")
+            else:
+                self._clear_scene_footprints_layer()
+                _log(self, "Footprint display is disabled (checkbox unchecked).")
         except Exception as e:
             _log(self, f"Scene search failed: {e}", Qgis.Critical)
             QMessageBox.critical(self, "VirtuGhan", f"Scene search failed:\n{e}")
-            return
-
-        _log(self, f"Matching scenes found: {len(scenes)}")
-        if self.showSceneFootprintsCheck.isChecked():
-            self._render_scene_footprints(scenes)
-            _log(self, "Scene footprints layer updated.")
-        else:
-            self._clear_scene_footprints_layer()
-            _log(self, "Footprint display is disabled (checkbox unchecked).")
+        finally:
+            self.progressBar.setVisible(False)
+            self.progressBar.setRange(0, 1)
+            self.previewScenesButton.setEnabled(True)

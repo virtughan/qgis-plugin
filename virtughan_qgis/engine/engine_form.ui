@@ -219,53 +219,69 @@
         </widget>
        </item>
 
-       <!-- Run / Progress -->
-       <item>
-        <layout class="QHBoxLayout" name="runLayout">
-         <item>
-          <widget class="QProgressBar" name="progressBar">
-           <property name="minimum"><number>0</number></property>
-           <property name="maximum"><number>0</number></property>
-           <property name="value"><number>0</number></property>
-           <property name="textVisible"><bool>false</bool></property>
-           <property name="toolTip"><string>Shows while job is running</string></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QCheckBox" name="showSceneFootprintsCheck">
-           <property name="text"><string>Show matching scene footprints on map</string></property>
-           <property name="checked"><bool>true</bool></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="previewScenesButton">
-           <property name="text"><string>Preview Matching Scenes</string></property>
-           <property name="toolTip"><string>Search matching scenes using current AOI/date/cloud filters</string></property>
-          </widget>
-         </item>
-         <item>
-          <spacer name="runSpacer">
-           <property name="orientation"><enum>Qt::Horizontal</enum></property>
-           <property name="sizeHint" stdset="0">
-            <size><width>40</width><height>20</height></size>
-           </property>
-          </spacer>
-         </item>
-         <item>
-          <widget class="QPushButton" name="resetButton">
-           <property name="text"><string>Reset</string></property>
-           <property name="toolTip"><string>Clear form and AOI</string></property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QPushButton" name="runButton">
-           <property name="text"><string>Run Engine</string></property>
-           <property name="minimumHeight"><number>30</number></property>
-           <property name="toolTip"><string>Start processing</string></property>
-          </widget>
-         </item>
-        </layout>
-       </item>
+      <!-- Run / Progress -->
+      <item>
+       <layout class="QVBoxLayout" name="runSectionLayout">
+        <item>
+         <layout class="QHBoxLayout" name="runLayout">
+          <item>
+           <widget class="QProgressBar" name="progressBar">
+            <property name="minimum"><number>0</number></property>
+            <property name="maximum"><number>0</number></property>
+            <property name="value"><number>0</number></property>
+            <property name="textVisible"><bool>false</bool></property>
+            <property name="toolTip"><string>Shows while job is running</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="showSceneFootprintsCheck">
+            <property name="text"><string>Show matching scene footprints on map</string></property>
+            <property name="checked"><bool>true</bool></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="previewScenesButton">
+            <property name="text"><string>Preview Matching Scenes</string></property>
+            <property name="toolTip"><string>Search matching scenes using current AOI/date/cloud filters</string></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="runSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0">
+        <size><width>40</width><height>20</height></size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="runActionLayout">
+          <item>
+           <spacer name="runActionSpacer">
+            <property name="orientation"><enum>Qt::Horizontal</enum></property>
+            <property name="sizeHint" stdset="0">
+        <size><width>40</width><height>20</height></size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="resetButton">
+            <property name="text"><string>Reset</string></property>
+            <property name="toolTip"><string>Clear form and AOI</string></property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="runButton">
+            <property name="text"><string>Run Engine</string></property>
+            <property name="minimumHeight"><number>30</number></property>
+            <property name="toolTip"><string>Start processing</string></property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </item>
 
        <!-- Log -->
        <item>
