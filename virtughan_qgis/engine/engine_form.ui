@@ -236,7 +236,7 @@
           <item>
            <widget class="QCheckBox" name="showSceneFootprintsCheck">
             <property name="text"><string>Show matching scene footprints on map</string></property>
-            <property name="checked"><bool>true</bool></property>
+              <property name="checked"><bool>false</bool></property>
            </widget>
           </item>
           <item>

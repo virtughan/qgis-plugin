@@ -6,7 +6,7 @@ from qgis.PyQt.QtWidgets import (
     QFrame, QAbstractItemView, QApplication, QStyle,
     QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy
 )
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QColor, QPixmap, QPainter, QPen
 from qgis.core import QgsApplication, Qgis, QgsMessageLog
 
 from ..engine.engine_widget import EngineDockWidget
@@ -32,6 +32,50 @@ def load_icon(rel_path: str, fallback: QStyle.StandardPixmap = QStyle.SP_FileDia
     # fallback
     QgsMessageLog.logMessage(f"[VirtuGhan] Icon not found, using fallback: {abs_path}", "VirtuGhan", Qgis.Warning)
     return QApplication.style().standardIcon(fallback)
+
+
+def make_tab_icon(kind: str, size: int = 18, color: QColor | None = None) -> QIcon:
+    c = color or QColor(255, 255, 255)
+    px = QPixmap(size, size)
+    px.fill(Qt.transparent)
+
+    p = QPainter(px)
+    p.setRenderHint(QPainter.Antialiasing, False)
+
+    pen = QPen(c)
+    pen.setWidth(1)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+
+    k = (kind or "").lower().strip()
+    if k == "engine":
+        # Gear/settings icon
+        p.drawEllipse(5, 5, 8, 8)
+        p.drawEllipse(7, 7, 4, 4)
+        p.drawLine(9, 2, 9, 4)
+        p.drawLine(9, 14, 9, 16)
+        p.drawLine(2, 9, 4, 9)
+        p.drawLine(14, 9, 16, 9)
+        p.drawLine(5, 5, 6, 6)
+        p.drawLine(12, 12, 13, 13)
+        p.drawLine(12, 6, 13, 5)
+        p.drawLine(5, 13, 6, 12)
+    elif k == "extractor":
+        p.drawLine(9, 4, 9, 10)
+        p.drawLine(6, 8, 9, 11)
+        p.drawLine(12, 8, 9, 11)
+        p.drawLine(4, 13, 14, 13)
+        p.drawLine(4, 13, 4, 14)
+        p.drawLine(14, 13, 14, 14)
+    else:
+        p.drawRoundedRect(3, 3, 5, 5, 1.0, 1.0)
+        p.drawRoundedRect(10, 3, 5, 5, 1.0, 1.0)
+        p.drawRoundedRect(3, 10, 5, 5, 1.0, 1.0)
+        p.drawRoundedRect(10, 10, 5, 5, 1.0, 1.0)
+
+    p.end()
+    return QIcon(px)
 
 
 class VirtughanHubDialog(QDialog):
@@ -178,9 +222,9 @@ class VirtughanHubDialog(QDialog):
         self.helpPane.setVisible(False)
         self._set_compact_mode()
 
-        self._add_page("Engine",    EngineDockWidget(self.iface),    load_icon("../static/images/virtughan-logo.png"))
-        self._add_page("Extractor", ExtractorDockWidget(self.iface), load_icon("../static/images/virtughan-logo.png"))
-        self._add_page("Tiler",     TilerDockWidget(self.iface),     load_icon("../static/images/virtughan-logo.png"))
+        self._add_page("Engine",    EngineDockWidget(self.iface),    make_tab_icon("engine"))
+        self._add_page("Extractor", ExtractorDockWidget(self.iface), make_tab_icon("extractor"))
+        self._add_page("Tiler",     TilerDockWidget(self.iface),     make_tab_icon("tiler"))
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
 

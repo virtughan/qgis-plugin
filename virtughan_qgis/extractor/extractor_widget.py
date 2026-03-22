@@ -243,6 +243,9 @@ class ExtractorDockWidget(QDockWidget):
         self._current_log_path = None
         self._tailer = None
         self._scene_footprints_layer = None
+        self._selected_preview_scenes = []
+        self._has_successful_run = False
+        self._last_output_layer_ids = []
 
     def _init_common_widget(self):
         if CommonParamsWidget:
@@ -607,6 +610,8 @@ class ExtractorDockWidget(QDockWidget):
 
         self._set_running(True)
         self._start_tailing(log_path)
+        self._has_successful_run = False
+        self._last_output_layer_ids = []
 
         def _on_done(ok, exc):
             self._stop_tailing()
@@ -620,6 +625,7 @@ class ExtractorDockWidget(QDockWidget):
                 )
             else:
                 added = 0
+                loaded_layer_ids = []
                 for root, _dirs, files in os.walk(out_dir):
                     for fn in files:
                         if fn.lower().endswith((".tif", ".tiff", ".vrt")):
@@ -627,12 +633,26 @@ class ExtractorDockWidget(QDockWidget):
                             lyr = QgsRasterLayer(path, os.path.splitext(fn)[0], "gdal")
                             if lyr.isValid():
                                 QgsProject.instance().addMapLayer(lyr)
+                                loaded_layer_ids.append(lyr.id())
                                 _log(self, f"Loaded raster: {path}")
                                 added += 1
                             else:
                                 _log(self, f"Failed to load raster: {path}", Qgis.Warning)
                 if added == 0:
                     _log(self, "No raster files found to load.")
+                self._last_output_layer_ids = loaded_layer_ids
+
+                self._has_successful_run = True
+                if self.showSceneFootprintsCheck.isChecked():
+                    scenes_for_map = self._resolve_scenes_for_main_map_footprints()
+                    count = self._render_scene_footprints(scenes_for_map, below_layer_ids=self._last_output_layer_ids)
+                    if count > 0:
+                        _log(self, f"Scene footprints layer added to main map after run completion ({count} scenes).")
+                    else:
+                        _log(self, "No scene footprints were added (open Preview Matching Scenes and keep scenes selected).", Qgis.Warning)
+                else:
+                    self._clear_scene_footprints_layer()
+
                 QMessageBox.information(
                     self, "VirtuGhan", f"Extractor finished.\nOutput: {out_dir}"
                 )
@@ -669,6 +689,41 @@ class ExtractorDockWidget(QDockWidget):
     def _on_show_scene_footprints_toggled(self, checked: bool):
         if not checked:
             self._clear_scene_footprints_layer()
+            return
+        if self._has_successful_run:
+            scenes_for_map = self._resolve_scenes_for_main_map_footprints()
+            count = self._render_scene_footprints(scenes_for_map, below_layer_ids=self._last_output_layer_ids)
+            if count > 0:
+                _log(self, f"Scene footprints layer added to main map ({count} scenes).")
+            else:
+                _log(self, "No scene footprints were added (open Preview Matching Scenes and keep scenes selected).", Qgis.Warning)
+        else:
+            _log(self, "Scene footprints will be added after a successful run.")
+
+    def _resolve_scenes_for_main_map_footprints(self):
+        scenes = list(self._selected_preview_scenes or [])
+        if scenes:
+            return scenes
+
+        if extractor_search_stac_api is None:
+            _log(self, "Cannot load scene footprints: search_stac_api is not available.", Qgis.Warning)
+            return []
+
+        try:
+            params = self._collect_search_params()
+            scenes = extractor_search_stac_api(
+                params["bbox"],
+                params["start_date"],
+                params["end_date"],
+                params["cloud_cover"],
+            )
+            self._selected_preview_scenes = scenes or []
+            _log(self, f"Loaded {len(self._selected_preview_scenes)} scenes from current filters for main-map footprints.")
+        except Exception as e:
+            _log(self, f"Failed to fetch scenes for main-map footprints: {e}", Qgis.Warning)
+            return []
+
+        return list(self._selected_preview_scenes)
 
     def _clear_scene_footprints_layer(self):
         if self._scene_footprints_layer and self._scene_footprints_layer.isValid():
@@ -720,10 +775,10 @@ class ExtractorDockWidget(QDockWidget):
             "cloud_cover": int(p.get("cloud_cover", 30)),
         }
 
-    def _render_scene_footprints(self, scenes):
+    def _render_scene_footprints(self, scenes, below_layer_ids=None):
         self._clear_scene_footprints_layer()
         if not scenes:
-            return
+            return 0
         project = QgsProject.instance()
         dst_crs = project.crs()
         layer = QgsVectorLayer(f"Polygon?crs={dst_crs.authid()}", "Extractor Scene Footprints", "memory")
@@ -759,7 +814,7 @@ class ExtractorDockWidget(QDockWidget):
 
         if not feats:
             _log(self, "No valid scene footprint geometries found.", Qgis.Warning)
-            return
+            return 0
 
         prov.addFeatures(feats)
         layer.updateExtents()
@@ -773,8 +828,29 @@ class ExtractorDockWidget(QDockWidget):
         except Exception:
             pass
 
-        QgsProject.instance().addMapLayer(layer)
+        project = QgsProject.instance()
+        project.addMapLayer(layer, False)
+        root = project.layerTreeRoot()
+        insert_idx = len(root.children())
+        if below_layer_ids:
+            ref_indices = []
+            for ref_id in below_layer_ids:
+                ref_node = root.findLayer(ref_id)
+                if ref_node is None:
+                    continue
+                try:
+                    ref_indices.append(root.children().index(ref_node))
+                except ValueError:
+                    pass
+            if ref_indices:
+                insert_idx = max(ref_indices) + 1
+        root.insertLayer(insert_idx, layer)
         self._scene_footprints_layer = layer
+        try:
+            self.iface.mapCanvas().refresh()
+        except Exception:
+            pass
+        return len(feats)
 
     def _preview_matching_scenes(self):
         if extractor_search_stac_api is None:
@@ -812,13 +888,9 @@ class ExtractorDockWidget(QDockWidget):
             dlg.exec_()
 
             selected_scenes = dlg.selected_scenes()
+            self._selected_preview_scenes = selected_scenes
             _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
-            if self.showSceneFootprintsCheck.isChecked():
-                self._render_scene_footprints(selected_scenes)
-                _log(self, "Scene footprints layer updated from preview selection.")
-            else:
-                self._clear_scene_footprints_layer()
-                _log(self, "Footprint display is disabled (checkbox unchecked).")
+            _log(self, "Preview is temporary; main map footprints update only after run completion.")
         except Exception as e:
             _log(self, f"Scene search failed: {e}", Qgis.Critical)
             QMessageBox.critical(self, "VirtuGhan", f"Scene search failed:\n{e}")
