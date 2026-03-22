@@ -61,12 +61,15 @@ class AoiManager:
         prov.addAttributes([QgsField("id", QVariant.Int), QgsField("label", QVariant.String)])
         self.layer.updateFields()
         QgsProject.instance().addMapLayer(self.layer)
-        # Apply stored colors
+        # Apply stored colors to symbol
         try:
             sym = self.layer.renderer().symbol()
             sym.setColor(self.fill_color)
             sym.symbolLayer(0).setStrokeColor(self.stroke_color)
+            sym.symbolLayer(0).setStrokeWidth(2)  # Ensure stroke width matches drawing tool
             self.layer.triggerRepaint()
+            # Force legend refresh
+            self.layer.emitStyleChanged()
         except Exception:
             pass
         return self.layer
@@ -91,6 +94,11 @@ class AoiManager:
             except Exception:
                 pass
         self.layer = None
+        # Refresh canvas to immediately show the removed layer
+        try:
+            self.iface.mapCanvas().refresh()
+        except Exception:
+            pass
 
 
 class AoiPolygonTool(QgsMapTool):
