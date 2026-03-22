@@ -788,7 +788,10 @@ class ExtractorDockWidget(QDockWidget):
 
         self.progressBar.setVisible(True)
         self.progressBar.setRange(0, 0)
+        original_btn_text = self.previewScenesButton.text()
+        self.previewScenesButton.setText("Loading Preview…")
         self.previewScenesButton.setEnabled(False)
+        QgsApplication.processEvents()
         _log(self, "Searching matching scenes...")
         try:
             scenes = extractor_search_stac_api(
@@ -806,9 +809,7 @@ class ExtractorDockWidget(QDockWidget):
                 fill_color=QColor(0, 150, 136, 14),
                 stroke_color=QColor(0, 150, 136, 170),
             )
-            if dlg.exec_() != dlg.Accepted:
-                _log(self, "Scene preview canceled by user.")
-                return
+            dlg.exec_()
 
             selected_scenes = dlg.selected_scenes()
             _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
@@ -824,4 +825,5 @@ class ExtractorDockWidget(QDockWidget):
         finally:
             self.progressBar.setVisible(False)
             self.progressBar.setRange(0, 1)
+            self.previewScenesButton.setText(original_btn_text)
             self.previewScenesButton.setEnabled(True)

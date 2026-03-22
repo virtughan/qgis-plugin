@@ -11,10 +11,14 @@ _OSM_NAME = "OpenStreetMap"
 
 def _find_osm_layer():
     """Return the existing OSM XYZ layer if present, else None."""
+    root = QgsProject.instance().layerTreeRoot()
     for lyr in QgsProject.instance().mapLayers().values():
         if isinstance(lyr, QgsRasterLayer) and lyr.providerType().lower() in ("wms", "wmsc", "xyz"):
             if "tile.openstreetmap.org" in (lyr.source() or "").lower():
-                return lyr
+                # Only treat it as existing basemap if it's in the layer tree
+                # (temporary preview layers may be in registry but not in tree).
+                if root.findLayer(lyr.id()) is not None:
+                    return lyr
     return None
 
 

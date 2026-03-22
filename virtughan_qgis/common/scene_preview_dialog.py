@@ -6,6 +6,7 @@ from qgis.PyQt.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -13,10 +14,14 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsFeature,
     QgsField,
     QgsGeometry,
     QgsPointXY,
+    QgsProject,
+    QgsRasterLayer,
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas, QgsMapToolIdentifyFeature
@@ -26,19 +31,28 @@ class ScenePreviewDialog(QDialog):
     def __init__(self, parent, scenes, title, fill_color: QColor, stroke_color: QColor):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(980, 680)
+        self.resize(700, 600)
 
         self._all_scenes = scenes or []
         self._scene_by_id = {str(s.get("id", "")): s for s in self._all_scenes}
         self._checked_ids = set(self._scene_by_id.keys())
-        self._table_populating = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
-        info = QLabel("Top list controls footprint visibility in this preview map. Click a footprint to inspect attributes.")
+        info = QLabel("Top list selection controls footprint visibility in this preview map. Click a footprint to inspect attributes.")
         root.addWidget(info)
+
+        controls_row = QHBoxLayout()
+        self.selectAllButton = QPushButton("Select All", self)
+        self.deselectAllButton = QPushButton("Deselect All", self)
+        self.selectAllButton.clicked.connect(self._select_all_scenes)
+        self.deselectAllButton.clicked.connect(self._deselect_all_scenes)
+        controls_row.addWidget(self.selectAllButton)
+        controls_row.addWidget(self.deselectAllButton)
+        controls_row.addStretch(1)
+        root.addLayout(controls_row)
 
         top_split = QSplitter(Qt.Horizontal, self)
         root.addWidget(top_split, 2)
@@ -48,13 +62,12 @@ class ScenePreviewDialog(QDialog):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget(table_host)
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Show", "Scene ID", "Datetime", "Cloud %"])
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Scene ID", "Datetime", "Cloud %"])
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.itemChanged.connect(self._on_table_item_changed)
+        self.table.setSelectionMode(QTableWidget.MultiSelection)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         table_layout.addWidget(self.table)
 
@@ -69,21 +82,48 @@ class ScenePreviewDialog(QDialog):
         self.canvas.setCanvasColor(Qt.white)
         root.addWidget(self.canvas, 3)
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        self.buttons.button(QDialogButtonBox.Ok).setText("Apply Selection")
-        self.buttons.accepted.connect(self.accept)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Close, self)
+        self.buttons.button(QDialogButtonBox.Close).setText("Close")
         self.buttons.rejected.connect(self.reject)
         root.addWidget(self.buttons)
 
+        self._basemap = self._create_osm_basemap_layer()
         self._layer = self._build_preview_layer(fill_color, stroke_color)
-        self.canvas.setLayers([self._layer])
-        self.canvas.zoomToFullExtent()
+        try:
+            self.canvas.setCrsTransformEnabled(True)
+            self.canvas.setDestinationCrs(self._layer.crs())
+        except Exception:
+            pass
+        if self._basemap and self._basemap.isValid():
+            self.canvas.setLayers([self._layer, self._basemap])
+        else:
+            self.canvas.setLayers([self._layer])
+        self._zoom_to_footprints()
 
         self._identify_tool = QgsMapToolIdentifyFeature(self.canvas, self._layer)
         self._identify_tool.featureIdentified.connect(self._on_feature_identified)
         self.canvas.setMapTool(self._identify_tool)
 
         self._populate_table()
+
+    def closeEvent(self, event):
+        try:
+            if self._basemap and self._basemap.isValid():
+                QgsProject.instance().removeMapLayer(self._basemap.id())
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def _create_osm_basemap_layer(self):
+        uri = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmin=0&zmax=19"
+        layer = QgsRasterLayer(uri, "Preview OSM Basemap", "wms")
+        if not layer.isValid():
+            return None
+        try:
+            QgsProject.instance().addMapLayer(layer, False)
+        except Exception:
+            pass
+        return layer
 
     def selected_scenes(self):
         selected = []
@@ -94,7 +134,8 @@ class ScenePreviewDialog(QDialog):
         return selected
 
     def _build_preview_layer(self, fill_color: QColor, stroke_color: QColor):
-        layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "Scene Preview", "memory")
+        layer_crs = "EPSG:3857" if (self._basemap and self._basemap.isValid()) else "EPSG:4326"
+        layer = QgsVectorLayer(f"Polygon?crs={layer_crs}", "Scene Preview", "memory")
         prov = layer.dataProvider()
         prov.addAttributes([
             QgsField("scene_id", QVariant.String),
@@ -125,6 +166,15 @@ class ScenePreviewDialog(QDialog):
             prov.deleteFeatures(ids)
 
         feats = []
+        xform = None
+        try:
+            src = QgsCoordinateReferenceSystem("EPSG:4326")
+            dst = layer.crs()
+            if src != dst:
+                xform = QgsCoordinateTransform(src, dst, QgsProject.instance())
+        except Exception:
+            xform = None
+
         for scene in self._all_scenes:
             sid = str(scene.get("id", ""))
             if sid not in self._checked_ids:
@@ -133,6 +183,11 @@ class ScenePreviewDialog(QDialog):
             geom = self._stac_geometry_to_qgs(scene.get("geometry"))
             if geom is None or geom.isEmpty():
                 continue
+            if xform is not None:
+                try:
+                    geom.transform(xform)
+                except Exception:
+                    continue
 
             props = scene.get("properties", {}) or {}
             feat = QgsFeature(layer.fields())
@@ -149,6 +204,22 @@ class ScenePreviewDialog(QDialog):
             prov.addFeatures(feats)
         layer.updateExtents()
         layer.triggerRepaint()
+        self._zoom_to_footprints()
+
+    def _zoom_to_footprints(self):
+        try:
+            ext = self._layer.extent()
+            if ext is None or ext.isEmpty():
+                self.canvas.refresh()
+                return
+            ext.scale(1.1)
+            self.canvas.setExtent(ext)
+            self.canvas.refresh()
+        except Exception:
+            try:
+                self.canvas.refresh()
+            except Exception:
+                pass
 
     def _stac_geometry_to_qgs(self, geom_obj):
         if not isinstance(geom_obj, dict):
@@ -180,8 +251,8 @@ class ScenePreviewDialog(QDialog):
         return None
 
     def _populate_table(self):
-        self._table_populating = True
         self.table.setRowCount(0)
+        self.table.blockSignals(True)
 
         for scene in self._all_scenes:
             row = self.table.rowCount()
@@ -190,48 +261,52 @@ class ScenePreviewDialog(QDialog):
             sid = str(scene.get("id", ""))
             props = scene.get("properties", {}) or {}
 
-            check_item = QTableWidgetItem()
-            check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
-            check_item.setCheckState(Qt.Checked if sid in self._checked_ids else Qt.Unchecked)
-            check_item.setData(Qt.UserRole, sid)
-
             id_item = QTableWidgetItem(sid)
             id_item.setData(Qt.UserRole, sid)
             dt_item = QTableWidgetItem(str(props.get("datetime", "")))
             cloud_item = QTableWidgetItem(str(props.get("eo:cloud_cover", "")))
 
-            self.table.setItem(row, 0, check_item)
-            self.table.setItem(row, 1, id_item)
-            self.table.setItem(row, 2, dt_item)
-            self.table.setItem(row, 3, cloud_item)
+            self.table.setItem(row, 0, id_item)
+            self.table.setItem(row, 1, dt_item)
+            self.table.setItem(row, 2, cloud_item)
 
+        self.table.blockSignals(False)
         self.table.resizeColumnsToContents()
-        self._table_populating = False
+        self._select_all_scenes()
 
-    def _on_table_item_changed(self, item):
-        if self._table_populating:
-            return
-        if item.column() != 0:
-            return
+    def _select_all_scenes(self):
+        self.table.blockSignals(True)
+        self.table.selectAll()
+        self.table.blockSignals(False)
+        self._on_table_selection_changed()
 
-        sid = str(item.data(Qt.UserRole) or "")
-        if not sid:
-            return
-
-        if item.checkState() == Qt.Checked:
-            self._checked_ids.add(sid)
-        else:
-            self._checked_ids.discard(sid)
-
-        self._reload_layer_features(self._layer)
-        self.canvas.refresh()
+    def _deselect_all_scenes(self):
+        self.table.blockSignals(True)
+        self.table.clearSelection()
+        self.table.blockSignals(False)
+        self._on_table_selection_changed()
 
     def _on_table_selection_changed(self):
         rows = self.table.selectionModel().selectedRows()
+        selected_ids = set()
+        for idx in rows:
+            row = idx.row()
+            row_item = self.table.item(row, 0)
+            if not row_item:
+                continue
+            sid = str(row_item.data(Qt.UserRole) or row_item.text() or "")
+            if sid:
+                selected_ids.add(sid)
+
+        self._checked_ids = selected_ids
+        self._reload_layer_features(self._layer)
+        self.canvas.refresh()
+
         if not rows:
+            self.detailText.setPlainText("No details available.")
             return
         row = rows[0].row()
-        item = self.table.item(row, 1)
+        item = self.table.item(row, 0)
         if not item:
             return
         sid = str(item.data(Qt.UserRole) or item.text() or "")

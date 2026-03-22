@@ -784,7 +784,10 @@ class EngineDockWidget(QDockWidget):
 
         self.progressBar.setVisible(True)
         self.progressBar.setRange(0, 0)
+        original_btn_text = self.previewScenesButton.text()
+        self.previewScenesButton.setText("Loading Preview…")
         self.previewScenesButton.setEnabled(False)
+        QgsApplication.processEvents()
         _log(self, "Searching matching scenes...")
         try:
             scenes = engine_search_stac_api(
@@ -802,9 +805,7 @@ class EngineDockWidget(QDockWidget):
                 fill_color=QColor(156, 39, 176, 14),
                 stroke_color=QColor(156, 39, 176, 170),
             )
-            if dlg.exec_() != dlg.Accepted:
-                _log(self, "Scene preview canceled by user.")
-                return
+            dlg.exec_()
 
             selected_scenes = dlg.selected_scenes()
             _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
@@ -820,4 +821,5 @@ class EngineDockWidget(QDockWidget):
         finally:
             self.progressBar.setVisible(False)
             self.progressBar.setRange(0, 1)
+            self.previewScenesButton.setText(original_btn_text)
             self.previewScenesButton.setEnabled(True)
