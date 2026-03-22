@@ -1,7 +1,7 @@
 [general]
 name=VirtuGhan QGIS Plugin
-description=Preview, extract, and analyze Sentinel-2 data inside QGIS
-about=VirtuGhan helps you work with Sentinel-2 imagery directly in QGIS. Use Tiler to quickly preview satellite imagery on the map, Extractor to download the bands you need for a selected area and date range, and Engine to create analysis outputs such as index maps from formulas like NDVI. Results are written to local files and can be loaded back into your QGIS project.
+description=Sentinel-2 STAC search, preview, extraction, and spectral analysis in QGIS
+about=VirtuGhan helps you discover and process Sentinel-2 imagery directly in QGIS. Use Tiler for fast map preview, Extractor to download selected bands for your AOI/date/cloud filters, and Engine to run spectral formulas such as NDVI and generate analysis rasters. Matching scene footprints can be previewed before processing, and outputs are saved locally and loaded into your QGIS project.
 version=1.0.0
 qgisMinimumVersion=3.22
 author=Upendra Oli; Kshitij Raj Sharma; Sahar Mohamed

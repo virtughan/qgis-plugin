@@ -24,12 +24,13 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import Qt, QDate, QTimer, QVariant
-from qgis.PyQt.QtGui import QCursor, QColor
+from qgis.PyQt.QtGui import QCursor, QColor, QPixmap
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -174,6 +175,7 @@ class ExtractorDockWidget(QDockWidget):
         self.ui_root = QWidget(self)
         self._form_owner = FORM_CLASS()
         self._form_owner.setupUi(self.ui_root)
+        self._set_header_logo()
         self.setWidget(self.ui_root)
 
         f = self.ui_root.findChild
@@ -197,7 +199,6 @@ class ExtractorDockWidget(QDockWidget):
         self.showSceneFootprintsCheck = f(QCheckBox, "showSceneFootprintsCheck")
 
         self.bandsListWidget = f(QListWidget, "bandsListWidget")
-        self.zipOutputCheck = f(QCheckBox, "zipOutputCheck")
         self.smartFilterCheck = f(QCheckBox, "smartFilterCheck")
 
         # AOI state
@@ -246,6 +247,36 @@ class ExtractorDockWidget(QDockWidget):
         self._selected_preview_scenes = []
         self._has_successful_run = False
         self._last_output_layer_ids = []
+
+    def _set_header_logo(self):
+        try:
+            title_label = self.ui_root.findChild(QLabel, "titleLabel")
+            if title_label is None:
+                return
+            if self.ui_root.findChild(QLabel, "virtughanHeaderLogo") is not None:
+                return
+            header_layout = self.ui_root.findChild(QHBoxLayout, "headerLayout")
+            if header_layout is None:
+                return
+            logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "images", "virtughan-logo.png")
+            if not os.path.exists(logo_path):
+                return
+
+            px = QPixmap(logo_path)
+            if px.isNull():
+                return
+
+            logo_label = QLabel(self.ui_root)
+            logo_label.setObjectName("virtughanHeaderLogo")
+            logo_label.setFixedSize(24, 24)
+            logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setPixmap(px.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            idx = header_layout.indexOf(title_label)
+            header_layout.insertWidget(max(0, idx), logo_label)
+            header_layout.setSpacing(6)
+        except Exception:
+            pass
 
     def _init_common_widget(self):
         if CommonParamsWidget:
@@ -558,7 +589,7 @@ class ExtractorDockWidget(QDockWidget):
         if not bands_list:
             raise RuntimeError("Please select at least one band to extract.")
 
-        zip_out = self.zipOutputCheck.isChecked()
+        zip_out = False
         smart = self.smartFilterCheck.isChecked()
 
         workers = max(1, int(self.workersSpin.value()))

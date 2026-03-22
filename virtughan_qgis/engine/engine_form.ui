@@ -225,15 +225,6 @@
         <item>
          <layout class="QHBoxLayout" name="runLayout">
           <item>
-           <widget class="QProgressBar" name="progressBar">
-            <property name="minimum"><number>0</number></property>
-            <property name="maximum"><number>0</number></property>
-            <property name="value"><number>0</number></property>
-            <property name="textVisible"><bool>false</bool></property>
-            <property name="toolTip"><string>Shows while job is running</string></property>
-           </widget>
-          </item>
-          <item>
            <widget class="QCheckBox" name="showSceneFootprintsCheck">
             <property name="text"><string>Show matching scene footprints on map</string></property>
               <property name="checked"><bool>false</bool></property>
@@ -257,6 +248,15 @@
         </item>
         <item>
          <layout class="QHBoxLayout" name="runActionLayout">
+            <item>
+             <widget class="QProgressBar" name="progressBar">
+              <property name="minimum"><number>0</number></property>
+              <property name="maximum"><number>0</number></property>
+              <property name="value"><number>0</number></property>
+              <property name="textVisible"><bool>false</bool></property>
+              <property name="toolTip"><string>Shows while job is running</string></property>
+             </widget>
+            </item>
           <item>
            <spacer name="runActionSpacer">
             <property name="orientation"><enum>Qt::Horizontal</enum></property>

@@ -4,9 +4,9 @@ import sys
 
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsApplication
-from .common.hub_dialog import VirtughanHubDialog, make_tab_icon
+from .common.hub_dialog import VirtughanHubDialog
 
 from .common.map_setup import setup_default_map
 
@@ -33,6 +33,7 @@ class VirtuGhanPlugin:
         self.action_engine = None
         self.action_extractor = None
         self.action_tiler = None
+        self.action_toolbar_open = None
         self.toolbar = None
         self._imports_ready = False
         self._last_import_error = None
@@ -75,25 +76,24 @@ class VirtuGhanPlugin:
             return
 
         self.action_engine = QAction("VirtuGhan • Engine", self.iface.mainWindow())
-        self.action_engine.setIcon(make_tab_icon("engine", color=QColor(0, 102, 255)))
         self.action_engine.triggered.connect(self.show_engine)
         self.iface.addPluginToMenu("VirtuGhan", self.action_engine)
 
         self.action_extractor = QAction("VirtuGhan • Extractor", self.iface.mainWindow())
-        self.action_extractor.setIcon(make_tab_icon("extractor", color=QColor(0, 102, 255)))
         self.action_extractor.triggered.connect(self.show_extractor)
         self.iface.addPluginToMenu("VirtuGhan", self.action_extractor)
 
         self.action_tiler = QAction("VirtuGhan • Tiler", self.iface.mainWindow())
-        self.action_tiler.setIcon(make_tab_icon("tiler", color=QColor(0, 102, 255)))
         self.action_tiler.triggered.connect(self.show_tiler)
         self.iface.addPluginToMenu("VirtuGhan", self.action_tiler)
 
         self.toolbar = self.iface.addToolBar("VirtuGhan")
         self.toolbar.setObjectName("VirtuGhanToolbar")
-        self.toolbar.addAction(self.action_engine)
-        self.toolbar.addAction(self.action_extractor)
-        self.toolbar.addAction(self.action_tiler)
+        logo_path = os.path.join(PLUGIN_DIR, "static", "images", "virtughan-logo.png")
+        self.action_toolbar_open = QAction(QIcon(logo_path), "VirtuGhan", self.iface.mainWindow())
+        self.action_toolbar_open.setToolTip("Open VirtuGhan")
+        self.action_toolbar_open.triggered.connect(self.show_engine)
+        self.toolbar.addAction(self.action_toolbar_open)
 
         try:
             self.provider = self._VirtuGhanProcessingProvider()
@@ -140,6 +140,9 @@ class VirtuGhanPlugin:
             except Exception:
                 pass
             self.provider = None 
+
+        if self.action_toolbar_open:
+            self.action_toolbar_open = None
 
         if self.toolbar:
             try:

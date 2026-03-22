@@ -6,8 +6,9 @@ import importlib
 import logging
 
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import QDate
-from qgis.PyQt.QtWidgets import QWidget, QMessageBox, QDockWidget
+from qgis.PyQt.QtCore import QDate, Qt
+from qgis.PyQt.QtGui import QPixmap
+from qgis.PyQt.QtWidgets import QWidget, QMessageBox, QDockWidget, QLabel, QHBoxLayout
 from qgis.core import QgsMessageLog, Qgis, QgsProject
 
 from .tiler_logic import TilerLogic
@@ -155,6 +156,7 @@ class TilerWidget(QWidget, FORM_CLASS):
     def __init__(self, iface, parent=None):
         super().__init__(parent)
         self.setupUi(self)
+        self._set_header_logo()
         self.iface = iface
         self.logic = TilerLogic(iface)
         self.server = _InProcessServerManager()
@@ -168,6 +170,36 @@ class TilerWidget(QWidget, FORM_CLASS):
 
         try:
             self.setMinimumSize(self.sizeHint())
+        except Exception:
+            pass
+
+    def _set_header_logo(self):
+        try:
+            title_label = self.findChild(QLabel, "titleLabel")
+            if title_label is None:
+                return
+            if self.findChild(QLabel, "virtughanHeaderLogo") is not None:
+                return
+            header_layout = self.findChild(QHBoxLayout, "headerLayout")
+            if header_layout is None:
+                return
+            logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static", "images", "virtughan-logo.png")
+            if not os.path.exists(logo_path):
+                return
+
+            px = QPixmap(logo_path)
+            if px.isNull():
+                return
+
+            logo_label = QLabel(self)
+            logo_label.setObjectName("virtughanHeaderLogo")
+            logo_label.setFixedSize(24, 24)
+            logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setPixmap(px.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            idx = header_layout.indexOf(title_label)
+            header_layout.insertWidget(max(0, idx), logo_label)
+            header_layout.setSpacing(6)
         except Exception:
             pass
 
