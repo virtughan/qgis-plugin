@@ -9,17 +9,21 @@ from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsFeature,
+    QgsField,
     QgsGeometry,
     QgsMessageLog,
+    QgsPointXY,
     QgsProcessingUtils,
     QgsProject,
     QgsRasterLayer,
     QgsRectangle,
     QgsTask,
+    QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import Qt, QDate, QTimer
+from qgis.PyQt.QtCore import Qt, QDate, QTimer, QVariant
 from qgis.PyQt.QtGui import QCursor, QColor
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -57,10 +61,11 @@ except Exception as _e:
 EXTRACTOR_IMPORT_ERROR = None
 ExtractorBackend = None
 try:
-    from virtughan.extract import ExtractProcessor as ExtractorBackend
+    from virtughan.extract import ExtractProcessor as ExtractorBackend, search_stac_api as extractor_search_stac_api
 except Exception as _e:
     EXTRACTOR_IMPORT_ERROR = _e
     ExtractorBackend = None
+    extractor_search_stac_api = None
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
@@ -187,6 +192,8 @@ class ExtractorDockWidget(QDockWidget):
         self.workersSpin = f(QSpinBox, "workersSpin")
         self.outputPathEdit = f(QLineEdit, "outputPathEdit")
         self.outputBrowseButton = f(QPushButton, "outputBrowseButton")
+        self.previewScenesButton = f(QPushButton, "previewScenesButton")
+        self.showSceneFootprintsCheck = f(QCheckBox, "showSceneFootprintsCheck")
 
         self.bandsListWidget = f(QListWidget, "bandsListWidget")
         self.zipOutputCheck = f(QCheckBox, "zipOutputCheck")
@@ -219,6 +226,8 @@ class ExtractorDockWidget(QDockWidget):
         self.resetButton.clicked.connect(self._reset_form)
         self.runButton.clicked.connect(self._run_clicked)
         self.helpButton.clicked.connect(self._open_help)
+        self.previewScenesButton.clicked.connect(self._preview_matching_scenes)
+        self.showSceneFootprintsCheck.toggled.connect(self._on_show_scene_footprints_toggled)
 
         self._update_aoi_preview()
         self._aoi_mode_changed(self.aoiModeCombo.currentText())
@@ -232,6 +241,7 @@ class ExtractorDockWidget(QDockWidget):
         self._current_task = None
         self._current_log_path = None
         self._tailer = None
+        self._scene_footprints_layer = None
 
     def _init_common_widget(self):
         if CommonParamsWidget:
@@ -648,8 +658,150 @@ class ExtractorDockWidget(QDockWidget):
         self.runButton.setEnabled(not running)
         self.resetButton.setEnabled(not running)
         for w in (self.aoiStartDrawButton, self.aoiClearButton,
-                  self.aoiModeCombo, self.outputBrowseButton):
+                  self.aoiModeCombo, self.outputBrowseButton,
+                  self.previewScenesButton, self.showSceneFootprintsCheck):
             try:
                 w.setEnabled(not running)
             except Exception:
                 pass
+
+    def _on_show_scene_footprints_toggled(self, checked: bool):
+        if not checked:
+            self._clear_scene_footprints_layer()
+
+    def _clear_scene_footprints_layer(self):
+        if self._scene_footprints_layer and self._scene_footprints_layer.isValid():
+            try:
+                QgsProject.instance().removeMapLayer(self._scene_footprints_layer.id())
+            except Exception:
+                pass
+        self._scene_footprints_layer = None
+        try:
+            self.iface.mapCanvas().refresh()
+        except Exception:
+            pass
+
+    def _stac_geometry_to_qgs(self, geom_obj):
+        if not isinstance(geom_obj, dict):
+            return None
+        gtype = geom_obj.get("type")
+        coords = geom_obj.get("coordinates")
+        if not coords:
+            return None
+        try:
+            if gtype == "Polygon":
+                rings = []
+                for ring in coords:
+                    rings.append([QgsPointXY(float(x), float(y)) for x, y in ring])
+                return QgsGeometry.fromPolygonXY(rings)
+            if gtype == "MultiPolygon":
+                polys = []
+                for poly in coords:
+                    rings = []
+                    for ring in poly:
+                        rings.append([QgsPointXY(float(x), float(y)) for x, y in ring])
+                    polys.append(rings)
+                return QgsGeometry.fromMultiPolygonXY(polys)
+        except Exception:
+            return None
+        return None
+
+    def _collect_search_params(self):
+        if not self._aoi_bbox:
+            raise RuntimeError("Set AOI first (Map extent / Draw rectangle / Draw polygon).")
+        p = self._get_common_params()
+        if not p.get("start_date") or not p.get("end_date"):
+            raise RuntimeError("Start and End dates are required.")
+        return {
+            "bbox": self._aoi_bbox,
+            "start_date": p["start_date"],
+            "end_date": p["end_date"],
+            "cloud_cover": int(p.get("cloud_cover", 30)),
+        }
+
+    def _render_scene_footprints(self, scenes):
+        self._clear_scene_footprints_layer()
+        if not scenes:
+            return
+        project = QgsProject.instance()
+        dst_crs = project.crs()
+        layer = QgsVectorLayer(f"Polygon?crs={dst_crs.authid()}", "Extractor Scene Footprints", "memory")
+        prov = layer.dataProvider()
+        prov.addAttributes([
+            QgsField("scene_id", QVariant.String),
+            QgsField("datetime", QVariant.String),
+            QgsField("cloud", QVariant.Double),
+            QgsField("collection", QVariant.String),
+        ])
+        layer.updateFields()
+
+        xform = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"), dst_crs, project)
+        feats = []
+        for scene in scenes:
+            geom = self._stac_geometry_to_qgs(scene.get("geometry"))
+            if geom is None or geom.isEmpty():
+                continue
+            try:
+                geom.transform(xform)
+            except Exception:
+                continue
+            props = scene.get("properties", {}) or {}
+            feat = QgsFeature(layer.fields())
+            feat.setGeometry(geom)
+            feat.setAttributes([
+                str(scene.get("id", "")),
+                str(props.get("datetime", "")),
+                float(props.get("eo:cloud_cover", -1) or -1),
+                str(scene.get("collection", "")),
+            ])
+            feats.append(feat)
+
+        if not feats:
+            _log(self, "No valid scene footprint geometries found.", Qgis.Warning)
+            return
+
+        prov.addFeatures(feats)
+        layer.updateExtents()
+        try:
+            sym = layer.renderer().symbol()
+            sym.setColor(QColor(76, 175, 80, 20))
+            sym.symbolLayer(0).setStrokeColor(QColor(56, 142, 60, 180))
+            sym.symbolLayer(0).setStrokeWidth(0.4)
+            layer.triggerRepaint()
+            layer.emitStyleChanged()
+        except Exception:
+            pass
+
+        QgsProject.instance().addMapLayer(layer)
+        self._scene_footprints_layer = layer
+
+    def _preview_matching_scenes(self):
+        if extractor_search_stac_api is None:
+            QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in virtughan.extract.")
+            return
+        try:
+            params = self._collect_search_params()
+        except Exception as e:
+            QMessageBox.warning(self, "VirtuGhan", str(e))
+            return
+
+        _log(self, "Searching matching scenes...")
+        try:
+            scenes = extractor_search_stac_api(
+                params["bbox"],
+                params["start_date"],
+                params["end_date"],
+                params["cloud_cover"],
+            )
+        except Exception as e:
+            _log(self, f"Scene search failed: {e}", Qgis.Critical)
+            QMessageBox.critical(self, "VirtuGhan", f"Scene search failed:\n{e}")
+            return
+
+        _log(self, f"Matching scenes found: {len(scenes)}")
+        if self.showSceneFootprintsCheck.isChecked():
+            self._render_scene_footprints(scenes)
+            _log(self, "Scene footprints layer updated.")
+        else:
+            self._clear_scene_footprints_layer()
+            _log(self, "Footprint display is disabled (checkbox unchecked).")

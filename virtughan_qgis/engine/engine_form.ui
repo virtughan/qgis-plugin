@@ -232,6 +232,18 @@
           </widget>
          </item>
          <item>
+          <widget class="QCheckBox" name="showSceneFootprintsCheck">
+           <property name="text"><string>Show matching scene footprints on map</string></property>
+           <property name="checked"><bool>true</bool></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="previewScenesButton">
+           <property name="text"><string>Preview Matching Scenes</string></property>
+           <property name="toolTip"><string>Search matching scenes using current AOI/date/cloud filters</string></property>
+          </widget>
+         </item>
+         <item>
           <spacer name="runSpacer">
            <property name="orientation"><enum>Qt::Horizontal</enum></property>
            <property name="sizeHint" stdset="0">
