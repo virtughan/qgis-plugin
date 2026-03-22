@@ -352,7 +352,7 @@ class EngineDockWidget(QDockWidget):
                 pass
             # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
-            self.iface.mainWindow().messageBar().clearWidgets()
+            self.iface.messageBar().clearWidgets()
             
             if not rect or rect.isEmpty():
                 _log(self, "AOI rectangle drawing canceled.")
@@ -369,7 +369,7 @@ class EngineDockWidget(QDockWidget):
         canvas.setMapTool(tool)
         # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
-        self.iface.mainWindow().messageBar().pushInfo(
+        self.iface.messageBar().pushInfo(
             "VirtuGhan", 
             "Click and drag on the map to draw a rectangle"
         )
@@ -388,9 +388,9 @@ class EngineDockWidget(QDockWidget):
                 canvas.setMapTool(self._prev_tool)
             except Exception:
                 pass
-            # Restore cursor and status bar
+            # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
-            self.iface.mainWindow().statusBar().clearMessage()
+            self.iface.messageBar().clearWidgets()
 
             if geom_map is None or geom_map.isEmpty():
                 _log(self, "AOI polygon drawing canceled.")
@@ -407,7 +407,7 @@ class EngineDockWidget(QDockWidget):
         canvas.setMapTool(tool)
         # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
-        self.iface.mainWindow().messageBar().pushInfo(
+        self.iface.messageBar().pushInfo(
             "VirtuGhan",
             "Left-click to add points, right-click or double-click to finish"
         )
@@ -425,7 +425,7 @@ class EngineDockWidget(QDockWidget):
             if self._prev_tool:
                 canvas.setMapTool(self._prev_tool)
             canvas.setCursor(QCursor(Qt.ArrowCursor))
-            self.iface.mainWindow().messageBar().clearWidgets()
+            self.iface.messageBar().clearWidgets()
         
         self._aoi_bbox = None
         self._update_aoi_preview()
