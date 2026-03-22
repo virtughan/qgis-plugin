@@ -20,7 +20,7 @@ from qgis.core import (
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QCursor
+from qgis.PyQt.QtGui import QCursor, QColor
 from qgis.PyQt.QtCore import QDate
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -160,7 +160,10 @@ class ExtractorDockWidget(QDockWidget):
         # AOI state
         self._aoi_bbox = None               # [lonmin, latmin, lonmax, latmax] (WGS84)
         self._aoi_polygon_wgs84 = None      # optional [[lon,lat], ...]
-        self._aoi = AoiManager(self.iface)  # shared AOI memory layer manager
+        # Green colors for Extractor AOI
+        self._aoi_fill_color = QColor(76, 175, 80, 60)      # light green with transparency
+        self._aoi_stroke_color = QColor(56, 142, 60, 200)   # darker green stroke
+        self._aoi = AoiManager(self.iface, layer_name="Extractor AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
         self._prev_tool = None
 
         self._init_common_widget()
@@ -328,7 +331,7 @@ class ExtractorDockWidget(QDockWidget):
             self._aoi_polygon_wgs84 = None
             self._update_aoi_preview()
 
-        tool = AoiRectTool(canvas, _finish)
+        tool = AoiRectTool(canvas, _finish, stroke_color=self._aoi_stroke_color, fill_color=self._aoi_fill_color)
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
@@ -365,7 +368,7 @@ class ExtractorDockWidget(QDockWidget):
             self._aoi_polygon_wgs84 = self._compute_polygon_wgs84_coords(geom_map)
             self._update_aoi_preview()
 
-        tool = AoiPolygonTool(canvas, _done)
+        tool = AoiPolygonTool(canvas, _done, stroke_color=self._aoi_stroke_color, fill_color=self._aoi_fill_color)
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor

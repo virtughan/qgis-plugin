@@ -44,10 +44,13 @@ class AoiManager:
     Keeps exactly one AOI feature in a temporary memory layer.
     Use replace_geometry() on every draw. Use clear() to remove the layer.
     """
-    def __init__(self, iface, layer_name: str = "AOI (drawn)"):
+    def __init__(self, iface, layer_name: str = "AOI (drawn)", fill_color: QColor = None, stroke_color: QColor = None):
         self.iface = iface
         self.layer = None
         self.layer_name = layer_name
+        # Default colors (blue)
+        self.fill_color = fill_color or QColor(0, 102, 255, 60)
+        self.stroke_color = stroke_color or QColor(0, 102, 255, 200)
 
     def ensure_layer(self):
         if self.layer and self.layer.isValid():
@@ -58,11 +61,11 @@ class AoiManager:
         prov.addAttributes([QgsField("id", QVariant.Int), QgsField("label", QVariant.String)])
         self.layer.updateFields()
         QgsProject.instance().addMapLayer(self.layer)
-        # Style: blue outline, light blue fill
+        # Apply stored colors
         try:
             sym = self.layer.renderer().symbol()
-            sym.setColor(QColor(0, 102, 255, 60))                   # fill
-            sym.symbolLayer(0).setStrokeColor(QColor(0, 102, 255, 200))  # stroke
+            sym.setColor(self.fill_color)
+            sym.symbolLayer(0).setStrokeColor(self.stroke_color)
             self.layer.triggerRepaint()
         except Exception:
             pass
@@ -92,19 +95,22 @@ class AoiManager:
 
 class AoiPolygonTool(QgsMapTool):
     """Polygon drawing tool: left-click add, right-click/double-click/Enter to finish."""
-    def __init__(self, canvas: QgsMapCanvas, on_done):
+    def __init__(self, canvas: QgsMapCanvas, on_done, stroke_color: QColor = None, fill_color: QColor = None):
         super().__init__(canvas)
         self.canvas = canvas
         self.on_done = on_done
         self.points = []
         self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
         self.rb.setWidth(2)
+        # Use provided colors or default blue
+        stroke = stroke_color or QColor(0, 102, 255, 200)
+        fill = fill_color or QColor(0, 102, 255, 60)
         try:
-            self.rb.setColor(QColor(0, 102, 255, 200))
-            self.rb.setFillColor(QColor(0, 102, 255, 60))
+            self.rb.setColor(stroke)
+            self.rb.setFillColor(fill)
         except Exception:
             try:
-                self.rb.setStrokeColor(QColor(0, 102, 255, 200))
+                self.rb.setStrokeColor(stroke)
             except Exception:
                 pass
 
@@ -153,19 +159,22 @@ class AoiPolygonTool(QgsMapTool):
 
 class AoiRectTool(QgsMapTool):
     """Press-drag-release rectangle tool."""
-    def __init__(self, canvas: QgsMapCanvas, on_done):
+    def __init__(self, canvas: QgsMapCanvas, on_done, stroke_color: QColor = None, fill_color: QColor = None):
         super().__init__(canvas)
         self.canvas = canvas
         self.on_done = on_done
         self.start_pt = None
         self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
         self.rb.setWidth(2)
+        # Use provided colors or default blue
+        stroke = stroke_color or QColor(0, 102, 255, 200)
+        fill = fill_color or QColor(0, 102, 255, 60)
         try:
-            self.rb.setColor(QColor(0, 102, 255, 200))
-            self.rb.setFillColor(QColor(0, 102, 255, 60))
+            self.rb.setColor(stroke)
+            self.rb.setFillColor(fill)
         except Exception:
             try:
-                self.rb.setStrokeColor(QColor(0, 102, 255, 200))
+                self.rb.setStrokeColor(stroke)
             except Exception:
                 pass
 

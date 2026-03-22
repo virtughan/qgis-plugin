@@ -221,8 +221,10 @@ class EngineDockWidget(QDockWidget):
             self.workersSpin.setValue(1)
 
         self._aoi_bbox = None
-        self._aoi = AoiManager(self.iface)   
-        self._prev_tool = None               
+        # Blue colors for Engine AOI
+        self._aoi_fill_color = QColor(0, 102, 255, 60)      # light blue with transparency
+        self._aoi_stroke_color = QColor(0, 102, 255, 200)   # darker blue stroke
+        self._aoi = AoiManager(self.iface, layer_name="Engine AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
 
         # Convert dropdown to 3 options at runtime (no .ui change required)
         self.aoiModeCombo.clear()
@@ -365,7 +367,7 @@ class EngineDockWidget(QDockWidget):
             self._aoi_bbox = rect_to_wgs84_bbox(rect, QgsProject.instance())
             self._update_aoi_preview()
 
-        tool = AoiRectTool(canvas, _finish)
+        tool = AoiRectTool(canvas, _finish, stroke_color=self._aoi_stroke_color, fill_color=self._aoi_fill_color)
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
@@ -404,7 +406,7 @@ class EngineDockWidget(QDockWidget):
             self._aoi_bbox = geom_to_wgs84_bbox(geom_map, QgsProject.instance())
             self._update_aoi_preview()
 
-        tool = AoiPolygonTool(canvas, _done)
+        tool = AoiPolygonTool(canvas, _done, stroke_color=self._aoi_stroke_color, fill_color=self._aoi_fill_color)
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
