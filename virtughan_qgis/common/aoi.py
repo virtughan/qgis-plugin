@@ -66,7 +66,7 @@ class AoiManager:
             sym = self.layer.renderer().symbol()
             sym.setColor(self.fill_color)
             sym.symbolLayer(0).setStrokeColor(self.stroke_color)
-            sym.symbolLayer(0).setStrokeWidth(2)  # Ensure stroke width matches drawing tool
+            sym.symbolLayer(0).setStrokeWidth(0.5)  # Final AOI layer stroke thickness
             self.layer.triggerRepaint()
             # Force legend refresh
             self.layer.emitStyleChanged()
@@ -109,7 +109,7 @@ class AoiPolygonTool(QgsMapTool):
         self.on_done = on_done
         self.points = []
         self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
-        self.rb.setWidth(2)
+        self.rb.setWidth(1)
         # Use provided colors or default blue
         stroke = stroke_color or QColor(0, 102, 255, 200)
         fill = fill_color or QColor(0, 102, 255, 60)
@@ -173,7 +173,7 @@ class AoiRectTool(QgsMapTool):
         self.on_done = on_done
         self.start_pt = None
         self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
-        self.rb.setWidth(2)
+        self.rb.setWidth(1)
         # Use provided colors or default blue
         stroke = stroke_color or QColor(0, 102, 255, 200)
         fill = fill_color or QColor(0, 102, 255, 60)
