@@ -73,7 +73,7 @@ def zoom_to_lonlat(iface,
                    lon: float,
                    lat: float,
                    scale_m: float = 10000.0,
-                   delay_ms: int = 80):
+                   delay_ms: int = 1000):
     """
     Center the canvas on (lon, lat) in EPSG:4326 and set the scale (1:scale_m).
     A short delay avoids 'zoom to full extent' races while layers/CRS are settling.
@@ -83,30 +83,49 @@ def zoom_to_lonlat(iface,
     if not canvas:
         return
 
-    prj = QgsProject.instance()
-    xform = QgsCoordinateTransform(
-        QgsCoordinateReferenceSystem("EPSG:4326"),
-        prj.crs(),
-        prj.transformContext(),
-    )
-    pt = xform.transform(lon, lat)
-
-    def _apply():
-        canvas.setCenter(pt)
+    def _apply_once(refresh: bool = True) -> bool:
         try:
-            canvas.zoomScale(scale_m)
-        except Exception:
-            pass
-        # recenter again after zoom to keep the target pinned
-        canvas.setCenter(pt)
-        canvas.refresh()
+            prj = QgsProject.instance()
+            dst_crs = canvas.mapSettings().destinationCrs()
+            if not dst_crs or not dst_crs.isValid():
+                dst_crs = prj.crs()
+            if not dst_crs or not dst_crs.isValid():
+                dst_crs = QgsCoordinateReferenceSystem("EPSG:4326")
 
-    QTimer.singleShot(max(0, delay_ms), _apply)
+            xform = QgsCoordinateTransform(
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                dst_crs,
+                prj.transformContext(),
+            )
+            pt = xform.transform(lon, lat)
+            if abs(float(lon)) > 1e-9 and abs(float(lat)) > 1e-9:
+                # Guard against transient bad transforms yielding origin.
+                if abs(pt.x()) < 1e-9 and abs(pt.y()) < 1e-9:
+                    return False
+
+            canvas.setCenter(pt)
+            try:
+                canvas.zoomScale(scale_m)
+            except Exception:
+                pass
+            canvas.setCenter(pt)
+            if refresh:
+                canvas.refresh()
+            return True
+        except Exception:
+            return False
+
+    def _apply_with_single_fallback():
+        if _apply_once(refresh=True):
+            return
+        QTimer.singleShot(500, lambda: _apply_once(refresh=True))
+
+    QTimer.singleShot(max(0, delay_ms), _apply_with_single_fallback)
 
 
 def zoom_to_wgs84_bbox(iface,
                        xmin: float, ymin: float, xmax: float, ymax: float,
-                       delay_ms: int = 80):
+                       delay_ms: int = 1000):
     """
     Zoom to a WGS84 bbox. Transforms to project CRS and sets canvas extent
     with a short delay to avoid being overwritten by extent resets.
@@ -115,19 +134,37 @@ def zoom_to_wgs84_bbox(iface,
     if not canvas:
         return
 
-    prj = QgsProject.instance()
-    xform = QgsCoordinateTransform(
-        QgsCoordinateReferenceSystem("EPSG:4326"),
-        prj.crs(),
-        prj.transformContext(),
-    )
-    rect = xform.transformBoundingBox(QgsRectangle(xmin, ymin, xmax, ymax))
+    def _apply_once(refresh: bool = True) -> bool:
+        try:
+            prj = QgsProject.instance()
+            dst_crs = canvas.mapSettings().destinationCrs()
+            if not dst_crs or not dst_crs.isValid():
+                dst_crs = prj.crs()
+            if not dst_crs or not dst_crs.isValid():
+                dst_crs = QgsCoordinateReferenceSystem("EPSG:4326")
 
-    def _apply():
-        canvas.setExtent(rect)
-        canvas.refresh()
+            xform = QgsCoordinateTransform(
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                dst_crs,
+                prj.transformContext(),
+            )
+            rect = xform.transformBoundingBox(QgsRectangle(xmin, ymin, xmax, ymax))
+            if rect is None or rect.isEmpty():
+                return False
 
-    QTimer.singleShot(max(0, delay_ms), _apply)
+            canvas.setExtent(rect)
+            if refresh:
+                canvas.refresh()
+            return True
+        except Exception:
+            return False
+
+    def _apply_with_single_fallback():
+        if _apply_once(refresh=True):
+            return
+        QTimer.singleShot(500, lambda: _apply_once(refresh=True))
+
+    QTimer.singleShot(max(0, delay_ms), _apply_with_single_fallback)
 
 
 def setup_default_map(
@@ -140,7 +177,7 @@ def setup_default_map(
     *,
     skip_if_present: bool = False,
     skip_zoom_if_present: bool = True,
-    zoom_delay_ms: int = 80,
+    zoom_delay_ms: int = 1000,
 ):
     """
     One-shot convenience: add OSM (if missing) and zoom.
@@ -149,10 +186,8 @@ def setup_default_map(
       - skip zoom when skip_zoom_if_present=True.
     """
     exists = has_osm_basemap()
-    if exists and skip_if_present:
-        return
-
-    ensure_osm_basemap(name=name, as_bottom=True, set_project_crs=set_project_crs)
+    if not (exists and skip_if_present):
+        ensure_osm_basemap(name=name, as_bottom=True, set_project_crs=set_project_crs)
 
     if exists and skip_zoom_if_present:
         return

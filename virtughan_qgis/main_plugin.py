@@ -161,7 +161,7 @@ class VirtuGhanPlugin:
                     scale_m=5000,
                     set_project_crs=False,            # respect current project CRS
                     skip_if_present=True,             # don't add another OSM if present
-                    skip_zoom_if_present=False,       # always apply startup zoom/center
+                    skip_zoom_if_present=True,        # don't recenter if OSM already present
                     zoom_delay_ms=1000,
                 )
         except Exception as e:
