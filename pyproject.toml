@@ -1,7 +1,7 @@
 [project]
 name = "virtughan-qgis-plugin"
 version = "0.2.1"
-description = "QGIS plugin with Extractor, Tiler, and Engine functionalities"
+description = "QGIS plugin for Sentinel-2 workflows with map preview, band extraction, and formula-based spectral analysis. It uses Engine, Extractor and Tiler from VirtuGhan"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0"}
@@ -41,8 +41,8 @@ test = [
 
 [tool.qgis-plugin]
 name = "VirtuGhan QGIS Plugin"
-description = "QGIS plugin with Extractor, Tiler, and Engine functionalities"
-about = "Plugin to run Extractor, Tiler, and Engine workflows for earth observation data. Download and analyze sentinel2 images with virtual datacube"
+description = "Preview, extract, and analyze Sentinel-2 data inside QGIS"
+about = "VirtuGhan helps you work with Sentinel-2 imagery directly in QGIS. Use Tiler to quickly preview satellite imagery on the map, Extractor to download the bands you need for a selected area and date range, and Engine to create analysis outputs such as index maps from formulas like NDVI. Results are written to local files and can be loaded back into your QGIS project."
 qgis_minimum_version = "3.22"
 category = "Analysis"
 icon = "static/images/virtughan-logo.png"

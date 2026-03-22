@@ -1,7 +1,7 @@
 [general]
 name=VirtuGhan QGIS Plugin
-description=QGIS plugin with Extractor, Tiler, and Engine functionalities
-about=Plugin to run Extractor, Tiler, and Engine workflows for earth observation data. Download and analyze sentinel2 images with virtual datacube
+description=Preview, extract, and analyze Sentinel-2 data inside QGIS
+about=VirtuGhan helps you work with Sentinel-2 imagery directly in QGIS. Use Tiler to quickly preview satellite imagery on the map, Extractor to download the bands you need for a selected area and date range, and Engine to create analysis outputs such as index maps from formulas like NDVI. Results are written to local files and can be loaded back into your QGIS project.
 version=0.2.1
 qgisMinimumVersion=3.22
 author=Upendra Oli; Kshitij Raj Sharma; Sahar Mohamed
