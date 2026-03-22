@@ -19,9 +19,8 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QDate, QTimer
 from qgis.PyQt.QtGui import QCursor, QColor
-from qgis.PyQt.QtCore import QDate
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -123,6 +122,42 @@ class _ExtractorTask(QgsTask):
             except Exception:
                 pass
 
+class _UiLogTailer:
+    """Poll a text file and append new content to a QPlainTextEdit without blocking UI."""
+    def __init__(self, log_path: str, log_widget: QPlainTextEdit, interval_ms: int = 400):
+        self._path = log_path
+        self._widget = log_widget
+        self._pos = 0
+        self._timer = QTimer()
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(self._poll_once)
+
+    def start(self):
+        try:
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            open(self._path, "a", encoding="utf-8").close()
+        except Exception:
+            pass
+        self._pos = 0
+        self._timer.start()
+
+    def stop(self):
+        self._timer.stop()
+
+    def _poll_once(self):
+        try:
+            if not os.path.exists(self._path):
+                return
+            with open(self._path, "r", encoding="utf-8", errors="replace") as f:
+                f.seek(self._pos)
+                chunk = f.read()
+                if chunk:
+                    self._widget.appendPlainText(chunk.rstrip("\n"))
+                    self._pos = f.tell()
+        except Exception:
+            pass
+from qgis.PyQt.QtCore import Qt, QTimer
+
 
 class ExtractorDockWidget(QDockWidget):
     def __init__(self, iface):
@@ -196,6 +231,7 @@ class ExtractorDockWidget(QDockWidget):
 
         self._current_task = None
         self._current_log_path = None
+        self._tailer = None
 
     def _init_common_widget(self):
         if CommonParamsWidget:
@@ -558,7 +594,12 @@ class ExtractorDockWidget(QDockWidget):
         except Exception:
             pass
 
+        self._set_running(True)
+        self._start_tailing(log_path)
+
         def _on_done(ok, exc):
+            self._stop_tailing()
+            self._set_running(False)
             if not ok or exc:
                 _log(self, f"Extractor failed: {exc}", Qgis.Critical)
                 QMessageBox.critical(
@@ -589,3 +630,26 @@ class ExtractorDockWidget(QDockWidget):
             "VirtuGhan Extractor", params, log_path, on_done=_on_done
         )
         QgsApplication.taskManager().addTask(self._current_task)
+
+    def _start_tailing(self, log_path: str):
+        self._current_log_path = log_path
+        self._tailer = _UiLogTailer(log_path, self.logText, interval_ms=400)
+        self._tailer.start()
+
+    def _stop_tailing(self):
+        if self._tailer:
+            self._tailer.stop()
+            self._tailer = None
+        self._current_log_path = None
+
+    def _set_running(self, running: bool):
+        self.progressBar.setVisible(running)
+        self.progressBar.setRange(0, 0 if running else 1)
+        self.runButton.setEnabled(not running)
+        self.resetButton.setEnabled(not running)
+        for w in (self.aoiStartDrawButton, self.aoiClearButton,
+                  self.aoiModeCombo, self.outputBrowseButton):
+            try:
+                w.setEnabled(not running)
+            except Exception:
+                pass
