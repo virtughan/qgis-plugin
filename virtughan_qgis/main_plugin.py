@@ -142,11 +142,11 @@ class VirtuGhanPlugin:
             if getattr(self.iface, "mapCanvas", None) and self.iface.mapCanvas():
                 setup_default_map(
                     self.iface,
-                    center_wgs84=(85.3240, 27.7172), 
+                    center_wgs84=(85.3478258, 27.6934185),
                     scale_m=5000,
                     set_project_crs=False,            # respect current project CRS
                     skip_if_present=True,             # don't add another OSM if present
-                    skip_zoom_if_present=True,        # don't re-zoom if OSM is already there
+                    skip_zoom_if_present=False,       # always apply startup zoom/center
                     zoom_delay_ms=1000,
                 )
         except Exception as e:
