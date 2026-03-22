@@ -35,7 +35,7 @@ def test_build_produces_zip():
     project_root = Path(__file__).parent.parent
     
     result = subprocess.run([
-        "./build.sh"
+        sys.executable, "build.py"
     ], cwd=str(project_root), capture_output=True, text=True)
     
     assert result.returncode == 0, f"Build failed: {result.stderr}"

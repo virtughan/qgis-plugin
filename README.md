@@ -36,7 +36,19 @@ cd qgis-plugin
 uv sync
 ```
 
-3. Build the plugin:
+3. Build the plugin (use **one** command):
+
+- Any OS:
+```bash
+python build.py
+```
+OR
+
+- Windows (PowerShell):
+```powershell
+.\build.ps1
+```
+- Linux/macOS:
 ```bash
 ./build.sh
 ```
@@ -65,6 +77,17 @@ cz changelog
 
 ### Building
 
+Use **one** of the following commands:
+
+- Any OS:
+```bash
+python build.py
+```
+- Windows (PowerShell):
+```powershell
+.\build.ps1
+```
+- Linux/macOS:
 ```bash
 ./build.sh
 ```
@@ -76,9 +99,9 @@ The build script:
 
 ## Links
 
-- [Live Demo](https://virtughan.live/)
+- [Live Demo](https://virtughan.com/)
 - [VirtuGhan Package](https://pypi.org/project/VirtuGhan/)
-- [Documentation](https://github.com/kshitijrajsharma/VirtuGhan)
+- [Documentation](https://github.com/virtughan)
 
 ## License
 

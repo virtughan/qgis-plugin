@@ -1,6 +1,5 @@
 import os
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 import pytest
@@ -12,6 +11,7 @@ def test_project_structure():
     assert (project_root / "pyproject.toml").exists()
     assert (project_root / "README.md").exists()
     assert (project_root / "build.sh").exists()
+    assert (project_root / "build.ps1").exists()
     assert (project_root / "generate_metadata.py").exists()
     assert (project_root / "virtughan_qgis").exists()
 
@@ -68,35 +68,33 @@ def test_metadata_generation():
     
     assert metadata_script.exists()
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-        os.chdir(temp_dir)
-        
-        import subprocess
-        result = subprocess.run([
-            sys.executable, str(metadata_script)
-        ], cwd=str(project_root), capture_output=True, text=True)
-        
-        assert result.returncode == 0, f"Metadata generation failed: {result.stderr}"
-        
-        metadata_file = project_root / "virtughan_qgis" / "metadata.txt"
-        assert metadata_file.exists()
-        
-        content = metadata_file.read_text()
-        assert "name=VirtuGhan QGIS Plugin" in content
-        assert "version=" in content
-        assert "qgisMinimumVersion=" in content
+    import subprocess
+    result = subprocess.run([
+        sys.executable, str(metadata_script)
+    ], cwd=str(project_root), capture_output=True, text=True)
+
+    assert result.returncode == 0, f"Metadata generation failed: {result.stderr}"
+
+    metadata_file = project_root / "virtughan_qgis" / "metadata.txt"
+    assert metadata_file.exists()
+
+    content = metadata_file.read_text()
+    assert "name=VirtuGhan QGIS Plugin" in content
+    assert "version=" in content
+    assert "qgisMinimumVersion=" in content
 
 
 def test_build_script():
     project_root = Path(__file__).parent.parent
     build_script = project_root / "build.sh"
+    build_script_py = project_root / "build.py"
     
     assert build_script.exists()
-    assert os.access(build_script, os.X_OK), "build.sh is not executable"
+    assert build_script_py.exists()
     
     import subprocess
     result = subprocess.run([
-        str(build_script)
+        sys.executable, str(build_script_py)
     ], cwd=str(project_root), capture_output=True, text=True)
     
     assert result.returncode == 0, f"Build script failed: {result.stderr}"
