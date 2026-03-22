@@ -315,9 +315,9 @@ class ExtractorDockWidget(QDockWidget):
                 canvas.setMapTool(self._prev_tool)
             except Exception:
                 pass
-            # Restore cursor and status bar
+            # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
-            self.iface.mainWindow().statusBar().clearMessage()
+            self.iface.mainWindow().messageBar().clearWidgets()
             
             if not rect or rect.isEmpty():
                 _log(self, "AOI rectangle drawing canceled.")
@@ -330,9 +330,12 @@ class ExtractorDockWidget(QDockWidget):
 
         tool = AoiRectTool(canvas, _finish)
         canvas.setMapTool(tool)
-        # Show status bar message and change cursor
+        # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
-        self.iface.mainWindow().statusBar().showMessage("Click and drag on the map to draw a rectangle")
+        self.iface.mainWindow().messageBar().pushInfo(
+            "VirtuGhan",
+            "Click and drag on the map to draw a rectangle"
+        )
         _log(self, "Draw rectangle: press, drag, release to finish. Esc to cancel.")
 
     def _start_draw_polygon(self):
@@ -348,9 +351,9 @@ class ExtractorDockWidget(QDockWidget):
                 canvas.setMapTool(self._prev_tool)
             except Exception:
                 pass
-            # Restore cursor and status bar
+            # Restore cursor and message bar
             canvas.setCursor(QCursor(Qt.ArrowCursor))
-            self.iface.mainWindow().statusBar().clearMessage()
+            self.iface.mainWindow().messageBar().clearWidgets()
             
             if geom_map is None or geom_map.isEmpty():
                 _log(self, "AOI polygon drawing canceled.")
@@ -363,9 +366,12 @@ class ExtractorDockWidget(QDockWidget):
 
         tool = AoiPolygonTool(canvas, _done)
         canvas.setMapTool(tool)
-        # Show status bar message and change cursor
+        # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
-        self.iface.mainWindow().statusBar().showMessage("Left-click to add points, right-click or double-click to finish")
+        self.iface.mainWindow().messageBar().pushInfo(
+            "VirtuGhan",
+            "Left-click to add points, right-click or double-click to finish"
+        )
         _log(self, "Draw polygon: left-click to add, right-click/Enter/double-click to finish, Esc to cancel.")
 
     def _compute_polygon_wgs84_coords(self, geom_map: QgsGeometry):
@@ -388,9 +394,22 @@ class ExtractorDockWidget(QDockWidget):
             return None
 
     def _clear_aoi(self):
+        # Reset drawing tool if active
+        canvas: QgsMapCanvas = self.iface.mapCanvas()
+        if canvas:
+            if hasattr(canvas.mapTool(), 'rb'):
+                try:
+                    canvas.mapTool().rb.reset()
+                except Exception:
+                    pass
+            if self._prev_tool:
+                canvas.setMapTool(self._prev_tool)
+            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            self.iface.mainWindow().messageBar().clearWidgets()
+        
         self._aoi_bbox = None
         self._aoi_polygon_wgs84 = None
-        self._update_aoi_preview("AOI: not set yet")
+        self._update_aoi_preview()
         try:
             self._aoi.clear()
         except Exception:
