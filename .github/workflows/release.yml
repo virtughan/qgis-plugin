@@ -51,6 +51,6 @@ jobs:
             - **Engine**: Process and analyze satellite imagery  
             - **Extractor**: Bulk download satellite data
 
-            For more information, visit [virtughan.live](https://virtughan.live/)
+            For more information, visit [virtughan.com](https://virtughan.com/)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

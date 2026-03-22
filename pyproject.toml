@@ -26,9 +26,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://virtughan.live/"
-Repository = "https://github.com/geomatupen/virtughan-qgis-plugin"
-Issues = "https://github.com/geomatupen/virtughan-qgis-plugin/issues"
+Homepage = "https://virtughan.com/"
+Repository = "https://github.com/virtughan/qgis-plugin"
+Issues = "https://github.com/virtughan/qgis-plugin/issues"
 
 [dependency-groups]
 dev = [
