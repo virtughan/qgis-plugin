@@ -19,6 +19,8 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapCanvas
 from qgis.PyQt import uic
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QCursor
 from qgis.PyQt.QtCore import QDate
 from qgis.PyQt.QtWidgets import (
     QCheckBox,
@@ -313,6 +315,10 @@ class ExtractorDockWidget(QDockWidget):
                 canvas.setMapTool(self._prev_tool)
             except Exception:
                 pass
+            # Restore cursor and status bar
+            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            self.iface.statusBar().clearMessage()
+            
             if not rect or rect.isEmpty():
                 _log(self, "AOI rectangle drawing canceled.")
                 return
@@ -324,6 +330,9 @@ class ExtractorDockWidget(QDockWidget):
 
         tool = AoiRectTool(canvas, _finish)
         canvas.setMapTool(tool)
+        # Show status bar message and change cursor
+        canvas.setCursor(QCursor(Qt.CrossCursor))
+        self.iface.statusBar().showMessage("Click and drag on the map to draw a rectangle")
         _log(self, "Draw rectangle: press, drag, release to finish. Esc to cancel.")
 
     def _start_draw_polygon(self):
@@ -339,6 +348,10 @@ class ExtractorDockWidget(QDockWidget):
                 canvas.setMapTool(self._prev_tool)
             except Exception:
                 pass
+            # Restore cursor and status bar
+            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            self.iface.statusBar().clearMessage()
+            
             if geom_map is None or geom_map.isEmpty():
                 _log(self, "AOI polygon drawing canceled.")
                 return
@@ -350,6 +363,9 @@ class ExtractorDockWidget(QDockWidget):
 
         tool = AoiPolygonTool(canvas, _done)
         canvas.setMapTool(tool)
+        # Show status bar message and change cursor
+        canvas.setCursor(QCursor(Qt.CrossCursor))
+        self.iface.statusBar().showMessage("Left-click to add points, right-click or double-click to finish")
         _log(self, "Draw polygon: left-click to add, right-click/Enter/double-click to finish, Esc to cancel.")
 
     def _compute_polygon_wgs84_coords(self, geom_map: QgsGeometry):
