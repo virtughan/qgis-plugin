@@ -366,6 +366,7 @@ class EngineDockWidget(QDockWidget):
             self._update_aoi_preview()
 
         tool = AoiRectTool(canvas, _finish)
+        self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
@@ -404,6 +405,7 @@ class EngineDockWidget(QDockWidget):
             self._update_aoi_preview()
 
         tool = AoiPolygonTool(canvas, _done)
+        self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
         canvas.setCursor(QCursor(Qt.CrossCursor))
@@ -417,16 +419,19 @@ class EngineDockWidget(QDockWidget):
         # Reset drawing tool if active
         canvas = self.iface.mapCanvas()
         if canvas:
-            if hasattr(canvas.mapTool(), 'rb'):
+            # Clean up any rubber band from the drawing tool
+            if hasattr(self, '_drawing_tool') and self._drawing_tool and hasattr(self._drawing_tool, 'rb'):
                 try:
-                    canvas.mapTool().rb.reset()
+                    self._drawing_tool.rb.reset()
                 except Exception:
                     pass
+            # Restore previous map tool
             if self._prev_tool:
                 canvas.setMapTool(self._prev_tool)
             canvas.setCursor(QCursor(Qt.ArrowCursor))
             self.iface.messageBar().clearWidgets()
         
+        self._drawing_tool = None  # Clear reference
         self._aoi_bbox = None
         self._update_aoi_preview()
         self._aoi.clear()
