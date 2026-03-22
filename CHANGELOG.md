@@ -7,6 +7,9 @@
 - **preview-map**: adds OSM basemap and CRS-safe footprint projection in preview window
 - **aoi**: separates Engine and Extractor AOI layers with distinct names and colors
 - **extractor**: adds runtime log/progress behavior parity with Engine
+- **toolbar**: adds dedicated VirtuGhan toolbar with separate Engine, Extractor, and Tiler launch icons
+- **navigation-icons**: adds module-specific tab/toolbar icons (gear, download, tiles) for clearer module access
+- **run-ux**: moves Engine/Extractor run controls into cleaner two-row action layout
 
 ### Fix
 
@@ -14,6 +17,12 @@
 - **aoi-clear**: improves AOI clear/refresh behavior for immediate canvas update
 - **basemap-detection**: ignores temporary registry-only OSM layers during startup map setup
 - **preview-ux**: shows loading state while searching scenes and uses close-only preview flow
+- **footprint-default**: sets "Show matching scene footprints on map" to unchecked by default
+- **footprint-timing**: prevents preview step from adding footprints to main map before processing completes
+- **footprint-fallback**: auto-fetches scenes from current filters when preview selection is empty at post-run render time
+- **footprint-order**: inserts footprint layer below generated result rasters to avoid blocking analysis outputs
+- **footprint-logging**: logs real footprint add counts and avoids false "added to map" messages when zero features are rendered
+- **hub-layout**: increases hub dialog height for better initial log visibility
 
 ## v0.2.1 (2025-08-22)
 

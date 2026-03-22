@@ -660,7 +660,7 @@ class EngineDockWidget(QDockWidget):
                     if count > 0:
                         _log(self, f"Scene footprints layer added to main map after run completion ({count} scenes).")
                     else:
-                        _log(self, "No scene footprints were added (open Preview Matching Scenes and keep scenes selected).", Qgis.Warning)
+                        _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", Qgis.Warning)
                 else:
                     self._clear_scene_footprints_layer()
 
@@ -692,7 +692,7 @@ class EngineDockWidget(QDockWidget):
             if count > 0:
                 _log(self, f"Scene footprints layer added to main map ({count} scenes).")
             else:
-                _log(self, "No scene footprints were added (open Preview Matching Scenes and keep scenes selected).", Qgis.Warning)
+                _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", Qgis.Warning)
         else:
             _log(self, "Scene footprints will be added after a successful run.")
 
