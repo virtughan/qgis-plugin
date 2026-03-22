@@ -166,6 +166,11 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._apply_localserver_visibility()
         QgsProject.instance().layersRemoved.connect(self._on_layers_removed)
 
+        try:
+            self.setMinimumSize(self.sizeHint())
+        except Exception:
+            pass
+
     def _log(self, msg: str):
         QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
 
@@ -256,6 +261,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.addLayerBtn.clicked.connect(self._on_add_layer)
         self.resetBtn.clicked.connect(self._on_reset)
         self.helpBtn.clicked.connect(self._on_help)
+        self.advancedToggleBtn.clicked.connect(self._toggle_advanced)
         self.timeseriesCheck.toggled.connect(self._apply_timeseries_visibility)
         self.runLocalCheck.toggled.connect(self._apply_localserver_visibility)
         self.startServerBtn.clicked.connect(self._on_start_server)
@@ -265,6 +271,14 @@ class TilerWidget(QWidget, FORM_CLASS):
         show = self.timeseriesCheck.isChecked()
         self.labelOp.setVisible(show)
         self.operationCombo.setVisible(show)
+
+    def _toggle_advanced(self):
+        """Toggle visibility of the Advanced Options (Local Server) section."""
+        is_visible = self.groupBoxLocal.isVisible()
+        self.groupBoxLocal.setVisible(not is_visible)
+        # Update button text to indicate expanded/collapsed state
+        new_text = "Advanced Options ▲" if not is_visible else "Advanced Options ▼"
+        self.advancedToggleBtn.setText(new_text)
 
     def _apply_localserver_visibility(self):
         enabled = self.runLocalCheck.isChecked()
@@ -281,14 +295,17 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.backendUrlLine.setText(f"http://{host}:{port}")
 
     def _on_help(self):
+        host = self.window()
+        if host and hasattr(host, "show_help_for"):
+            host.show_help_for("tiler")
+            return
+
         QMessageBox.information(
             self,
-            "VirtuGhan Tiler",
-            "Adds an XYZ layer rendered by your local FastAPI server.\n\n"
-            "• App Path defaults to virtughan_qgis.tiler.api:app (embedded).\n"
-            "• Defaults (dates, cloud, bands, formula) are pulled from the common module when available.\n"
-            "• Optional: enable Time series and choose an aggregation.\n"
-            "• Workers are forced to 1 in-process.",
+            "VirtuGhan Tiler Help",
+            "Tiler adds a preview XYZ layer from Sentinel-2 imagery.\n\n"
+            "Required fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n\n"
+            "Use Add XYZ Layer to load preview tiles into QGIS.",
         )
 
     def _remove_tiler_layers(self):

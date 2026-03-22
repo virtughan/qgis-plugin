@@ -5,17 +5,111 @@
   <property name="windowTitle">
    <string>VirtuGhan Tiler</string>
   </property>
+  <property name="styleSheet">
+    <string>QLineEdit, QComboBox, QDateEdit, QSpinBox, QListWidget { padding-left: 2px; padding-right: 2px; padding-top: 4px; padding-bottom: 4px; }</string>
+  </property>
   <layout class="QVBoxLayout" name="verticalLayout_root">
+    <property name="spacing">
+        <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <layout class="QHBoxLayout" name="headerLayout">
+        <property name="spacing">
+         <number>2</number>
+        </property>
+      <item>
+        <widget class="QLabel" name="titleLabel">
+         <property name="text">
+          <string>&lt;b&gt;VirtuGhan Tiler&lt;/b&gt;</string>
+         </property>
+        </widget>
+      </item>
+      <item>
+        <spacer name="headerSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+            <width>40</width>
+            <height>20</height>
+          </size>
+         </property>
+        </spacer>
+      </item>
+      <item>
+        <widget class="QPushButton" name="helpBtn">
+         <property name="text">
+          <string>Help</string>
+         </property>
+        </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QLabel" name="requiredHintLabel">
+      <property name="text">
+        <string>&lt;i&gt;* Required fields&lt;/i&gt;</string>
+      </property>
+            <property name="margin">
+             <number>0</number>
+            </property>
+                        <property name="maximumHeight">
+                         <number>14</number>
+                        </property>
+     </widget>
+    </item>
    <item>
     <widget class="QGroupBox" name="groupBoxConn">
      <property name="title">
       <string>Connection</string>
      </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="maximumHeight">
+      <number>80</number>
+     </property>
      <layout class="QGridLayout" name="gridConn">
+        <property name="horizontalSpacing">
+         <number>2</number>
+        </property>
+        <property name="verticalSpacing">
+       <number>2</number>
+        </property>
+        <property name="leftMargin">
+         <number>2</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>2</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
       <item row="0" column="0">
        <widget class="QLabel" name="labelBackend">
         <property name="text">
-         <string>Backend URL</string>
+                 <string>Backend URL *</string>
         </property>
        </widget>
       </item>
@@ -29,7 +123,7 @@
       <item row="1" column="0">
        <widget class="QLabel" name="labelLayerName">
         <property name="text">
-         <string>Layer Name</string>
+                 <string>Layer Name *</string>
         </property>
        </widget>
       </item>
@@ -49,11 +143,46 @@
      <property name="title">
       <string>Parameters</string>
      </property>
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="maximumHeight">
+      <number>280</number>
+     </property>
      <layout class="QGridLayout" name="gridParams">
+      <property name="horizontalSpacing">
+       <number>2</number>
+      </property>
+      <property name="verticalSpacing">
+       <number>2</number>
+      </property>
+      <property name="leftMargin">
+       <number>2</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>2</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
       <item row="0" column="0">
        <widget class="QLabel" name="labelStart">
         <property name="text">
-         <string>Start Date</string>
+                 <string>Start Date *</string>
         </property>
        </widget>
       </item>
@@ -71,7 +200,7 @@
       <item row="1" column="0">
        <widget class="QLabel" name="labelEnd">
         <property name="text">
-         <string>End Date</string>
+                 <string>End Date *</string>
         </property>
        </widget>
       </item>
@@ -89,7 +218,7 @@
       <item row="2" column="0">
        <widget class="QLabel" name="labelCloud">
         <property name="text">
-         <string>Cloud cover (%)</string>
+                 <string>Cloud cover (%) *</string>
         </property>
        </widget>
       </item>
@@ -110,7 +239,7 @@
       <item row="3" column="0">
        <widget class="QLabel" name="labelBand1">
         <property name="text">
-         <string>Band 1</string>
+                 <string>Band 1 *</string>
         </property>
        </widget>
       </item>
@@ -132,7 +261,7 @@
       <item row="5" column="0">
        <widget class="QLabel" name="labelFormula">
         <property name="text">
-         <string>Formula</string>
+                 <string>Formula *</string>
         </property>
        </widget>
       </item>
@@ -184,28 +313,68 @@
     </widget>
    </item>
 
+    <item>
+     <layout class="QHBoxLayout" name="buttonRow">
+      <item>
+        <spacer name="buttonSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+            <width>40</width>
+            <height>20</height>
+          </size>
+         </property>
+        </spacer>
+      </item>
+      <item>
+        <widget class="QPushButton" name="resetBtn">
+         <property name="text">
+          <string>Reset</string>
+         </property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QPushButton" name="addLayerBtn">
+         <property name="text">
+          <string>Add XYZ Layer</string>
+         </property>
+         <property name="minimumHeight">
+          <number>30</number>
+         </property>
+        </widget>
+      </item>
+     </layout>
+    </item>
+
    <item>
-    <layout class="QHBoxLayout" name="buttonRow">
+    <layout class="QHBoxLayout" name="advancedToggleLayout">
      <item>
-      <widget class="QPushButton" name="addLayerBtn">
+      <widget class="QPushButton" name="advancedToggleBtn">
        <property name="text">
-        <string>Add XYZ Layer</string>
+        <string>Advanced Options ▼</string>
+       </property>
+       <property name="flat">
+        <bool>true</bool>
+       </property>
+       <property name="styleSheet">
+        <string>text-align: left; padding: 4px;</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QPushButton" name="resetBtn">
-       <property name="text">
-        <string>Reset</string>
+      <spacer name="advancedSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
        </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="helpBtn">
-       <property name="text">
-        <string>Help</string>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
        </property>
-      </widget>
+      </spacer>
      </item>
     </layout>
    </item>
@@ -215,7 +384,43 @@
         <property name="title">
         <string>Local Server</string>
         </property>
+        <property name="visible">
+         <bool>false</bool>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="maximumHeight">
+         <number>200</number>
+        </property>
         <layout class="QGridLayout" name="gridLocal">
+        <property name="horizontalSpacing">
+         <number>2</number>
+        </property>
+        <property name="verticalSpacing">
+         <number>2</number>
+        </property>
+        <property name="leftMargin">
+         <number>2</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>2</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
+        <rowstretch>0</rowstretch>
         <item row="0" column="0">
             <widget class="QLabel" name="labelRunLocal">
             <property name="text">
@@ -296,6 +501,19 @@
     </widget>
     </item>
 
+   <item>
+    <spacer name="bottomSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>1</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
 
   </layout>
  </widget>

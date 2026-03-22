@@ -5,6 +5,9 @@
   <property name="windowTitle">
    <string>VirtuGhan • Extractor</string>
   </property>
+  <property name="styleSheet">
+   <string>QLineEdit, QComboBox, QDateEdit, QSpinBox, QListWidget { padding: 2px; }</string>
+  </property>
   <layout class="QVBoxLayout" name="verticalLayout_root">
 
    <!-- Header -->
@@ -33,6 +36,14 @@
     </layout>
    </item>
 
+    <item>
+     <widget class="QLabel" name="requiredHintLabel">
+      <property name="text">
+        <string>&lt;i&gt;* Required fields&lt;/i&gt;</string>
+      </property>
+     </widget>
+    </item>
+
    <!-- Tabs -->
    <item>
     <widget class="QTabWidget" name="tabWidget">
@@ -42,12 +53,20 @@
      <widget class="QWidget" name="tabBasics">
       <attribute name="title"><string>Basics</string></attribute>
       <layout class="QVBoxLayout" name="basicsLayout">
+         <property name="spacing">
+          <number>2</number>
+         </property>
 
        <!-- Common Parameters -->
        <item>
         <widget class="QGroupBox" name="groupCommon">
          <property name="title"><string>Common Parameters</string></property>
          <layout class="QVBoxLayout" name="layoutCommon">
+          <property name="spacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item>
            <widget class="QWidget" name="commonParamsContainer"/>
           </item>
@@ -60,15 +79,23 @@
         <widget class="QGroupBox" name="groupExtractorParams">
          <property name="title"><string>Extractor Parameters</string></property>
          <layout class="QGridLayout" name="gridExtractor">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
 
           <item row="0" column="0">
            <widget class="QLabel" name="labelBands">
-            <property name="text"><string>Bands to extract</string></property>
+            <property name="text"><string>Bands to extract *</string></property>
            </widget>
           </item>
           <item row="0" column="1" colspan="3">
            <widget class="QListWidget" name="bandsListWidget">
             <property name="selectionMode"><enum>QAbstractItemView::MultiSelection</enum></property>
+            <property name="minimumHeight"><number>80</number></property>
+            <property name="maximumHeight"><number>120</number></property>
             <item><property name="text"><string>red</string></property></item>
             <item><property name="text"><string>green</string></property></item>
             <item><property name="text"><string>blue</string></property></item>
@@ -100,8 +127,14 @@
        <!-- AOI -->
        <item>
         <widget class="QGroupBox" name="groupAOI">
-         <property name="title"><string>Area of Interest</string></property>
+         <property name="title"><string>Area of Interest *</string></property>
          <layout class="QGridLayout" name="gridAOI">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item row="0" column="0">
            <widget class="QLabel" name="labelAOIMode">
             <property name="text"><string>AOI mode</string></property>
@@ -142,6 +175,12 @@
         <widget class="QGroupBox" name="groupOutput">
          <property name="title"><string>Output</string></property>
          <layout class="QGridLayout" name="gridOutput">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item row="0" column="0">
            <widget class="QLabel" name="labelWorkers">
             <property name="text"><string>Workers</string></property>

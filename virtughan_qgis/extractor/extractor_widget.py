@@ -183,6 +183,12 @@ class ExtractorDockWidget(QDockWidget):
         self._update_aoi_preview()
         self._aoi_mode_changed(self.aoiModeCombo.currentText())
 
+        try:
+            self.ui_root.setMinimumSize(self.ui_root.sizeHint())
+            self.setMinimumSize(self.ui_root.sizeHint())
+        except Exception:
+            pass
+
         self._current_task = None
         self._current_log_path = None
 
@@ -217,9 +223,37 @@ class ExtractorDockWidget(QDockWidget):
             if child:
                 child.hide()
 
+        # Collapse hidden rows in the common grid so no blank vertical space remains.
+        try:
+            grid = w.findChild(QWidget, "grid")
+            if grid is None:
+                from qgis.PyQt.QtWidgets import QGridLayout
+                layout = w.layout()
+                if isinstance(layout, QGridLayout):
+                    grid_layout = layout
+                else:
+                    grid_layout = None
+            else:
+                grid_layout = grid.layout()
+
+            if grid_layout is not None:
+                for row in (2, 3, 4):
+                    try:
+                        grid_layout.setRowMinimumHeight(row, 0)
+                        grid_layout.setRowStretch(row, 0)
+                    except Exception:
+                        pass
+                try:
+                    grid_layout.setVerticalSpacing(2)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         # Optional: nudge layouts to recompute sizes
         try:
             w.updateGeometry()
+            w.setMinimumHeight(w.sizeHint().height())
             self.ui_root.adjustSize()
         except Exception:
             pass
@@ -359,7 +393,18 @@ class ExtractorDockWidget(QDockWidget):
             self.aoiPreviewLabel.setText("<i>AOI: not set yet</i>")
 
     def _open_help(self):
-        QMessageBox.information(self, "Help", "VirtuGhan Extractor Help coming soon.")
+        host = self.window()
+        if host and hasattr(host, "show_help_for"):
+            host.show_help_for("extractor")
+            return
+
+        QMessageBox.information(
+            self,
+            "VirtuGhan Extractor Help",
+            "Extractor downloads Sentinel-2 bands for your selected AOI and date range.\n\n"
+            "Required fields: Start date, End date, Max cloud (%), Bands to extract, and AOI.\n\n"
+            "Run Extractor to produce raster files in the output folder.",
+        )
 
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")

@@ -409,10 +409,19 @@ class EngineDockWidget(QDockWidget):
 
 
     def _open_help(self):
-        try:
-            self.iface.openURL("https://example.com/virtughan-docs")
-        except Exception:
-            QMessageBox.information(self, "VirtuGhan", "Documentation URL not configured yet.")
+        host = self.window()
+        if host and hasattr(host, "show_help_for"):
+            host.show_help_for("engine")
+            return
+
+        QMessageBox.information(
+            self,
+            "VirtuGhan Engine Help",
+            "Engine computes formula/index outputs from Sentinel-2 imagery.\n\n"
+            "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
+            "Band 2 is optional.\n\n"
+            "Set AOI first, then run Engine to generate rasters.",
+        )
 
     def _browse_output(self):
         path = QFileDialog.getExistingDirectory(self, "Select output folder")

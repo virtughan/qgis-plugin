@@ -5,6 +5,9 @@
   <property name="windowTitle">
    <string>VirtuGhan • Engine</string>
   </property>
+  <property name="styleSheet">
+   <string>QLineEdit, QComboBox, QDateEdit, QSpinBox, QListWidget { padding: 2px; }</string>
+  </property>
   <layout class="QVBoxLayout" name="verticalLayout_root">
 
    <!-- Header -->
@@ -34,6 +37,14 @@
     </layout>
    </item>
 
+    <item>
+     <widget class="QLabel" name="requiredHintLabel">
+      <property name="text">
+        <string>&lt;i&gt;* Required fields&lt;/i&gt;</string>
+      </property>
+     </widget>
+    </item>
+
    <!-- Tabs -->
    <item>
     <widget class="QTabWidget" name="tabWidget">
@@ -43,12 +54,18 @@
      <widget class="QWidget" name="tabBasics">
       <attribute name="title"><string>Basics</string></attribute>
       <layout class="QVBoxLayout" name="basicsLayout" stretch="0,0,0,0,1">
+       <property name="spacing"><number>2</number></property>
 
        <!-- Common Parameters (host only; real fields come from CommonParamsWidget) -->
        <item>
         <widget class="QGroupBox" name="groupCommon">
          <property name="title"><string>Common Parameters</string></property>
          <layout class="QVBoxLayout" name="layoutCommon">
+          <property name="spacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item>
            <widget class="QWidget" name="commonParamsContainer"/>
           </item>
@@ -59,8 +76,14 @@
        <!-- AOI -->
        <item>
         <widget class="QGroupBox" name="groupAOI">
-         <property name="title"><string>Area of Interest</string></property>
+         <property name="title"><string>Area of Interest *</string></property>
          <layout class="QGridLayout" name="gridAOI">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
 
           <item row="0" column="0">
            <widget class="QLabel" name="labelAOIMode">
@@ -110,6 +133,12 @@
         <widget class="QGroupBox" name="groupAgg">
          <property name="title"><string>Aggregation &amp; Options</string></property>
          <layout class="QGridLayout" name="gridAgg">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item row="0" column="0">
            <widget class="QLabel" name="labelOp"><property name="text"><string>Aggregation</string></property></widget>
           </item>
@@ -150,6 +179,12 @@
         <widget class="QGroupBox" name="groupOutput">
          <property name="title"><string>Output</string></property>
          <layout class="QGridLayout" name="gridOutput">
+          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="verticalSpacing"><number>2</number></property>
+          <property name="leftMargin"><number>2</number></property>
+          <property name="topMargin"><number>2</number></property>
+          <property name="rightMargin"><number>2</number></property>
+          <property name="bottomMargin"><number>2</number></property>
           <item row="0" column="0">
            <widget class="QLabel" name="labelWorkers"><property name="text"><string>Workers</string></property></widget>
           </item>
