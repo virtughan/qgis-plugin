@@ -45,9 +45,9 @@ class VirtughanHubDialog(QDialog):
         self._help_minimized_width = 160
         self._base_width = 680
         self._help_padding = 12
-        self._height = 520
+        self._height = 540
         self._compact_min_width = 560
-        self._compact_min_height = 420
+        self._compact_min_height = 440
         self.resize(self._base_width, self._height)
 
         self._help_by_key = {

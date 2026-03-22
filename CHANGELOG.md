@@ -1,3 +1,20 @@
+## v1.0.0 (2026-03-22)
+
+### Feat
+
+- **scene-preview**: adds integrated scene preview dialog for Engine and Extractor with temporary footprint rendering
+- **scene-selection**: uses list selection to control preview-map footprint visibility with Select All and Deselect All
+- **preview-map**: adds OSM basemap and CRS-safe footprint projection in preview window
+- **aoi**: separates Engine and Extractor AOI layers with distinct names and colors
+- **extractor**: adds runtime log/progress behavior parity with Engine
+
+### Fix
+
+- **drawing-tools**: prevents cross-module draw tool reactivation when switching Engine/Extractor AOI interactions
+- **aoi-clear**: improves AOI clear/refresh behavior for immediate canvas update
+- **basemap-detection**: ignores temporary registry-only OSM layers during startup map setup
+- **preview-ux**: shows loading state while searching scenes and uses close-only preview flow
+
 ## v0.2.1 (2025-08-22)
 
 ### Fix
