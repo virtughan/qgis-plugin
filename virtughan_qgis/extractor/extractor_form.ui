@@ -175,7 +175,7 @@
         <widget class="QGroupBox" name="groupOutput">
          <property name="title"><string>Output</string></property>
          <layout class="QGridLayout" name="gridOutput">
-          <property name="horizontalSpacing"><number>2</number></property>
+          <property name="horizontalSpacing"><number>8</number></property>
           <property name="verticalSpacing"><number>2</number></property>
           <property name="leftMargin"><number>2</number></property>
           <property name="topMargin"><number>2</number></property>
