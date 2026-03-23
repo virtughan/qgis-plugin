@@ -16,7 +16,7 @@
      <item>
       <widget class="QLabel" name="titleLabel">
        <property name="text">
-        <string>&lt;b&gt;VirtuGhan Engine&lt;/b&gt;</string>
+          <string>&lt;b&gt;VirtuGhan Engine (Compute on Images)&lt;/b&gt;</string>
        </property>
       </widget>
      </item>

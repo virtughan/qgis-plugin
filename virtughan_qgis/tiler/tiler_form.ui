@@ -32,7 +32,7 @@
       <item>
         <widget class="QLabel" name="titleLabel">
          <property name="text">
-          <string>&lt;b&gt;VirtuGhan Tiler&lt;/b&gt;</string>
+          <string>&lt;b&gt;VirtuGhan Tiler (Create Basemap Tiles)&lt;/b&gt;</string>
          </property>
         </widget>
       </item>

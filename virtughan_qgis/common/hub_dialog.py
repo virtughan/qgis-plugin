@@ -222,9 +222,9 @@ class VirtughanHubDialog(QDialog):
         self.helpPane.setVisible(False)
         self._set_compact_mode()
 
-        self._add_page("Engine",    EngineDockWidget(self.iface),    make_tab_icon("engine"))
-        self._add_page("Extractor", ExtractorDockWidget(self.iface), make_tab_icon("extractor"))
-        self._add_page("Tiler",     TilerDockWidget(self.iface),     make_tab_icon("tiler"))
+        self._add_page("Compute",  EngineDockWidget(self.iface),    make_tab_icon("engine"))
+        self._add_page("Download", ExtractorDockWidget(self.iface), make_tab_icon("extractor"))
+        self._add_page("Tiles",    TilerDockWidget(self.iface),     make_tab_icon("tiler"))
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
 
