@@ -4,7 +4,8 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QHBoxLayout, QVBoxLayout, QWidget, QDockWidget,
     QFrame, QAbstractItemView, QApplication, QStyle,
-    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy
+    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy,
+    QStyledItemDelegate
 )
 from qgis.PyQt.QtGui import QIcon, QColor, QPixmap, QPainter, QPen
 from qgis.core import QgsApplication, Qgis, QgsMessageLog
@@ -17,6 +18,29 @@ from .results_widget import ResultsWidget
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NAV_BUSY_ROLE = Qt.UserRole + 77
+
+
+class _NavBusyDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        icon_path = os.path.join(PLUGIN_ROOT, "static", "images", "icons", "processing.svg")
+        if os.path.exists(icon_path):
+            self._busy_icon = QIcon(icon_path)
+        else:
+            style = parent.style() if parent else QApplication.style()
+            self._busy_icon = style.standardIcon(QStyle.SP_BrowserReload)
+
+    def paint(self, painter, option, index):
+        super().paint(painter, option, index)
+        if not bool(index.data(NAV_BUSY_ROLE)):
+            return
+
+        size = 12
+        margin_right = 12
+        x = option.rect.right() - size - margin_right
+        y = option.rect.y() + (option.rect.height() - size) // 2
+        self._busy_icon.paint(painter, x, y, size, size)
 
 def load_icon(rel_path: str, fallback: QStyle.StandardPixmap = QStyle.SP_FileDialogListView) -> QIcon:
 
@@ -242,7 +266,8 @@ class VirtughanHubDialog(QDialog):
         self.nav.setFocusPolicy(Qt.NoFocus)
         self.nav.setFrameShape(QFrame.NoFrame)
         self.nav.setIconSize(QSize(24, 24))
-        self.nav.setSpacing(0) 
+        self.nav.setSpacing(0)
+        self.nav.setItemDelegate(_NavBusyDelegate(self.nav))
 
         self.pages = QStackedWidget()
         self.pages.setObjectName("virtPages")
@@ -428,6 +453,16 @@ class VirtughanHubDialog(QDialog):
                 self.nav.setCurrentRow(row)
         return summary
 
+    def set_tab_busy(self, key: str, busy: bool):
+        row = self._key_to_row.get((key or "").strip().lower())
+        if row is None:
+            return
+        item = self.nav.item(row)
+        if item is None:
+            return
+        item.setData(NAV_BUSY_ROLE, bool(busy))
+        self.nav.viewport().update(self.nav.visualItemRect(item))
+
     def get_results_history_snapshot(self):
         return self._results_widget.get_history_snapshot()
 
@@ -550,6 +585,7 @@ class VirtughanHubDialog(QDialog):
         # Sidebar item with enforced height
         item = QListWidgetItem(icon, title)
         item.setSizeHint(QSize(220, 42))
+        item.setData(NAV_BUSY_ROLE, False)
         row_index = self.nav.count()
         self.nav.addItem(item)
         self._row_to_page[row_index] = page_index

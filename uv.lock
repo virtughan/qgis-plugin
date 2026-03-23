@@ -2084,8 +2084,8 @@ wheels = [
 ]
 
 [[package]]
-name = "virtughan-qgis-plugin"
-version = "1.0.0"
+name = "virtughan-satellite-data-tools"
+version = "1.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "virtughan" },

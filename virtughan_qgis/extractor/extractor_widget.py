@@ -709,6 +709,12 @@ class ExtractorDockWidget(QDockWidget):
         self.progressBar.setRange(0, 0 if running else 1)
         self.runButton.setEnabled(not running)
         self.resetButton.setEnabled(not running)
+        try:
+            host = self.window()
+            if host and hasattr(host, "set_tab_busy"):
+                host.set_tab_busy("extractor", running)
+        except Exception:
+            pass
         for w in (self.aoiStartDrawButton, self.aoiClearButton,
                   self.aoiModeCombo, self.outputBrowseButton,
                   self.previewScenesButton, self.showSceneFootprintsCheck):
