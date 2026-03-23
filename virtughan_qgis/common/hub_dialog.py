@@ -12,6 +12,7 @@ from qgis.core import QgsApplication, Qgis, QgsMessageLog
 from ..engine.engine_widget import EngineDockWidget
 from ..extractor.extractor_widget import ExtractorDockWidget
 from ..tiler.tiler_widget import TilerDockWidget  # adjust if needed
+from .geocoding_widget import GeocodingPlaceWidget
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +69,12 @@ def make_tab_icon(kind: str, size: int = 18, color: QColor | None = None) -> QIc
         p.drawLine(4, 13, 14, 13)
         p.drawLine(4, 13, 4, 14)
         p.drawLine(14, 13, 14, 14)
+    elif k == "places":
+        p.drawEllipse(5, 3, 8, 8)
+        p.drawEllipse(8, 6, 2, 2)
+        p.drawLine(9, 11, 9, 15)
+        p.drawLine(9, 15, 7, 12)
+        p.drawLine(9, 15, 11, 12)
     else:
         p.drawRoundedRect(3, 3, 5, 5, 1.0, 1.0)
         p.drawRoundedRect(10, 3, 5, 5, 1.0, 1.0)
@@ -82,7 +89,7 @@ class VirtughanHubDialog(QDialog):
     def __init__(self, iface, start_page: str = "engine", parent=None):
         super().__init__(parent)
         self.iface = iface
-        self.setWindowTitle("VirtuGhan")
+        self.setWindowTitle("VirtuGhan - Satellite Data Tools")
         self._centered_once = False
 
         self._help_expanded_width = 300
@@ -173,7 +180,23 @@ class VirtughanHubDialog(QDialog):
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
 """,
+        "places": """
+<h3>Places (Geocoding)</h3>
+<p><b>Purpose:</b> Search locations from OpenStreetMap and jump the map canvas to your area of interest.</p>
+<p><b>Use Places when:</b> you want to quickly navigate before running Compute, Download, or Tiles.</p>
+<h4>How to use</h4>
+<ul>
+    <li>Type a place name, city, address, or landmark to get suggestions automatically.</li>
+    <li>Select one result from the list and click <b>Go to Selected</b>.</li>
+    <li>Double-clicking a result also moves the map.</li>
+    <li>Clearing the input field resets the search and results list.</li>
+</ul>
+<p><i>Data source: OpenStreetMap Nominatim geocoding service.</i></p>
+""",
         }
+
+        self._row_to_page = {}
+        self._key_to_row = {}
 
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -184,13 +207,13 @@ class VirtughanHubDialog(QDialog):
         self.nav.setObjectName("virtNav")
         self.nav.setSelectionMode(self.nav.SingleSelection)
         self.nav.setAlternatingRowColors(False)
-        self.nav.setFixedWidth(120)
+        self.nav.setFixedWidth(150)
         self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.nav.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.nav.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.nav.setFocusPolicy(Qt.NoFocus)
         self.nav.setFrameShape(QFrame.NoFrame)
-        self.nav.setIconSize(QSize(18, 18))
+        self.nav.setIconSize(QSize(24, 24))
         self.nav.setSpacing(0) 
 
         self.pages = QStackedWidget()
@@ -246,16 +269,38 @@ class VirtughanHubDialog(QDialog):
         self.helpPane.setVisible(False)
         self._set_compact_mode()
 
-        self._add_page("Compute",  EngineDockWidget(self.iface),    make_tab_icon("engine"))
-        self._add_page("Download", ExtractorDockWidget(self.iface), make_tab_icon("extractor"))
-        self._add_page("Tiles",    TilerDockWidget(self.iface),     make_tab_icon("tiler"))
+        self._add_page(
+            "Compute",
+            EngineDockWidget(self.iface),
+            load_icon("static/images/icons/compute.svg", QStyle.SP_ComputerIcon),
+            key="engine",
+        )
+        self._add_page(
+            "Download",
+            ExtractorDockWidget(self.iface),
+            load_icon("static/images/icons/download.svg", QStyle.SP_ArrowDown),
+            key="extractor",
+        )
+        self._add_page(
+            "Tiles",
+            TilerDockWidget(self.iface),
+            load_icon("static/images/icons/tiles.svg", QStyle.SP_DirIcon),
+            key="tiler",
+        )
+        self._add_separator()
+        self._add_page(
+            "Search",
+            GeocodingPlaceWidget(self.iface),
+            load_icon("static/images/icons/search.svg", QStyle.SP_FileDialogContentsView),
+            key="places",
+        )
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
 
         # select initial page
-        start_index = {"engine": 0, "extractor": 1, "tiler": 2}.get(start_page.lower(), 0)
+        start_index = self._key_to_row.get(start_page.lower(), self._key_to_row.get("engine", 0))
         self.nav.setCurrentRow(start_index)
-        self._set_help_for_index(start_index)
+        self._set_help_for_row(start_index)
 
         # Styling 
         self.setStyleSheet("""
@@ -270,7 +315,8 @@ class VirtughanHubDialog(QDialog):
             }
             
             QListWidget#virtNav::item {
-                padding: 4px 8px;                
+                padding: 8px 10px;
+                font-size: 15px;
                 margin: 0;
                 border: none;
             }
@@ -299,13 +345,21 @@ class VirtughanHubDialog(QDialog):
             }
         """)
 
-    def _on_nav_changed(self, index: int):
-        self.pages.setCurrentIndex(index)
-        self._set_help_for_index(index)
+    def _on_nav_changed(self, row: int):
+        page_index = self._row_to_page.get(row)
+        if page_index is None:
+            return
+        self.pages.setCurrentIndex(page_index)
+        self._set_help_for_row(row)
 
-    def _set_help_for_index(self, index: int):
-        keys = ["engine", "extractor", "tiler"]
-        key = keys[index] if 0 <= index < len(keys) else "engine"
+    def _set_help_for_row(self, row: int):
+        key = None
+        for k, mapped_row in self._key_to_row.items():
+            if mapped_row == row:
+                key = k
+                break
+        if key is None:
+            key = "engine"
         self._set_help_content(key)
 
     def _set_help_content(self, key: str):
@@ -325,9 +379,9 @@ class VirtughanHubDialog(QDialog):
         self._resize_for_help_state(visible=True)
 
         try:
-            index = {"engine": 0, "extractor": 1, "tiler": 2}[k]
-            if self.nav.currentRow() != index:
-                self.nav.setCurrentRow(index)
+            row = self._key_to_row[k]
+            if self.nav.currentRow() != row:
+                self.nav.setCurrentRow(row)
         except Exception:
             pass
 
@@ -400,22 +454,30 @@ class VirtughanHubDialog(QDialog):
         except Exception:
             pass
 
-    def _add_page(self, title: str, dock: QDockWidget, icon: QIcon):
+    def _add_page(self, title: str, content_widget: QWidget, icon: QIcon, key: str):
         # Strip dock chrome so it looks like a plain page
-        dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-        dock.setAllowedAreas(Qt.NoDockWidgetArea)
-        dock.setTitleBarWidget(QWidget(dock)) 
+        if isinstance(content_widget, QDockWidget):
+            dock = content_widget
+            dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
+            dock.setAllowedAreas(Qt.NoDockWidgetArea)
+            dock.setTitleBarWidget(QWidget(dock))
+            target_widget = dock
+        else:
+            target_widget = content_widget
 
         # Keep a stable content size so shrinking the dialog produces scrollbars
         # instead of squeezing form controls.
         try:
-            content = dock.widget()
-            if content is not None:
-                content_min = content.sizeHint()
-                content.setMinimumSize(content_min)
-                dock.setMinimumSize(content_min)
+            if isinstance(content_widget, QDockWidget):
+                content = content_widget.widget()
+                if content is not None:
+                    content_min = content.sizeHint()
+                    content.setMinimumSize(content_min)
+                    content_widget.setMinimumSize(content_min)
+                else:
+                    content_widget.setMinimumSize(content_widget.sizeHint())
             else:
-                dock.setMinimumSize(dock.sizeHint())
+                target_widget.setMinimumSize(target_widget.sizeHint())
         except Exception:
             pass
 
@@ -426,16 +488,47 @@ class VirtughanHubDialog(QDialog):
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroller.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroller.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        scroller.setWidget(dock)
+        scroller.setWidget(target_widget)
 
         # Wrap the dock in a plain QWidget page
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(scroller)
+        page_index = self.pages.count()
         self.pages.addWidget(page)
 
         # Sidebar item with enforced height
         item = QListWidgetItem(icon, title)
-        item.setSizeHint(QSize(200, 32))  
+        item.setSizeHint(QSize(220, 42))
+        row_index = self.nav.count()
         self.nav.addItem(item)
+        self._row_to_page[row_index] = page_index
+        self._key_to_row[(key or "").strip().lower()] = row_index
+
+    def _add_separator(self):
+        top_space = QListWidgetItem("")
+        top_space.setFlags(Qt.NoItemFlags)
+        top_space.setSizeHint(QSize(200, 10))
+        self.nav.addItem(top_space)
+
+        line = QListWidgetItem("")
+        line.setFlags(Qt.NoItemFlags)
+        line.setSizeHint(QSize(200, 14))
+        self.nav.addItem(line)
+
+        line_widget = QWidget()
+        line_layout = QVBoxLayout(line_widget)
+        line_layout.setContentsMargins(8, 5, 8, 5)
+        line_layout.setSpacing(0)
+        hline = QFrame()
+        hline.setFrameShape(QFrame.HLine)
+        hline.setFrameShadow(QFrame.Plain)
+        hline.setStyleSheet("color: #9aa0aa;")
+        line_layout.addWidget(hline)
+        self.nav.setItemWidget(line, line_widget)
+
+        bottom_space = QListWidgetItem("")
+        bottom_space.setFlags(Qt.NoItemFlags)
+        bottom_space.setSizeHint(QSize(200, 12))
+        self.nav.addItem(bottom_space)
