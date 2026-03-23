@@ -516,11 +516,11 @@ class EngineDockWidget(QDockWidget):
 
         QMessageBox.information(
             self,
-            "VirtuGhan Engine Help",
-            "Engine computes formula/index outputs from Sentinel-2 imagery.\n\n"
+            "VirtuGhan Compute Help",
+            "Compute (Engine) creates analysis rasters from Sentinel-2 imagery.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
             "Band 2 is optional.\n\n"
-            "Set AOI first, then run Engine to generate rasters.",
+            "You can also use Aggregation, Generate timeseries (GIF), smart filter, workers, and scene preview options before running.",
         )
 
     def _browse_output(self):

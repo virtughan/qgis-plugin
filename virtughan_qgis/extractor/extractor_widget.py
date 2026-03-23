@@ -534,10 +534,10 @@ class ExtractorDockWidget(QDockWidget):
 
         QMessageBox.information(
             self,
-            "VirtuGhan Extractor Help",
-            "Extractor downloads Sentinel-2 bands for your selected AOI and date range.\n\n"
+            "VirtuGhan Download Help",
+            "Download (Extractor) saves Sentinel-2 bands for your selected AOI and date range.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Bands to extract, and AOI.\n\n"
-            "Run Extractor to produce raster files in the output folder.",
+            "You can also use smart filter, workers, scene preview, and output folder options before running.",
         )
 
     def _browse_output(self):

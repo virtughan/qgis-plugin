@@ -334,10 +334,11 @@ class TilerWidget(QWidget, FORM_CLASS):
 
         QMessageBox.information(
             self,
-            "VirtuGhan Tiler Help",
-            "Tiler adds a preview XYZ layer from Sentinel-2 imagery.\n\n"
-            "Required fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n\n"
-            "Use Add XYZ Layer to load preview tiles into QGIS.",
+            "VirtuGhan Tiles Help",
+            "Tiles (Tiler) adds a preview XYZ layer from Sentinel-2 imagery.\n\n"
+            "Required fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n"
+            "Band 2 is optional.\n\n"
+            "Use Time series (aggregate) + Aggregation for temporal summaries, and Advanced Options for local server controls.",
         )
 
     def _remove_tiler_layers(self):

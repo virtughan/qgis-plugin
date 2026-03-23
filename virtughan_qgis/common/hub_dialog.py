@@ -96,55 +96,79 @@ class VirtughanHubDialog(QDialog):
 
         self._help_by_key = {
             "engine": """
-<h3>Engine</h3>
-<p><b>Purpose:</b> Turn satellite bands into analysis layers (for example NDVI).</p>
-<p><b>Use Engine when:</b> you want computed results, not just raw downloads.</p>
-<p><b>Data used:</b> Sentinel-2 images filtered by area, date, and cloud cover.</p>
-<p><b>Data source:</b> Sentinel-2 from a STAC API through the VirtuGhan backend.</p>
-<h4>Fields</h4>
+<h3>Compute (Engine)</h3>
+<p><b>Purpose:</b> Create computed analysis rasters (for example NDVI) from Sentinel-2 imagery.</p>
+<p><b>Use Compute when:</b> you want derived outputs, not only raw band downloads.</p>
+<p><b>Data source:</b> Sentinel-2 scenes discovered through the VirtuGhan STAC backend.</p>
+<h4>Main fields</h4>
 <ul>
-    <li><b>Start date *</b> and <b>End date *</b>: time range to search images.</li>
-    <li><b>Max cloud (%) *</b>: keep only clearer images.</li>
-    <li><b>Band 1 *</b>, <b>Band 2</b>, <b>Formula *</b>: what to calculate.</li>
-    <li><b>Area of Interest *</b>: where to run the analysis.</li>
-    <li><b>Aggregation</b> and <b>Timeseries</b>: optional time summary outputs.</li>
-    <li><b>Output folder</b>: where files are saved.</li>
+    <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
+    <li><b>Max cloud (%) *</b>: upper cloud threshold for matched scenes.</li>
+    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula.</li>
+    <li><b>Area of Interest *</b>: choose AOI mode, then use <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
+</ul>
+<h4>Options and output</h4>
+<ul>
+    <li><b>Aggregation</b>: reduce multiple scenes with mean/median/min/max/etc.</li>
+    <li><b>Generate timeseries (GIF)</b>: export intermediate frames and GIF animation.</li>
+    <li><b>Apply smart filter</b>: keep a cleaner subset of scenes before processing.</li>
+    <li><b>Workers</b>: parallel processing count.</li>
+    <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>
+    <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
+    <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
+    <li><b>Run Engine</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
 </ul>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
 """,
             "extractor": """
-<h3>Extractor</h3>
-<p><b>Purpose:</b> Download raw Sentinel-2 bands as files.</p>
-<p><b>Use Extractor when:</b> you need data files to keep, share, or process later.</p>
-<p><b>Data used:</b> Sentinel-2 images filtered by area, date, cloud cover, and selected bands.</p>
-<p><b>Data source:</b> Sentinel-2 from a STAC API through the VirtuGhan backend.</p>
-<h4>Fields</h4>
+<h3>Download (Extractor)</h3>
+<p><b>Purpose:</b> Download raw Sentinel-2 bands to local files.</p>
+<p><b>Use Download when:</b> you need source raster files to keep, share, or process externally.</p>
+<p><b>Data source:</b> Sentinel-2 scenes discovered through the VirtuGhan STAC backend.</p>
+<h4>Main fields</h4>
 <ul>
-    <li><b>Start date *</b> and <b>End date *</b>: time range to search images.</li>
-    <li><b>Max cloud (%) *</b>: keep only clearer images.</li>
-    <li><b>Bands to extract *</b>: choose one or more bands.</li>
-    <li><b>Area of Interest *</b>: where to download data from.</li>
-    <li><b>Zip output</b>: optional ZIP packaging.</li>
-    <li><b>Output folder</b>: where files are saved.</li>
+    <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
+    <li><b>Max cloud (%) *</b>: upper cloud threshold for matched scenes.</li>
+    <li><b>Band 1</b>, <b>Band 2</b>, <b>Formula</b>: shared Common Parameters used for consistent scene preview/filter context.</li>
+    <li><b>Bands to extract *</b>: select one or more Sentinel-2 bands to download.</li>
+    <li><b>Area of Interest *</b>: choose AOI mode, then use <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
 </ul>
+<h4>Options and output</h4>
+<ul>
+    <li><b>Apply smart filter</b>: reduce overlapping/duplicate-like scene selection before download.</li>
+    <li><b>Workers</b>: parallel download/processing count.</li>
+    <li><b>Output folder</b>: destination directory for downloaded rasters.</li>
+    <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
+    <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
+    <li><b>Run Extractor</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
+</ul>
+<p><i>Note: ZIP output option is removed in this version.</i></p>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
 """,
             "tiler": """
-<h3>Tiler</h3>
-<p><b>Purpose:</b> Show a fast preview layer on the map.</p>
-<p><b>Use Tiler when:</b> you want to explore quickly before downloading or running analysis.</p>
-<p><b>Data used:</b> Sentinel-2 images filtered by date, cloud cover, and selected bands/formula.</p>
-<p><b>Data source:</b> Sentinel-2 from a STAC API through the VirtuGhan backend.</p>
-<h4>Fields</h4>
+<h3>Tiles (Tiler)</h3>
+<p><b>Purpose:</b> Add a fast XYZ basemap preview of Sentinel-2 results.</p>
+<p><b>Use Tiles when:</b> you want quick visual exploration before Download or Compute.</p>
+<p><b>Data source:</b> Sentinel-2 rendered through the VirtuGhan tile backend.</p>
+<h4>Connection and parameters</h4>
 <ul>
-    <li><b>Backend URL *</b>: where tiles are served from.</li>
-    <li><b>Layer Name *</b>: name shown in QGIS Layers panel.</li>
-    <li><b>Start Date *</b>, <b>End Date *</b>, <b>Cloud cover (%) *</b>: image filter.</li>
-    <li><b>Band 1 *</b>, <b>Band 2</b>, <b>Formula *</b>: preview expression.</li>
-    <li><b>Time series</b>: optional aggregation view.</li>
-    <li><b>Local Server</b>: start/stop built-in server.</li>
+    <li><b>Backend URL *</b>: tile service endpoint.</li>
+    <li><b>Layer Name *</b>: name shown in the QGIS Layers panel.</li>
+    <li><b>Start Date *</b>, <b>End Date *</b>, <b>Cloud cover (%) *</b>: scene filter settings.</li>
+    <li><b>Band 1 *</b>, <b>Band 2</b>, <b>Formula *</b>: expression used for tile rendering.</li>
+    <li><b>Time series (aggregate)</b>: enable temporal aggregation; then choose <b>Aggregation</b>.</li>
+    <li><b>Add XYZ Layer</b>: create/update the map tile layer in QGIS.</li>
+    <li><b>Reset</b>: restore default form values.</li>
+</ul>
+<h4>Advanced Options</h4>
+<ul>
+    <li><b>Advanced Options</b>: expands/collapses Local Server settings.</li>
+    <li><b>Run locally</b>: use embedded local server and auto-fill Backend URL from Host/Port.</li>
+    <li><b>App Path (module:function)</b>: FastAPI app entrypoint.</li>
+    <li><b>Host</b>, <b>Port</b>, <b>Workers</b>: local server binding/runtime options.</li>
+    <li><b>Start server</b>, <b>Stop server</b>: control embedded local backend server.</li>
 </ul>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
