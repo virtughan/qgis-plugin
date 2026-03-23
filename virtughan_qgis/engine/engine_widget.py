@@ -517,7 +517,7 @@ class EngineDockWidget(QDockWidget):
         QMessageBox.information(
             self,
             "VirtuGhan Compute Help",
-            "Compute (Engine) creates analysis rasters from Sentinel-2 imagery.\n\n"
+            "Compute creates analysis rasters from Sentinel-2 imagery.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
             "Band 2 is optional.\n\n"
             "You can also use Aggregation, Generate timeseries (GIF), smart filter, workers, and scene preview options before running.",
@@ -695,7 +695,43 @@ class EngineDockWidget(QDockWidget):
                 else:
                     self._clear_scene_footprints_layer()
 
-                QMessageBox.information(self, "VirtuGhan", f"Engine finished.\nOutput: {out_dir}")
+                results_summary = None
+                host = self.window()
+                if host and hasattr(host, "show_results_for_output"):
+                    try:
+                        run_metadata = {
+                            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "start_date": params.get("start_date"),
+                            "end_date": params.get("end_date"),
+                            "cloud_cover": params.get("cloud_cover"),
+                            "band1": params.get("band1"),
+                            "band2": params.get("band2"),
+                            "formula": params.get("formula"),
+                            "operation": params.get("operation"),
+                            "timeseries": params.get("timeseries"),
+                            "smart_filter": params.get("smart_filter"),
+                            "workers": params.get("workers"),
+                            "bbox": params.get("bbox"),
+                        }
+                        results_summary = host.show_results_for_output(
+                            out_dir,
+                            auto_open=self.timeseriesCheck.isChecked(),
+                            run_metadata=run_metadata,
+                        )
+                    except Exception as e:
+                        _log(self, f"Could not update Results tab: {e}", Qgis.Warning)
+
+                msg = f"Engine finished.\nOutput: {out_dir}"
+                if self.timeseriesCheck.isChecked():
+                    frames = 0
+                    if isinstance(results_summary, dict):
+                        frames = int(results_summary.get("timeseries_frames", 0) or 0)
+                    if frames > 0:
+                        msg += f"\n\nTimeseries outputs are available in the Results tab ({frames} frame(s))."
+                    else:
+                        msg += "\n\nTimeseries was requested, but no timeseries image frames were found in output."
+
+                QMessageBox.information(self, "VirtuGhan", msg)
 
         self._current_task = _VirtughanTask("VirtuGhan Engine", params, log_path, on_done=_on_done)
         QgsApplication.taskManager().addTask(self._current_task)

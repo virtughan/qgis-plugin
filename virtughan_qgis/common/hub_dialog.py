@@ -13,6 +13,7 @@ from ..engine.engine_widget import EngineDockWidget
 from ..extractor.extractor_widget import ExtractorDockWidget
 from ..tiler.tiler_widget import TilerDockWidget  # adjust if needed
 from .geocoding_widget import GeocodingPlaceWidget
+from .results_widget import ResultsWidget
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,7 +104,7 @@ class VirtughanHubDialog(QDialog):
 
         self._help_by_key = {
             "engine": """
-<h3>Compute (Engine)</h3>
+<h3>Compute</h3>
 <p><b>Purpose:</b> Create layers after computing on the satellite images eg. create and download NDVI layer in a map.</p>
 <p><b>Use Compute when:</b> you want derived outputs, not only raw band/image downloads.</p>
 <p><b>Data source:</b> Registry of Open Data on AWS.</p>
@@ -123,7 +124,7 @@ class VirtughanHubDialog(QDialog):
     <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
     <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
-    <li><b>Run Engine</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
+    <li><b>Run Compute</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
 </ul>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
@@ -196,6 +197,29 @@ class VirtughanHubDialog(QDialog):
     <li>Clearing the input field resets the search and results list.</li>
 </ul>
 <p><i>Data source: OpenStreetMap Nominatim geocoding service.</i></p>
+""",
+        "results": """
+<h3>Results</h3>
+<p><b>Purpose:</b> View Compute image outputs directly inside VirtuGhan.</p>
+<p><b>Use Results when:</b> you want a quick visual review of Aggregate, Timeseries, and Trend images without opening folders manually.</p>
+<h4>Tabs</h4>
+<ul>
+    <li><b>Aggregate</b>: shows the aggregated preview image (for example custom_band_output_aggregate_colormap).</li>
+    <li><b>Timeseries</b>: shows sequence images (suffix <b>_result_text</b>) with <b>Play</b>/<b>Pause</b> controls.</li>
+    <li><b>Trend</b>: shows values-over-time plot image.</li>
+</ul>
+<h4>Run History</h4>
+<ul>
+    <li>Each Compute run is added to <b>Run History</b> at the top of Results.</li>
+    <li>Select any history item to reload its Aggregate/Timeseries/Trend previews.</li>
+    <li><b>Open Output Folder</b>: opens that run output location in your file explorer.</li>
+    <li><b>Add Geo Outputs to Map</b>: loads georeferenced outputs from that run into the current QGIS project.</li>
+    <li><b>Remove Entry</b>: removes only the selected history item from the list (does not delete files).</li>
+    <li><b>Clear History</b>: removes all history items from the Results list.</li>
+    <li><b>Save History</b>: saves current history to disk next to the QGIS project file.</li>
+</ul>
+<p><i>Session behavior: history is kept while QGIS is running. Save the QGIS project first to enable history save-to-disk.</i></p>
+<p><i>Results content is refreshed after each new Compute run.</i></p>
 """,
         }
 
@@ -298,6 +322,13 @@ class VirtughanHubDialog(QDialog):
             load_icon("static/images/icons/search.svg", QStyle.SP_FileDialogContentsView),
             key="places",
         )
+        self._results_widget = ResultsWidget(self.iface, self)
+        self._add_page(
+            "Results",
+            self._results_widget,
+            load_icon("static/images/icons/results.svg", QStyle.SP_FileDialogDetailedView),
+            key="results",
+        )
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
 
@@ -388,6 +419,20 @@ class VirtughanHubDialog(QDialog):
                 self.nav.setCurrentRow(row)
         except Exception:
             pass
+
+    def show_results_for_output(self, output_dir: str, auto_open: bool = False, run_metadata: dict | None = None):
+        summary = self._results_widget.add_result(output_dir, run_metadata=run_metadata)
+        if auto_open:
+            row = self._key_to_row.get("results")
+            if row is not None and self.nav.currentRow() != row:
+                self.nav.setCurrentRow(row)
+        return summary
+
+    def get_results_history_snapshot(self):
+        return self._results_widget.get_history_snapshot()
+
+    def set_results_history(self, history_entries: list[dict] | None):
+        self._results_widget.set_history(history_entries)
 
     def _toggle_help_minimize(self):
         if not self.helpPane.isVisible():

@@ -38,6 +38,8 @@ class VirtuGhanPlugin:
         self.action_tiler = None
         self.action_toolbar_open = None
         self.toolbar = None
+        self._hub_dialog = None
+        self._results_history_session = []
         self._imports_ready = False
         self._last_import_error = None
 
@@ -180,15 +182,33 @@ class VirtuGhanPlugin:
         # Close previous instance if you want only one hub at a time
         try:
             if self._hub_dialog:
+                try:
+                    self._results_history_session = self._hub_dialog.get_results_history_snapshot()
+                except Exception:
+                    pass
                 self._hub_dialog.close()
         except Exception:
             pass
 
         self._hub_dialog = VirtughanHubDialog(self.iface, start_page=start_page, parent=self.iface.mainWindow())
+        try:
+            if self._results_history_session:
+                self._hub_dialog.set_results_history(self._results_history_session)
+        except Exception:
+            pass
+        self._hub_dialog.finished.connect(self._on_hub_finished)
         self._hub_dialog.setModal(False)
         self._hub_dialog.setAttribute(Qt.WA_DeleteOnClose, True)
         self._hub_dialog.show()
         self._hub_dialog.raise_()
+
+    def _on_hub_finished(self, _result: int):
+        try:
+            if self._hub_dialog:
+                self._results_history_session = self._hub_dialog.get_results_history_snapshot()
+        except Exception:
+            pass
+        self._hub_dialog = None
 
 
     def show_engine(self):
