@@ -1,5 +1,5 @@
 [general]
-name=VirtuGhan QGIS Plugin
+name=VirtuGhan - Satellite Data Tools
 description=Sentinel-2 STAC search, preview, download, tile basemap creation, and spectral analysis in QGIS.
 about=VirtuGhan helps you discover and process Sentinel-2 imagery directly in QGIS. Use Tiles to add fast map previews, Download to save selected bands for your AOI/date/cloud filters, and Compute to run spectral formulas such as NDVI and generate analysis rasters. Matching scene footprints can be previewed before processing, and outputs are saved locally and loaded into your QGIS project. For more information and the web version, visit https://virtughan.com/
 version=1.0.0
