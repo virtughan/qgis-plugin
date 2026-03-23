@@ -909,12 +909,18 @@ class ExtractorDockWidget(QDockWidget):
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
 
+            aoi_geom, aoi_crs_authid = self._get_current_aoi_geometry_for_preview()
+
             dlg = ScenePreviewDialog(
                 parent=self,
                 scenes=scenes,
                 title="Extractor Scene Preview",
                 fill_color=QColor(0, 150, 136, 14),
                 stroke_color=QColor(0, 150, 136, 170),
+                aoi_geometry=aoi_geom,
+                aoi_crs_authid=aoi_crs_authid,
+                aoi_fill_color=self._aoi_fill_color,
+                aoi_stroke_color=self._aoi_stroke_color,
             )
             dlg.exec_()
 
@@ -930,3 +936,24 @@ class ExtractorDockWidget(QDockWidget):
             self.progressBar.setRange(0, 1)
             self.previewScenesButton.setText(original_btn_text)
             self.previewScenesButton.setEnabled(True)
+
+    def _get_current_aoi_geometry_for_preview(self):
+        try:
+            layer = getattr(self._aoi, "layer", None)
+            if not layer or not layer.isValid():
+                return None, None
+
+            feat = None
+            for candidate in layer.getFeatures():
+                feat = candidate
+                break
+            if feat is None:
+                return None, None
+
+            geom = feat.geometry()
+            if geom is None or geom.isEmpty():
+                return None, None
+
+            return QgsGeometry(geom), layer.crs().authid()
+        except Exception:
+            return None, None

@@ -28,7 +28,18 @@ from qgis.gui import QgsMapCanvas, QgsMapToolIdentifyFeature
 
 
 class ScenePreviewDialog(QDialog):
-    def __init__(self, parent, scenes, title, fill_color: QColor, stroke_color: QColor):
+    def __init__(
+        self,
+        parent,
+        scenes,
+        title,
+        fill_color: QColor,
+        stroke_color: QColor,
+        aoi_geometry: QgsGeometry = None,
+        aoi_crs_authid: str = None,
+        aoi_fill_color: QColor = None,
+        aoi_stroke_color: QColor = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(700, 600)
@@ -89,15 +100,28 @@ class ScenePreviewDialog(QDialog):
 
         self._basemap = self._create_osm_basemap_layer()
         self._layer = self._build_preview_layer(fill_color, stroke_color)
+        self._aoi_layer = self._build_aoi_layer(
+            aoi_geometry,
+            aoi_crs_authid,
+            aoi_fill_color,
+            aoi_stroke_color,
+        )
         try:
             self.canvas.setCrsTransformEnabled(True)
             self.canvas.setDestinationCrs(self._layer.crs())
         except Exception:
             pass
         if self._basemap and self._basemap.isValid():
-            self.canvas.setLayers([self._layer, self._basemap])
+            layers = [self._layer]
+            if self._aoi_layer and self._aoi_layer.isValid():
+                layers.append(self._aoi_layer)
+            layers.append(self._basemap)
+            self.canvas.setLayers(layers)
         else:
-            self.canvas.setLayers([self._layer])
+            layers = [self._layer]
+            if self._aoi_layer and self._aoi_layer.isValid():
+                layers.append(self._aoi_layer)
+            self.canvas.setLayers(layers)
         self._zoom_to_footprints()
 
         self._identify_tool = QgsMapToolIdentifyFeature(self.canvas, self._layer)
@@ -110,6 +134,11 @@ class ScenePreviewDialog(QDialog):
         try:
             if self._basemap and self._basemap.isValid():
                 QgsProject.instance().removeMapLayer(self._basemap.id())
+        except Exception:
+            pass
+        try:
+            if self._aoi_layer and self._aoi_layer.isValid():
+                QgsProject.instance().removeMapLayer(self._aoi_layer.id())
         except Exception:
             pass
         super().closeEvent(event)
@@ -157,6 +186,55 @@ class ScenePreviewDialog(QDialog):
         except Exception:
             pass
 
+        return layer
+
+    def _build_aoi_layer(self, aoi_geometry, aoi_crs_authid, fill_color: QColor, stroke_color: QColor):
+        if aoi_geometry is None:
+            return None
+
+        layer_crs = "EPSG:3857" if (self._basemap and self._basemap.isValid()) else "EPSG:4326"
+        layer = QgsVectorLayer(f"Polygon?crs={layer_crs}", "AOI Preview", "memory")
+        if not layer.isValid():
+            return None
+
+        src_authid = aoi_crs_authid or "EPSG:4326"
+        geom = QgsGeometry(aoi_geometry)
+        try:
+            src = QgsCoordinateReferenceSystem(src_authid)
+            dst = layer.crs()
+            if src.isValid() and dst.isValid() and src != dst:
+                geom.transform(QgsCoordinateTransform(src, dst, QgsProject.instance()))
+        except Exception:
+            pass
+
+        if geom is None or geom.isEmpty():
+            return None
+
+        prov = layer.dataProvider()
+        prov.addAttributes([QgsField("label", QVariant.String)])
+        layer.updateFields()
+        feat = QgsFeature(layer.fields())
+        feat.setGeometry(geom)
+        feat.setAttributes(["AOI"])
+        prov.addFeatures([feat])
+        layer.updateExtents()
+
+        fill = fill_color or QColor(0, 102, 255, 60)
+        stroke = stroke_color or QColor(0, 102, 255, 200)
+        try:
+            sym = layer.renderer().symbol()
+            sym.setColor(fill)
+            sym.symbolLayer(0).setStrokeColor(stroke)
+            sym.symbolLayer(0).setStrokeWidth(0.6)
+            layer.triggerRepaint()
+            layer.emitStyleChanged()
+        except Exception:
+            pass
+
+        try:
+            QgsProject.instance().addMapLayer(layer, False)
+        except Exception:
+            pass
         return layer
 
     def _reload_layer_features(self, layer):
