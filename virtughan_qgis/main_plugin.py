@@ -17,10 +17,13 @@ if os.path.isdir(LIBS_DIR) and LIBS_DIR not in sys.path:
     sys.path.insert(0, LIBS_DIR)
 
 try:
-    from .bootstrap import ensure_virtughan_installed
+    from .bootstrap import ensure_virtughan_installed, get_last_bootstrap_error
 except Exception:
     def ensure_virtughan_installed(*args, **kwargs):
         return True
+
+    def get_last_bootstrap_error():
+        return None
 
 
 class VirtuGhanPlugin:
@@ -43,7 +46,10 @@ class VirtuGhanPlugin:
             return True
         ok = ensure_virtughan_installed(self.iface.mainWindow(), quiet=True)
         if not ok:
+            details = get_last_bootstrap_error()
             self._last_import_error = "Automatic installation of 'virtughan' failed."
+            if details:
+                self._last_import_error += f"\n\n{details}"
             return False
         try:
             from .engine.engine_widget import EngineDockWidget
