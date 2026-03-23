@@ -78,7 +78,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
 
         
         self.addParameter(QgsProcessingParameterString(
-            "BANDS_LIST", "Bands to extract (comma-separated from VALID_BANDS)",
+            "BANDS_LIST", "Bands to download (comma-separated from VALID_BANDS)",
             defaultValue="red,nir"))
 
         self.addParameter(QgsProcessingParameterBoolean(

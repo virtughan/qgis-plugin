@@ -104,21 +104,21 @@ class VirtughanHubDialog(QDialog):
         self._help_by_key = {
             "engine": """
 <h3>Compute (Engine)</h3>
-<p><b>Purpose:</b> Create computed analysis rasters (for example NDVI) from Sentinel-2 imagery.</p>
-<p><b>Use Compute when:</b> you want derived outputs, not only raw band downloads.</p>
-<p><b>Data source:</b> Sentinel-2 scenes discovered through the VirtuGhan STAC backend.</p>
+<p><b>Purpose:</b> Create layers after computing on the satellite images eg. create and download NDVI layer in a map.</p>
+<p><b>Use Compute when:</b> you want derived outputs, not only raw band/image downloads.</p>
+<p><b>Data source:</b> Registry of Open Data on AWS.</p>
 <h4>Main fields</h4>
 <ul>
     <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
-    <li><b>Max cloud (%) *</b>: upper cloud threshold for matched scenes.</li>
-    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula.</li>
-    <li><b>Area of Interest *</b>: choose AOI mode, then use <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
+    <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
+    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula. Eg. NDVI = (Red - NIR)/(Red + NIR)</li>
+    <li><b>Area of Interest *</b>: Bounding box of the area where you want to work on computation. Choose AOI mode, then use the <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
-    <li><b>Aggregation</b>: reduce multiple scenes with mean/median/min/max/etc.</li>
-    <li><b>Generate timeseries (GIF)</b>: export intermediate frames and GIF animation.</li>
-    <li><b>Apply smart filter</b>: keep a cleaner subset of scenes before processing.</li>
+    <li><b>Aggregation</b>: aggregate multiple scenes with mean/median/min/max/etc.</li>
+    <li><b>Generate timeseries (GIF)</b>: export intermediate frames and GIF animation. The GIF file can be found in the project folder after the computation is complete.</li>
+    <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
     <li><b>Workers</b>: parallel processing count.</li>
     <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
@@ -130,25 +130,25 @@ class VirtughanHubDialog(QDialog):
 """,
             "extractor": """
 <h3>Download (Extractor)</h3>
-<p><b>Purpose:</b> Download raw Sentinel-2 bands to local files.</p>
-<p><b>Use Download when:</b> you need source raster files to keep, share, or process externally.</p>
-<p><b>Data source:</b> Sentinel-2 scenes discovered through the VirtuGhan STAC backend.</p>
+<p><b>Purpose:</b> Download satellite image bands as raster layers to your local machine.</p>
+<p><b>Use Download when:</b> you want original band/image downloads instead of computed outputs.</p>
+<p><b>Data source:</b> Registry of Open Data on AWS.</p>
 <h4>Main fields</h4>
 <ul>
     <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
-    <li><b>Max cloud (%) *</b>: upper cloud threshold for matched scenes.</li>
+    <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
     <li><b>Band 1</b>, <b>Band 2</b>, <b>Formula</b>: shared Common Parameters used for consistent scene preview/filter context.</li>
-    <li><b>Bands to extract *</b>: select one or more Sentinel-2 bands to download.</li>
-    <li><b>Area of Interest *</b>: choose AOI mode, then use <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
+    <li><b>Bands to download *</b>: select one or more bands that you want to download as images.</li>
+    <li><b>Area of Interest *</b>: Bounding box of the area where you want to download images. Choose AOI mode, then use the <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
-    <li><b>Apply smart filter</b>: reduce overlapping/duplicate-like scene selection before download.</li>
+    <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
     <li><b>Workers</b>: parallel download/processing count.</li>
     <li><b>Output folder</b>: destination directory for downloaded rasters.</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
     <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
-    <li><b>Run Extractor</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
+    <li><b>Download Images</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
 </ul>
 <p><i>Note: ZIP output option is removed in this version.</i></p>
 <p><i>* Required fields</i></p>
@@ -156,16 +156,20 @@ class VirtughanHubDialog(QDialog):
 """,
             "tiler": """
 <h3>Tiles (Tiler)</h3>
-<p><b>Purpose:</b> Add a fast XYZ basemap preview of Sentinel-2 results.</p>
-<p><b>Use Tiles when:</b> you want quick visual exploration before Download or Compute.</p>
-<p><b>Data source:</b> Sentinel-2 rendered through the VirtuGhan tile backend.</p>
-<h4>Connection and parameters</h4>
+<p><b>Purpose:</b> Create and add map tiles for quick visual exploration of satellite imagery in QGIS.</p>
+<p><b>Use Tiles when:</b> you want a fast basemap-like layer to inspect coverage and patterns before Download or Compute.</p>
+<p><b>Data source:</b> Registry of Open Data on AWS rendered through the VirtuGhan tile backend.</p>
+<h4>Main fields</h4>
 <ul>
     <li><b>Backend URL *</b>: tile service endpoint.</li>
     <li><b>Layer Name *</b>: name shown in the QGIS Layers panel.</li>
-    <li><b>Start Date *</b>, <b>End Date *</b>, <b>Cloud cover (%) *</b>: scene filter settings.</li>
-    <li><b>Band 1 *</b>, <b>Band 2</b>, <b>Formula *</b>: expression used for tile rendering.</li>
-    <li><b>Time series (aggregate)</b>: enable temporal aggregation; then choose <b>Aggregation</b>.</li>
+    <li><b>Start Date *</b>, <b>End Date *</b>: search period for source imagery.</li>
+    <li><b>Cloud cover (%) *</b>: Search Images with cloud cover less than this value.</li>
+    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula used for tile rendering.</li>
+    <li><b>Time series (aggregate)</b>: if enabled creates aggregated tile output across dates; choose <b>Aggregation</b> method.</li>
+</ul>
+<h4>Options and output</h4>
+<ul>
     <li><b>Add XYZ Layer</b>: create/update the map tile layer in QGIS.</li>
     <li><b>Reset</b>: restore default form values.</li>
 </ul>
