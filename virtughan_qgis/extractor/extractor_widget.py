@@ -1,6 +1,7 @@
 # virtughan_qgis/extractor/extractor_widget.py
 import os
 import traceback
+import threading
 import uuid
 from datetime import datetime
 
@@ -72,6 +73,48 @@ except Exception as _e:
 UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
 
+_PYPROJ_GUARD_LOCK = threading.Lock()
+_PYPROJ_GUARD_APPLIED = False
+
+
+def _apply_pyproj_windows_guard(logger=None):
+    global _PYPROJ_GUARD_APPLIED
+    if _PYPROJ_GUARD_APPLIED or os.name != "nt":
+        return
+
+    try:
+        prefix = QgsApplication.prefixPath() or ""
+        candidates = [
+            os.path.join(prefix, "share", "proj"),
+            os.path.join(prefix, "..", "share", "proj"),
+            os.path.join(prefix, "..", "..", "share", "proj"),
+        ]
+        for candidate in candidates:
+            proj_path = os.path.normpath(candidate)
+            if os.path.isdir(proj_path):
+                os.environ["PROJ_LIB"] = proj_path
+                os.environ["PROJ_DATA"] = proj_path
+                break
+    except Exception:
+        pass
+
+    try:
+        import pyproj.transformer as _pyproj_transformer
+
+        original_from_crs = _pyproj_transformer.Transformer.from_crs
+
+        def _guarded_from_crs(cls, *args, **kwargs):
+            with _PYPROJ_GUARD_LOCK:
+                return original_from_crs(*args, **kwargs)
+
+        _pyproj_transformer.Transformer.from_crs = classmethod(_guarded_from_crs)
+        _PYPROJ_GUARD_APPLIED = True
+        if logger:
+            logger("Applied Windows pyproj guard for Transformer.from_crs")
+    except Exception as e:
+        if logger:
+            logger(f"Could not apply Windows pyproj guard: {e}", Qgis.Warning)
+
 
 def _log(widget, msg, level=Qgis.Info):
     QgsMessageLog.logMessage(str(msg), "VirtuGhan", level)
@@ -93,6 +136,7 @@ class _ExtractorTask(QgsTask):
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
+                _apply_pyproj_windows_guard(logger=lambda m, lvl=Qgis.Info: logf.write(f"[{lvl}] {m}\n"))
                 logf.write(
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
@@ -621,6 +665,14 @@ class ExtractorDockWidget(QDockWidget):
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
+
+        if os.name == "nt" and int(params.get("workers", 1)) > 1:
+            _log(
+                self,
+                "Windows compatibility mode: forcing workers=1 for Extractor to avoid native PROJ/pyproj crashes.",
+                Qgis.Warning,
+            )
+            params["workers"] = 1
 
         out_dir = params["output_dir"]
         try:
