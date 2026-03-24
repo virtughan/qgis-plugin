@@ -2,7 +2,7 @@
 name=VirtuGhan - Satellite Data Tools
 description=Satellite data search, preview, download, tile basemap creation, and spectral analysis in QGIS. Currently supports Sentinel-2.
 about=VirtuGhan helps you discover and process satellite imagery directly in QGIS. Use Tiles to add fast map previews, Download to save selected bands for your AOI/date/cloud filters, and Compute to run spectral formulas such as NDVI and generate analysis rasters. Matching scene footprints can be previewed before processing, and outputs are saved locally and loaded into your QGIS project. For more information and the web version, visit https://virtughan.com/
-version=1.0.1
+version=1.0.2
 qgisMinimumVersion=3.22
 author=Upendra Oli; Kshitij Raj Sharma; Sahar Mohamed
 email=upendra.oli59@gmail.com

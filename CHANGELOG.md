@@ -1,3 +1,14 @@
+## v1.0.2 (2026-03-24)
+
+### Feat
+
+- **osm-search**: adds OpenStreetMap (OSM) location search in the Places tab for quick AOI discovery and navigation
+- **results-section**: adds comprehensive Results tab to display Engine outputs with Aggregate/Timeseries/Trend views, session history persistence, and layer loading to map
+
+### Fix
+
+- **extractor-windows-crash**: fixes "access violation" crash on second Extractor run by reloading pyproj modules to clear corrupted PROJ state
+
 ## v1.0.0 (2026-03-22)
 
 ### Feat
