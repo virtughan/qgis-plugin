@@ -1,9 +1,10 @@
 # virtughan_qgis/extractor/extractor_widget.py
 import os
+import sys
 import traceback
-import threading
 import uuid
 from datetime import datetime
+import importlib
 
 from qgis.core import (
     Qgis,
@@ -73,7 +74,6 @@ except Exception as _e:
 UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
 
-_PYPROJ_GUARD_LOCK = threading.Lock()
 _PYPROJ_GUARD_APPLIED = False
 
 
@@ -98,22 +98,31 @@ def _apply_pyproj_windows_guard(logger=None):
     except Exception:
         pass
 
+    _PYPROJ_GUARD_APPLIED = True
+    if logger:
+        logger("Applied Windows PROJ path compatibility guard")
+
+
+def _reload_pyproj_modules(logger=None):
+    """Reload pyproj and related modules to clear corrupted state."""
     try:
-        import pyproj.transformer as _pyproj_transformer
-
-        original_from_crs = _pyproj_transformer.Transformer.from_crs
-
-        def _guarded_from_crs(cls, *args, **kwargs):
-            with _PYPROJ_GUARD_LOCK:
-                return original_from_crs(*args, **kwargs)
-
-        _pyproj_transformer.Transformer.from_crs = classmethod(_guarded_from_crs)
-        _PYPROJ_GUARD_APPLIED = True
+        # List of modules to reload to clear PROJ state
+        modules_to_reload = [
+            "pyproj.crs",
+            "pyproj.transformer",
+            "pyproj",
+        ]
+        for mod_name in modules_to_reload:
+            if mod_name in sys.modules:
+                try:
+                    importlib.reload(sys.modules[mod_name])
+                except Exception:
+                    pass
         if logger:
-            logger("Applied Windows pyproj guard for Transformer.from_crs")
+            logger("Reloaded pyproj modules to clear PROJ state")
     except Exception as e:
         if logger:
-            logger(f"Could not apply Windows pyproj guard: {e}", Qgis.Warning)
+            logger(f"Failed to reload pyproj: {e}")
 
 
 def _log(widget, msg, level=Qgis.Info):
@@ -137,6 +146,7 @@ class _ExtractorTask(QgsTask):
             os.makedirs(self.params["output_dir"], exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
                 _apply_pyproj_windows_guard(logger=lambda m, lvl=Qgis.Info: logf.write(f"[{lvl}] {m}\n"))
+                _reload_pyproj_modules(logger=lambda m: logf.write(f"[INFO] {m}\n"))
                 logf.write(
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
@@ -665,14 +675,6 @@ class ExtractorDockWidget(QDockWidget):
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
-
-        if os.name == "nt" and int(params.get("workers", 1)) > 1:
-            _log(
-                self,
-                "Windows compatibility mode: forcing workers=1 for Extractor to avoid native PROJ/pyproj crashes.",
-                Qgis.Warning,
-            )
-            params["workers"] = 1
 
         out_dir = params["output_dir"]
         try:
