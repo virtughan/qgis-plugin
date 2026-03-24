@@ -520,7 +520,7 @@ class EngineDockWidget(QDockWidget):
             "Compute creates analysis rasters from Sentinel-2 imagery.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
             "Band 2 is optional.\n\n"
-            "You can also use Aggregation, Generate timeseries (GIF), smart filter, workers, and scene preview options before running.",
+            "You can also use Aggregation, Generate timeseries, smart filter, workers, and scene preview options before running.",
         )
 
     def _browse_output(self):

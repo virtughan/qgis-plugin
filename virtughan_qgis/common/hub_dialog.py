@@ -142,7 +142,7 @@ class VirtughanHubDialog(QDialog):
 <h4>Options and output</h4>
 <ul>
     <li><b>Aggregation</b>: aggregate multiple scenes with mean/median/min/max/etc.</li>
-    <li><b>Generate timeseries (GIF)</b>: export intermediate frames and GIF animation. The GIF file can be found in the project folder after the computation is complete.</li>
+    <li><b>Generate timeseries</b>: export intermediate frames and GIF animation. The GIF file can be found in the project folder after the computation is complete.</li>
     <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
     <li><b>Workers</b>: parallel processing count.</li>
     <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>

@@ -109,7 +109,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             "OPERATION", "Aggregation",
             options=["mean","median","max","min","std","sum","var","none"], defaultValue=7))
         self.addParameter(QgsProcessingParameterBoolean(
-            "TIMESERIES", "Generate timeseries (GIF)", defaultValue=False))
+            "TIMESERIES", "Generate timeseries", defaultValue=False))
         self.addParameter(QgsProcessingParameterBoolean(
             "SMART_FILTER", "Apply smart filter", defaultValue=False))
         self.addParameter(QgsProcessingParameterNumber(
