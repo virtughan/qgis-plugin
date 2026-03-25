@@ -3,7 +3,7 @@
 ### Fix
 
 - **extractor-stability**: improves repeated Extractor-run reliability by isolating extraction in a dedicated subprocess
-- **extractor-cross-platform**: applies subprocess isolation behavior consistently across Windows, macOS, and Linux
+- **extractor-cross-platform**: applies subprocess isolation behavior consistently across macOS, and Linux ie. similar to the windows fix we did in previous version
 - **extractor-windows-ui**: suppresses blank command window while running extractor subprocess on Windows
 - **extractor-runtime-logging**: adds clearer runtime diagnostics for PROJ/pyproj configuration during extraction startup
 
