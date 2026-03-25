@@ -378,7 +378,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             finally:
                 self._index_updating = False
 
-        self.formulaReferenceLabel.setText(formula or "(formula will display here)")
+        self.formulaReferenceLabel.setText(self._format_formula_reference(formula, band1, band2))
 
     def _apply_index_preset(self, label):
         preset = get_index_preset(label)
@@ -390,9 +390,21 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.band1Combo.setCurrentText(preset.get("band1", ""))
             self.band2Combo.setCurrentText(preset.get("band2", ""))
             self.formulaLine.setText(preset.get("formula", ""))
-            self.formulaReferenceLabel.setText(preset.get("formula", ""))
+            self.formulaReferenceLabel.setText(
+                self._format_formula_reference(
+                    preset.get("formula", ""),
+                    preset.get("band1", ""),
+                    preset.get("band2", ""),
+                )
+            )
         finally:
             self._index_updating = False
+
+    def _format_formula_reference(self, formula: str, band1: str, band2: str) -> str:
+        formula_text = (formula or "").strip()
+        if not formula_text:
+            return "(formula will display here)"
+        return f"{formula_text}, band1={band1 or '-'}, band2={band2 or '-'}"
 
     def _apply_timeseries_visibility(self):
         show = self.timeseriesCheck.isChecked()
