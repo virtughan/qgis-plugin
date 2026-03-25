@@ -191,12 +191,20 @@ sys.exit(0)
         if logf:
             logf.write(f"[INFO] running extractor in subprocess: {python_exe}\n")
 
-        proc = subprocess.run(
-            [python_exe, runner_path],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        run_kwargs = {
+            "args": [python_exe, runner_path],
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            run_kwargs["startupinfo"] = startupinfo
+            run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        proc = subprocess.run(**run_kwargs)
 
         if logf and proc.stdout:
             logf.write("[subprocess_stdout]\n")
