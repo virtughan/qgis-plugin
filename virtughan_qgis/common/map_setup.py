@@ -10,7 +10,7 @@ _OSM_NAME = "OpenStreetMap"
 
 # Startup/default VirtuGhan map-open scale (used when the plugin hub opens).
 # Increase value to zoom out more on initial open.
-DEFAULT_STARTUP_SCALE_M = 15000.0
+DEFAULT_STARTUP_SCALE_M = 12000.0
 
 
 def _find_osm_layer():

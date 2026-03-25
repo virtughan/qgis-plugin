@@ -1,3 +1,12 @@
+## v1.0.7 (2026-03-25)
+
+### Fix
+
+- **engine-stability**: isolates Compute engine execution in a dedicated subprocess to improve crash containment on repeated runs
+- **engine-cross-platform**: applies engine subprocess execution consistently across Windows, macOS, and Linux
+- **engine-windows-ui**: suppresses blank command window while running engine subprocess on Windows
+- **engine-runtime-logging**: adds subprocess stdout/stderr capture to runtime log for easier debugging
+
 ## v1.0.6 (2026-03-25)
 
 ### Fix

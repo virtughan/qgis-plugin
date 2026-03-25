@@ -22,7 +22,7 @@ from qgis.core import (
 )
 
 
-GEOCODING_SCALE_M = 15000
+GEOCODING_SCALE_M = 12000
 
 
 class GeocodingPlaceWidget(QWidget):

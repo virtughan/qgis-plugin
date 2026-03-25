@@ -4,6 +4,10 @@ import sys
 import time
 import uuid
 import traceback
+import json
+import shutil
+import tempfile
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -320,6 +324,191 @@ def _with_embedded_python_executable(logf=None):
         sys.executable = original_executable
 
 
+def _run_engine_in_subprocess(params: dict, log_path: str, logf=None):
+    python_exe = _resolve_embedded_python_executable() or sys.executable
+    work_dir = tempfile.mkdtemp(prefix="virtughan-engine-")
+    payload_path = os.path.join(work_dir, "payload.json")
+    runner_path = os.path.join(work_dir, "runner.py")
+
+    prefix = QgsApplication.prefixPath() or ""
+    payload = {
+        "params": params,
+        "log_path": log_path,
+        "proj_candidates": [
+            os.path.join(prefix, "share", "proj"),
+            os.path.normpath(os.path.join(prefix, "..", "share", "proj")),
+            os.path.normpath(os.path.join(prefix, "..", "..", "share", "proj")),
+            "/Applications/QGIS.app/Contents/Resources/proj",
+        ],
+    }
+
+    runner_code = '''import json
+import os
+import sys
+import time
+import traceback
+
+
+def _configure_runtime(payload, logf):
+    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
+    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "8")
+    os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
+    os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "NO")
+    os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
+    os.environ.setdefault("VSI_CACHE", "TRUE")
+    os.environ.setdefault("VSI_CACHE_SIZE", "50000000")
+    os.environ.setdefault("CPL_DEBUG", "ON")
+
+    for candidate in payload.get("proj_candidates", []):
+        proj_db = os.path.join(candidate, "proj.db")
+        if os.path.isfile(proj_db):
+            os.environ["PROJ_LIB"] = candidate
+            os.environ["PROJ_DATA"] = candidate
+            logf.write(f"Using PROJ data path: {candidate}\\n")
+            break
+
+
+def _apply_transient_read_fallback(logf):
+    fallback_values = {
+        "VSI_CACHE": "FALSE",
+        "CPL_VSIL_CURL_CACHE_SIZE": "0",
+        "GDAL_HTTP_MULTIRANGE": "SINGLE_GET",
+        "GDAL_HTTP_MAX_RETRY": "12",
+        "GDAL_HTTP_RETRY_DELAY": "3",
+    }
+    for key, value in fallback_values.items():
+        os.environ[key] = value
+    logf.write(
+        "Applied transient read fallback settings: "
+        + ", ".join(f"{k}={v}" for k, v in fallback_values.items())
+        + "\\n"
+    )
+
+
+def _is_transient_read_error(message, details):
+    needles = (
+        "TIFFReadEncodedTile",
+        "IReadBlock failed",
+        "RasterioIOError",
+        "Read failed",
+        "TIFFFillTile",
+        "CPLE_AppDefinedError",
+    )
+    return any(n in message for n in needles) or any(n in details for n in needles)
+
+
+def main():
+    if len(sys.argv) < 2:
+        return 2
+
+    payload_path = sys.argv[1]
+    with open(payload_path, "r", encoding="utf-8") as pf:
+        payload = json.load(pf)
+
+    params = payload["params"]
+    log_path = payload["log_path"]
+
+    os.environ["CPL_LOG"] = log_path
+
+    with open(log_path, "a", encoding="utf-8", buffering=1) as logf:
+        _configure_runtime(payload, logf)
+        logf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] Starting VirtughanProcessor\\n")
+        logf.write(f"Params: {params}\\n")
+        logf.write(f"PROJ_LIB: {os.environ.get('PROJ_LIB', '')}\\n")
+        logf.write(f"PROJ_DATA: {os.environ.get('PROJ_DATA', '')}\\n")
+        logf.write(f"sys.executable: {sys.executable}\\n")
+
+        max_attempts = 4
+        fallback_applied = False
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logf.write(f"Compute attempt {attempt}/{max_attempts}\\n")
+                from virtughan.engine import VirtughanProcessor
+
+                proc = VirtughanProcessor(
+                    bbox=params["bbox"],
+                    start_date=params["start_date"],
+                    end_date=params["end_date"],
+                    cloud_cover=params["cloud_cover"],
+                    formula=params["formula"],
+                    band1=params["band1"],
+                    band2=params["band2"],
+                    operation=params["operation"],
+                    timeseries=params["timeseries"],
+                    output_dir=params["output_dir"],
+                    log_file=logf,
+                    cmap="RdYlGn",
+                    workers=params["workers"],
+                    smart_filter=params["smart_filter"],
+                )
+                proc.compute()
+                logf.write("compute() finished.\\n")
+                return 0
+            except Exception as exc:
+                message = str(exc)
+                details = traceback.format_exc()
+                if attempt < max_attempts and _is_transient_read_error(message, details):
+                    if not fallback_applied:
+                        _apply_transient_read_fallback(logf)
+                        fallback_applied = True
+                    wait_s = 2 * attempt
+                    logf.write(
+                        f"Transient raster read error detected (attempt {attempt}/{max_attempts}); retrying in {wait_s}s...\\n"
+                    )
+                    time.sleep(wait_s)
+                    continue
+
+                logf.write("[subprocess_exception]\\n")
+                logf.write(details)
+                return 1
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+    try:
+        with open(payload_path, "w", encoding="utf-8") as pf:
+            json.dump(payload, pf)
+        with open(runner_path, "w", encoding="utf-8") as rf:
+            rf.write(runner_code)
+
+        if logf:
+            logf.write(f"[INFO] running engine in subprocess: {python_exe}\n")
+
+        run_kwargs = {
+            "args": [python_exe, runner_path, payload_path],
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            run_kwargs["startupinfo"] = startupinfo
+            run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        proc = subprocess.run(**run_kwargs)
+
+        if logf and proc.stdout:
+            logf.write("[subprocess_stdout]\n")
+            logf.write(proc.stdout.strip() + "\n")
+        if logf and proc.stderr:
+            logf.write("[subprocess_stderr]\n")
+            logf.write(proc.stderr.strip() + "\n")
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"Engine subprocess failed (exit code {proc.returncode}).")
+    finally:
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
 class _VirtughanTask(QgsTask):
     """Runs VirtughanProcessor.compute() off the UI thread and writes to runtime.log."""
     def __init__(self, desc, params, log_path, on_done=None):
@@ -351,76 +540,7 @@ class _VirtughanTask(QgsTask):
             os.environ["CPL_LOG"] = self.log_path
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
-                _configure_geospatial_runtime(logf=logf)
-                logf.write(f"[{datetime.now().isoformat(timespec='seconds')}] Starting VirtughanProcessor\n")
-                logf.write(f"Params: {self.params}\n")
-                try:
-                    import rasterio
-
-                    logf.write(f"rasterio version: {getattr(rasterio, '__version__', 'unknown')}\n")
-                    logf.write(f"rasterio path: {getattr(rasterio, '__file__', 'unknown')}\n")
-                    logf.write(
-                        f"rasterio GDAL version: {getattr(rasterio, '__gdal_version__', 'unknown')}\n"
-                    )
-                except Exception as diag_exc:
-                    logf.write(f"rasterio diagnostics unavailable: {diag_exc}\n")
-                logf.write(f"PROJ_LIB: {os.environ.get('PROJ_LIB', '')}\n")
-                logf.write(f"PROJ_DATA: {os.environ.get('PROJ_DATA', '')}\n")
-                logf.write(f"sys.executable: {sys.executable}\n")
-
-                max_attempts = 4
-                fallback_applied = False
-                for attempt in range(1, max_attempts + 1):
-                    try:
-                        logf.write(f"Compute attempt {attempt}/{max_attempts}\n")
-                        proc = VirtughanProcessor(
-                            bbox=self.params["bbox"],
-                            start_date=self.params["start_date"],
-                            end_date=self.params["end_date"],
-                            cloud_cover=self.params["cloud_cover"],
-                            formula=self.params["formula"],
-                            band1=self.params["band1"],
-                            band2=self.params["band2"],
-                            operation=self.params["operation"],
-                            timeseries=self.params["timeseries"],
-                            output_dir=self.params["output_dir"],
-                            log_file=logf,
-                            cmap="RdYlGn",
-                            workers=self.params["workers"],
-                            smart_filter=self.params["smart_filter"],
-                        )
-                        with _with_embedded_python_executable(logf=logf):
-                            proc.compute()
-                        break
-                    except Exception as compute_exc:
-                        message = str(compute_exc)
-                        details = traceback.format_exc()
-                        transient_read_error = (
-                            "TIFFReadEncodedTile" in message
-                            or "IReadBlock failed" in message
-                            or "RasterioIOError" in message
-                            or "Read failed" in message
-                            or "TIFFFillTile" in message
-                            or "CPLE_AppDefinedError" in message
-                            or "TIFFReadEncodedTile" in details
-                            or "IReadBlock failed" in details
-                            or "RasterioIOError" in details
-                            or "Read failed" in details
-                            or "TIFFFillTile" in details
-                            or "CPLE_AppDefinedError" in details
-                        )
-                        if attempt < max_attempts and transient_read_error:
-                            if not fallback_applied:
-                                _apply_transient_read_fallback(logf=logf)
-                                fallback_applied = True
-                            wait_s = 2 * attempt
-                            logf.write(
-                                f"Transient raster read error detected (attempt {attempt}/{max_attempts}); retrying in {wait_s}s...\n"
-                            )
-                            time.sleep(wait_s)
-                            continue
-                        raise
-                logf.write("compute() finished.\n")
+                _run_engine_in_subprocess(self.params, self.log_path, logf=logf)
             return True
         except Exception as e:
             self.exc = e
