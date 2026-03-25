@@ -1,8 +1,12 @@
 # virtughan_qgis/engine/engine_widget.py
 import os
+import sys
+import time
 import uuid
 import traceback
 from datetime import datetime
+from pathlib import Path
+from contextlib import contextmanager
 
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import Qt, QDate, QTimer, QVariant
@@ -10,7 +14,8 @@ from qgis.PyQt.QtGui import QColor, QCursor, QPixmap
 from qgis.PyQt.QtWidgets import (
     QWidget, QDockWidget, QFileDialog, QMessageBox,
     QProgressBar, QPlainTextEdit, QComboBox, QCheckBox, QLabel,
-    QPushButton, QSpinBox, QLineEdit, QDateEdit, QFormLayout, QVBoxLayout, QHBoxLayout
+    QPushButton, QSpinBox, QLineEdit, QDateEdit, QFormLayout, QVBoxLayout, QHBoxLayout,
+    QScrollArea
 )
 
 from qgis.core import (
@@ -41,6 +46,7 @@ from ..common.aoi import (
 
 from ..common.map_setup import setup_default_map
 from ..common.scene_preview_dialog import ScenePreviewDialog
+from ..bootstrap import ensure_runtime_network_ready
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -75,6 +81,238 @@ def _log(widget, msg, level=Qgis.Info):
         pass
 
 
+def _is_transient_raster_read_failure(exc, log_path: str | None = None) -> bool:
+    signatures = (
+        "Read failed",
+        "RasterioIOError",
+        "IReadBlock failed",
+        "TIFFReadEncodedTile",
+        "TIFFFillTile",
+        "CPLE_AppDefinedError",
+    )
+
+    text = str(exc or "")
+    if any(sig in text for sig in signatures):
+        return True
+
+    if not log_path or not os.path.exists(log_path):
+        return False
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            tail = f.read()[-20000:]
+        return any(sig in tail for sig in signatures)
+    except Exception:
+        return False
+
+
+def _build_engine_failure_message(exc, log_path: str | None = None) -> str:
+    if _is_transient_raster_read_failure(exc, log_path=log_path):
+        return (
+            "Engine failed after multiple retries while reading remote raster tiles.\n\n"
+            "This is usually a temporary network/data-access issue (internet instability, VPN/proxy/firewall interruption, or remote server throttling).\n\n"
+            "Please check your internet connection and try again.\n"
+            "If the issue persists, try a smaller AOI or shorter date range and review runtime.log."
+        )
+
+    return f"Engine failed:\n{exc}\n\nSee runtime.log for details."
+
+
+def _resolve_embedded_python_executable() -> str:
+    candidates: list[Path] = []
+    env_python = os.environ.get("PYTHONEXECUTABLE")
+    if env_python:
+        candidates.append(Path(env_python))
+
+    prefix = QgsApplication.prefixPath() or ""
+    if prefix:
+        prefix_path = Path(prefix)
+        candidates.extend(
+            [
+                prefix_path / "python.exe",
+                prefix_path / "python3",
+                prefix_path / "python",
+                prefix_path / "bin" / "python.exe",
+                prefix_path / "bin" / "python3",
+                prefix_path / "bin" / "python",
+            ]
+        )
+        try:
+            bin_dir = prefix_path / "bin"
+            if bin_dir.is_dir():
+                for entry in sorted(bin_dir.iterdir()):
+                    if entry.is_file() and entry.name.lower().startswith("python"):
+                        candidates.append(entry)
+        except Exception:
+            pass
+
+    if sys.prefix:
+        candidates.extend(
+            [
+                Path(sys.prefix) / "python.exe",
+                Path(sys.prefix) / "bin" / "python.exe",
+                Path(sys.prefix) / "bin" / "python3",
+                Path(sys.prefix) / "bin" / "python",
+                Path(sys.prefix) / "python3",
+                Path(sys.prefix) / "python",
+            ]
+        )
+
+    if sys.platform == "darwin" and sys.executable:
+        exe_path = Path(sys.executable).resolve()
+        for parent in exe_path.parents:
+            if parent.name == "MacOS":
+                app_contents = parent.parent
+                candidates.extend(
+                    [
+                        parent / "bin" / "python3",
+                        app_contents / "MacOS" / "bin" / "python3",
+                        app_contents / "Frameworks" / "bin" / "python3",
+                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
+                        app_contents / "Resources" / "python" / "bin" / "python3",
+                    ]
+                )
+                try:
+                    fw_versions = app_contents / "Frameworks" / "Python.framework" / "Versions"
+                    if fw_versions.is_dir():
+                        for version_dir in sorted(fw_versions.iterdir()):
+                            candidates.append(version_dir / "bin" / "python3")
+                except Exception:
+                    pass
+                break
+
+    if sys.executable:
+        candidates.append(Path(sys.executable))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = str(candidate)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+
+        name = candidate.name.lower()
+        if sys.platform == "darwin" and name == "qgis":
+            continue
+        if candidate.is_file() and "python" in name:
+            return normalized
+
+    if sys.executable and "python" in Path(sys.executable).name.lower():
+        return sys.executable
+    return ""
+
+
+def _configure_geospatial_runtime(logf=None):
+    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
+    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "8")
+    os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
+    os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "NO")
+    os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
+    os.environ.setdefault("VSI_CACHE", "TRUE")
+    os.environ.setdefault("VSI_CACHE_SIZE", "50000000")
+    os.environ.setdefault("CPL_DEBUG", "ON")
+
+    prefix = QgsApplication.prefixPath() or ""
+    proj_candidates = [
+        os.path.join(prefix, "share", "proj"),
+        os.path.normpath(os.path.join(prefix, "..", "share", "proj")),
+        os.path.normpath(os.path.join(prefix, "..", "..", "share", "proj")),
+        "/Applications/QGIS.app/Contents/Resources/proj",
+    ]
+
+    for candidate in proj_candidates:
+        proj_db = os.path.join(candidate, "proj.db")
+        if os.path.isfile(proj_db):
+            os.environ["PROJ_LIB"] = candidate
+            os.environ["PROJ_DATA"] = candidate
+            if logf:
+                logf.write(f"Using PROJ data path: {candidate}\n")
+            break
+
+
+def _apply_transient_read_fallback(logf=None):
+    fallback_values = {
+        "VSI_CACHE": "FALSE",
+        "CPL_VSIL_CURL_CACHE_SIZE": "0",
+        "GDAL_HTTP_MULTIRANGE": "SINGLE_GET",
+        "GDAL_HTTP_MAX_RETRY": "12",
+        "GDAL_HTTP_RETRY_DELAY": "3",
+    }
+
+    for key, value in fallback_values.items():
+        os.environ[key] = value
+
+    if logf:
+        logf.write(
+            "Applied transient read fallback settings: "
+            + ", ".join(f"{k}={v}" for k, v in fallback_values.items())
+            + "\n"
+        )
+
+
+@contextmanager
+def _with_embedded_python_executable(logf=None):
+    original_executable = sys.executable
+    mp_set_executable = None
+    original_python_executable_env = os.environ.get("PYTHONEXECUTABLE")
+    embedded_python = _resolve_embedded_python_executable()
+    try:
+        if embedded_python and embedded_python != original_executable:
+            sys.executable = embedded_python
+            if logf:
+                logf.write(f"Using embedded Python executable: {embedded_python}\n")
+        elif logf:
+            logf.write("Embedded Python executable not resolved; keeping current sys.executable\n")
+        if embedded_python:
+            os.environ["PYTHONEXECUTABLE"] = embedded_python
+        try:
+            import multiprocessing as _mp
+            try:
+                import multiprocessing.spawn as _mp_spawn
+            except Exception:
+                _mp_spawn = None
+
+            if sys.platform == "darwin":
+                try:
+                    current_method = _mp.get_start_method(allow_none=True)
+                except Exception:
+                    current_method = None
+                if current_method != "fork":
+                    try:
+                        _mp.set_start_method("fork", force=True)
+                        if logf:
+                            logf.write("Using multiprocessing start method: fork\n")
+                    except Exception as start_method_exc:
+                        if logf:
+                            logf.write(f"Could not set multiprocessing start method to fork: {start_method_exc}\n")
+
+            mp_set_executable = getattr(_mp, "set_executable", None)
+            if not callable(mp_set_executable) and _mp_spawn is not None:
+                mp_set_executable = getattr(_mp_spawn, "set_executable", None)
+
+            if callable(mp_set_executable) and embedded_python:
+                mp_set_executable(embedded_python)
+                if logf:
+                    logf.write(f"Using multiprocessing executable: {embedded_python}\n")
+            elif embedded_python and _mp_spawn is not None:
+                try:
+                    _mp_spawn._python_exe = os.fsencode(embedded_python)
+                    if logf:
+                        logf.write(f"Using multiprocessing _python_exe fallback: {embedded_python}\n")
+                except Exception:
+                    pass
+        except Exception as mp_exc:
+            if logf:
+                logf.write(f"Could not configure multiprocessing executable: {mp_exc}\n")
+        yield
+    finally:
+        if original_python_executable_env is None:
+            os.environ.pop("PYTHONEXECUTABLE", None)
+        else:
+            os.environ["PYTHONEXECUTABLE"] = original_python_executable_env
+        sys.executable = original_executable
+
+
 class _VirtughanTask(QgsTask):
     """Runs VirtughanProcessor.compute() off the UI thread and writes to runtime.log."""
     def __init__(self, desc, params, log_path, on_done=None):
@@ -88,31 +326,78 @@ class _VirtughanTask(QgsTask):
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
 
-            os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
-            os.environ.setdefault("CPL_DEBUG", "ON")
             os.environ["CPL_LOG"] = self.log_path
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
+                _configure_geospatial_runtime(logf=logf)
                 logf.write(f"[{datetime.now().isoformat(timespec='seconds')}] Starting VirtughanProcessor\n")
                 logf.write(f"Params: {self.params}\n")
+                try:
+                    import rasterio
 
-                proc = VirtughanProcessor(
-                    bbox=self.params["bbox"],
-                    start_date=self.params["start_date"],
-                    end_date=self.params["end_date"],
-                    cloud_cover=self.params["cloud_cover"],
-                    formula=self.params["formula"],
-                    band1=self.params["band1"],
-                    band2=self.params["band2"],
-                    operation=self.params["operation"],
-                    timeseries=self.params["timeseries"],
-                    output_dir=self.params["output_dir"],
-                    log_file=logf,
-                    cmap="RdYlGn",
-                    workers=self.params["workers"],
-                    smart_filter=self.params["smart_filter"],
-                )
-                proc.compute()
+                    logf.write(f"rasterio version: {getattr(rasterio, '__version__', 'unknown')}\n")
+                    logf.write(f"rasterio path: {getattr(rasterio, '__file__', 'unknown')}\n")
+                    logf.write(
+                        f"rasterio GDAL version: {getattr(rasterio, '__gdal_version__', 'unknown')}\n"
+                    )
+                except Exception as diag_exc:
+                    logf.write(f"rasterio diagnostics unavailable: {diag_exc}\n")
+                logf.write(f"PROJ_LIB: {os.environ.get('PROJ_LIB', '')}\n")
+                logf.write(f"PROJ_DATA: {os.environ.get('PROJ_DATA', '')}\n")
+                logf.write(f"sys.executable: {sys.executable}\n")
+
+                max_attempts = 4
+                fallback_applied = False
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        logf.write(f"Compute attempt {attempt}/{max_attempts}\n")
+                        proc = VirtughanProcessor(
+                            bbox=self.params["bbox"],
+                            start_date=self.params["start_date"],
+                            end_date=self.params["end_date"],
+                            cloud_cover=self.params["cloud_cover"],
+                            formula=self.params["formula"],
+                            band1=self.params["band1"],
+                            band2=self.params["band2"],
+                            operation=self.params["operation"],
+                            timeseries=self.params["timeseries"],
+                            output_dir=self.params["output_dir"],
+                            log_file=logf,
+                            cmap="RdYlGn",
+                            workers=self.params["workers"],
+                            smart_filter=self.params["smart_filter"],
+                        )
+                        with _with_embedded_python_executable(logf=logf):
+                            proc.compute()
+                        break
+                    except Exception as compute_exc:
+                        message = str(compute_exc)
+                        details = traceback.format_exc()
+                        transient_read_error = (
+                            "TIFFReadEncodedTile" in message
+                            or "IReadBlock failed" in message
+                            or "RasterioIOError" in message
+                            or "Read failed" in message
+                            or "TIFFFillTile" in message
+                            or "CPLE_AppDefinedError" in message
+                            or "TIFFReadEncodedTile" in details
+                            or "IReadBlock failed" in details
+                            or "RasterioIOError" in details
+                            or "Read failed" in details
+                            or "TIFFFillTile" in details
+                            or "CPLE_AppDefinedError" in details
+                        )
+                        if attempt < max_attempts and transient_read_error:
+                            if not fallback_applied:
+                                _apply_transient_read_fallback(logf=logf)
+                                fallback_applied = True
+                            wait_s = 2 * attempt
+                            logf.write(
+                                f"Transient raster read error detected (attempt {attempt}/{max_attempts}); retrying in {wait_s}s...\n"
+                            )
+                            time.sleep(wait_s)
+                            continue
+                        raise
                 logf.write("compute() finished.\n")
             return True
         except Exception as e:
@@ -630,6 +915,10 @@ class EngineDockWidget(QDockWidget):
         self._current_log_path = None
 
     def _run_clicked(self):
+        if not ensure_runtime_network_ready(self):
+            _log(self, "Runtime network preflight failed; run cancelled.", Qgis.Warning)
+            return
+
         try:
             params = self._collect_params()
         except Exception as e:
@@ -654,6 +943,7 @@ class EngineDockWidget(QDockWidget):
 
         self._set_running(True)
         self._start_tailing(log_path)
+        self._focus_log_section()
         self._has_successful_run = False
         self._last_output_layer_ids = []
 
@@ -662,7 +952,8 @@ class EngineDockWidget(QDockWidget):
             self._set_running(False)
             if not ok or exc:
                 _log(self, f"Engine failed: {exc}", Qgis.Critical)
-                QMessageBox.critical(self, "VirtuGhan", f"Engine failed:\n{exc}\n\nSee runtime.log for details.")
+                user_msg = _build_engine_failure_message(exc, log_path=log_path)
+                QMessageBox.critical(self, "VirtuGhan", user_msg)
             else:
                 extract_zipfiles(out_dir, logger=lambda m, lvl=Qgis.Info: _log(self, m, lvl), delete_archives=True)
                 
@@ -715,7 +1006,7 @@ class EngineDockWidget(QDockWidget):
                         }
                         results_summary = host.show_results_for_output(
                             out_dir,
-                            auto_open=self.timeseriesCheck.isChecked(),
+                            auto_open=True,
                             run_metadata=run_metadata,
                         )
                     except Exception as e:
@@ -735,6 +1026,24 @@ class EngineDockWidget(QDockWidget):
 
         self._current_task = _VirtughanTask("VirtuGhan Engine", params, log_path, on_done=_on_done)
         QgsApplication.taskManager().addTask(self._current_task)
+
+    def _focus_log_section(self):
+        try:
+            self.logText.setFocus(Qt.OtherFocusReason)
+            sb = self.logText.verticalScrollBar()
+            sb.setValue(sb.maximum())
+        except Exception:
+            pass
+
+        try:
+            parent = self.logText.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QScrollArea):
+                    parent.ensureWidgetVisible(self.logText, 0, 24)
+                    break
+                parent = parent.parentWidget()
+        except Exception:
+            pass
 
     def _set_running(self, running: bool):
         self.progressBar.setVisible(running)
@@ -995,3 +1304,53 @@ class EngineDockWidget(QDockWidget):
             return QgsGeometry(geom), layer.crs().authid()
         except Exception:
             return None, None
+
+    def _teardown_runtime_state(self):
+        try:
+            self._stop_tailing()
+        except Exception:
+            pass
+
+        try:
+            if self._current_task is not None:
+                try:
+                    self._current_task.on_done = None
+                except Exception:
+                    pass
+                try:
+                    self._current_task.cancel()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._current_task = None
+
+        try:
+            self._clear_scene_footprints_layer()
+        except Exception:
+            pass
+
+        try:
+            self._clear_aoi()
+        except Exception:
+            pass
+
+        try:
+            canvas = self.iface.mapCanvas()
+            if canvas is not None:
+                from virtughan_qgis.common.aoi import AoiRectTool, AoiPolygonTool
+
+                active_tool = canvas.mapTool()
+                if isinstance(active_tool, (AoiRectTool, AoiPolygonTool)):
+                    canvas.setMapTool(None)
+                canvas.setCursor(QCursor(Qt.ArrowCursor))
+            self.iface.messageBar().clearWidgets()
+        except Exception:
+            pass
+
+        self._drawing_tool = None
+        self._prev_tool = None
+
+    def closeEvent(self, event):
+        self._teardown_runtime_state()
+        super().closeEvent(event)

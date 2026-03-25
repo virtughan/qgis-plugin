@@ -6,7 +6,6 @@ from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsApplication
-from .common.hub_dialog import VirtughanHubDialog
 
 from .common.map_setup import setup_default_map
 
@@ -17,13 +16,20 @@ if os.path.isdir(LIBS_DIR) and LIBS_DIR not in sys.path:
     sys.path.insert(0, LIBS_DIR)
 
 try:
-    from .bootstrap import ensure_virtughan_installed, get_last_bootstrap_error
+    from .bootstrap import (
+        get_last_bootstrap_error,
+        interactive_install_dependencies,
+        repair_runtime_dependencies,
+    )
 except Exception:
-    def ensure_virtughan_installed(*args, **kwargs):
-        return True
-
     def get_last_bootstrap_error():
         return None
+
+    def interactive_install_dependencies(*args, **kwargs):
+        return True
+
+    def repair_runtime_dependencies(*args, **kwargs):
+        return False
 
 
 class VirtuGhanPlugin:
@@ -37,31 +43,37 @@ class VirtuGhanPlugin:
         self.action_extractor = None
         self.action_tiler = None
         self.action_toolbar_open = None
+        self.action_repair_dependencies = None
         self.toolbar = None
         self._hub_dialog = None
         self._results_history_session = []
         self._imports_ready = False
         self._last_import_error = None
+        self._VirtughanHubDialog = None
 
     def _ensure_deps_and_imports(self):
         if self._imports_ready:
             return True
-        ok = ensure_virtughan_installed(self.iface.mainWindow(), quiet=True)
+
+        ok = interactive_install_dependencies(self.iface.mainWindow())
         if not ok:
             details = get_last_bootstrap_error()
-            self._last_import_error = "Automatic installation of 'virtughan' failed."
+            self._last_import_error = "Dependency installation check failed."
             if details:
                 self._last_import_error += f"\n\n{details}"
             return False
+
         try:
             from .engine.engine_widget import EngineDockWidget
             from .extractor.extractor_widget import ExtractorDockWidget
             from .tiler.tiler_widget import TilerDockWidget
             from .processing_provider import VirtuGhanProcessingProvider
+            from .common.hub_dialog import VirtughanHubDialog
             self._EngineDockWidget = EngineDockWidget
             self._ExtractorDockWidget = ExtractorDockWidget
             self._TilerDockWidget = TilerDockWidget
             self._VirtuGhanProcessingProvider = VirtuGhanProcessingProvider
+            self._VirtughanHubDialog = VirtughanHubDialog
             self._imports_ready = True
             return True
         except Exception as e:
@@ -94,6 +106,10 @@ class VirtuGhanPlugin:
         self.action_tiler = QAction("VirtuGhan • Tiler", self.iface.mainWindow())
         self.action_tiler.triggered.connect(self.show_tiler)
         self.iface.addPluginToMenu("VirtuGhan", self.action_tiler)
+
+        self.action_repair_dependencies = QAction("VirtuGhan • Repair Dependencies", self.iface.mainWindow())
+        self.action_repair_dependencies.triggered.connect(self.repair_dependencies)
+        self.iface.addPluginToMenu("VirtuGhan", self.action_repair_dependencies)
 
         self.toolbar = self.iface.addToolBar("VirtuGhan")
         self.toolbar.setObjectName("VirtuGhanToolbar")
@@ -152,6 +168,10 @@ class VirtuGhanPlugin:
         if self.action_toolbar_open:
             self.action_toolbar_open = None
 
+        if self.action_repair_dependencies:
+            self.iface.removePluginMenu("VirtuGhan", self.action_repair_dependencies)
+            self.action_repair_dependencies = None
+
         if self.toolbar:
             try:
                 self.iface.mainWindow().removeToolBar(self.toolbar)
@@ -179,6 +199,20 @@ class VirtuGhanPlugin:
             except Exception:
                 pass
 
+        # Reuse existing dialog instance if it is still alive (even if hidden/minimized)
+        if self._hub_dialog is not None:
+            try:
+                if hasattr(self._hub_dialog, "show_page"):
+                    self._hub_dialog.show_page(start_page)
+                self._hub_dialog.show()
+                self._hub_dialog.raise_()
+                self._hub_dialog.activateWindow()
+                return
+            except RuntimeError:
+                self._hub_dialog = None
+            except Exception:
+                pass
+
         # Close previous instance if you want only one hub at a time
         try:
             if self._hub_dialog:
@@ -190,7 +224,7 @@ class VirtuGhanPlugin:
         except Exception:
             pass
 
-        self._hub_dialog = VirtughanHubDialog(self.iface, start_page=start_page, parent=self.iface.mainWindow())
+        self._hub_dialog = self._VirtughanHubDialog(self.iface, start_page=start_page, parent=self.iface.mainWindow())
         try:
             if self._results_history_session:
                 self._hub_dialog.set_results_history(self._results_history_session)
@@ -219,6 +253,41 @@ class VirtuGhanPlugin:
 
     def show_tiler(self):
         self._show_hub("tiler")
+
+    def repair_dependencies(self):
+        reply = QMessageBox.question(
+            self.iface.mainWindow(),
+            "VirtuGhan",
+            "This will clear plugin runtime dependencies and reinstall them.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        repaired = repair_runtime_dependencies()
+        if not repaired:
+            details = get_last_bootstrap_error() or "Some files could not be cleared."
+            QMessageBox.warning(
+                self.iface.mainWindow(),
+                "VirtuGhan",
+                f"Dependency repair completed with warnings:\n\n{details}",
+            )
+
+        ok = interactive_install_dependencies(self.iface.mainWindow())
+        if ok:
+            QMessageBox.information(
+                self.iface.mainWindow(),
+                "VirtuGhan",
+                "Dependencies repaired and reinstalled successfully.\n\nPlease restart QGIS for a clean runtime reload.",
+            )
+        else:
+            details = get_last_bootstrap_error() or "Dependency installation failed."
+            QMessageBox.critical(
+                self.iface.mainWindow(),
+                "VirtuGhan",
+                f"Dependency reinstall failed:\n\n{details}",
+            )
 
 
 

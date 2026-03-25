@@ -4,7 +4,7 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QHBoxLayout, QVBoxLayout, QWidget, QDockWidget,
     QFrame, QAbstractItemView, QApplication, QStyle,
-    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy,
+    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy, QMessageBox,
     QStyledItemDelegate
 )
 from qgis.PyQt.QtGui import QIcon, QColor, QPixmap, QPainter, QPen
@@ -15,6 +15,12 @@ from ..extractor.extractor_widget import ExtractorDockWidget
 from ..tiler.tiler_widget import TilerDockWidget  # adjust if needed
 from .geocoding_widget import GeocodingPlaceWidget
 from .results_widget import ResultsWidget
+from ..bootstrap import (
+    get_last_bootstrap_error,
+    interactive_install_dependencies,
+    repair_runtime_dependencies,
+    uninstall_runtime_dependencies,
+)
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -245,6 +251,12 @@ class VirtughanHubDialog(QDialog):
 <p><i>Session behavior: history is kept while QGIS is running. Save the QGIS project first to enable history save-to-disk.</i></p>
 <p><i>Results content is refreshed after each new Compute run.</i></p>
 """,
+    "dependencies": """
+<h3>Dependencies</h3>
+<p><b>Repair Dependencies</b> clears plugin-managed runtime packages and reinstalls them cleanly.</p>
+<p><b>Uninstall Dependencies</b> removes plugin-managed runtime packages without reinstalling.</p>
+<p><i>After either operation, restart QGIS for a clean runtime reload.</i></p>
+""",
         }
 
         self._row_to_page = {}
@@ -354,6 +366,13 @@ class VirtughanHubDialog(QDialog):
             load_icon("static/images/icons/results.svg", QStyle.SP_FileDialogDetailedView),
             key="results",
         )
+        self._add_separator()
+        self._add_page(
+            "Dependencies",
+            self._build_dependencies_page(),
+            load_icon("static/images/icons/dependencies.svg", QStyle.SP_FileDialogInfoView),
+            key="dependencies",
+        )
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
 
@@ -412,6 +431,82 @@ class VirtughanHubDialog(QDialog):
         self.pages.setCurrentIndex(page_index)
         self._set_help_for_row(row)
 
+    def _build_dependencies_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        title = QLabel("Manage Runtime Dependencies")
+        title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        layout.addWidget(title)
+
+        desc = QLabel(
+            "Use these actions only when dependency installation is broken or you need a clean reinstall."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        repair_btn = QPushButton("Repair Dependencies")
+        repair_btn.clicked.connect(self._on_repair_dependencies)
+        layout.addWidget(repair_btn)
+
+        uninstall_btn = QPushButton("Uninstall Dependencies")
+        uninstall_btn.clicked.connect(self._on_uninstall_dependencies)
+        layout.addWidget(uninstall_btn)
+
+        layout.addStretch(1)
+        return page
+
+    def _on_repair_dependencies(self):
+        reply = QMessageBox.question(
+            self,
+            "VirtuGhan",
+            "This will clear plugin runtime dependencies and reinstall them.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        repaired = repair_runtime_dependencies()
+        if not repaired:
+            details = get_last_bootstrap_error() or "Some files could not be cleared."
+            QMessageBox.warning(self, "VirtuGhan", f"Repair completed with warnings:\n\n{details}")
+
+        ok = interactive_install_dependencies(self)
+        if ok:
+            QMessageBox.information(
+                self,
+                "VirtuGhan",
+                "Dependencies repaired and reinstalled successfully.\n\nPlease restart QGIS.",
+            )
+        else:
+            details = get_last_bootstrap_error() or "Dependency installation failed."
+            QMessageBox.critical(self, "VirtuGhan", f"Dependency reinstall failed:\n\n{details}")
+
+    def _on_uninstall_dependencies(self):
+        reply = QMessageBox.question(
+            self,
+            "VirtuGhan",
+            "This will remove plugin runtime dependencies without reinstalling.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        ok = uninstall_runtime_dependencies()
+        if ok:
+            QMessageBox.information(
+                self,
+                "VirtuGhan",
+                "Dependencies uninstalled successfully.\n\nPlease restart QGIS.",
+            )
+        else:
+            details = get_last_bootstrap_error() or "Uninstall completed with warnings."
+            QMessageBox.warning(self, "VirtuGhan", f"Uninstall completed with warnings:\n\n{details}")
+
     def _set_help_for_row(self, row: int):
         key = None
         for k, mapped_row in self._key_to_row.items():
@@ -452,6 +547,11 @@ class VirtughanHubDialog(QDialog):
             if row is not None and self.nav.currentRow() != row:
                 self.nav.setCurrentRow(row)
         return summary
+
+    def show_page(self, key: str):
+        row = self._key_to_row.get((key or "").strip().lower())
+        if row is not None and self.nav.currentRow() != row:
+            self.nav.setCurrentRow(row)
 
     def set_tab_busy(self, key: str, busy: bool):
         row = self._key_to_row.get((key or "").strip().lower())
@@ -617,3 +717,30 @@ class VirtughanHubDialog(QDialog):
         bottom_space.setFlags(Qt.NoItemFlags)
         bottom_space.setSizeHint(QSize(200, 12))
         self.nav.addItem(bottom_space)
+
+    def _has_busy_tabs(self) -> bool:
+        try:
+            for i in range(self.nav.count()):
+                item = self.nav.item(i)
+                if item is not None and bool(item.data(NAV_BUSY_ROLE)):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def closeEvent(self, event):
+        if self._has_busy_tabs():
+            try:
+                self.hide()
+            except Exception:
+                pass
+            try:
+                self.iface.messageBar().pushWarning(
+                    "VirtuGhan",
+                    "A VirtuGhan task is still running. The window was hidden and will reopen instead of creating a new instance.",
+                )
+            except Exception:
+                pass
+            event.ignore()
+            return
+        super().closeEvent(event)

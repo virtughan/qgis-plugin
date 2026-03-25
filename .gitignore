@@ -91,6 +91,9 @@ qgis_global_settings.ini
 static/outputs/
 outputs/
 
+# Plugin runtime/vendor downloads (local generated)
+virtughan_qgis/vendor/
+
 # Log files
 *.log
 
