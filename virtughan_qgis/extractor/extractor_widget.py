@@ -3,8 +3,11 @@ import os
 import sys
 import traceback
 import uuid
+import json
+import shutil
+import tempfile
+import subprocess
 from datetime import datetime
-import importlib
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -86,6 +89,7 @@ def _apply_pyproj_windows_guard(logger=None):
     if _PYPROJ_GUARD_APPLIED or os.name != "nt":
         return
 
+    selected_proj_path = None
     try:
         prefix = QgsApplication.prefixPath() or ""
         candidates = [
@@ -95,12 +99,24 @@ def _apply_pyproj_windows_guard(logger=None):
         ]
         for candidate in candidates:
             proj_path = os.path.normpath(candidate)
-            if os.path.isdir(proj_path):
+            proj_db = os.path.join(proj_path, "proj.db")
+            if os.path.isdir(proj_path) and os.path.isfile(proj_db):
                 os.environ["PROJ_LIB"] = proj_path
                 os.environ["PROJ_DATA"] = proj_path
+                selected_proj_path = proj_path
                 break
     except Exception:
         pass
+
+    if selected_proj_path:
+        try:
+            from pyproj import datadir as _pyproj_datadir
+            _pyproj_datadir.set_data_dir(selected_proj_path)
+            if logger:
+                logger(f"Pinned pyproj data dir: {selected_proj_path}")
+        except Exception as datadir_exc:
+            if logger:
+                logger(f"Could not pin pyproj data dir: {datadir_exc}")
 
     _PYPROJ_GUARD_APPLIED = True
     if logger:
@@ -108,25 +124,94 @@ def _apply_pyproj_windows_guard(logger=None):
 
 
 def _reload_pyproj_modules(logger=None):
-    """Reload pyproj and related modules to clear corrupted state."""
+    """No-op: reloading pyproj in-process can destabilize repeated runs on Windows/QGIS."""
+    if logger:
+        logger("Skipped pyproj module reload for run-to-run stability")
+
+
+def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
+    python_exe = _resolve_embedded_python_executable() or sys.executable
+    work_dir = tempfile.mkdtemp(prefix="virtughan-extractor-")
+    payload_path = os.path.join(work_dir, "payload.json")
+    runner_path = os.path.join(work_dir, "runner.py")
+
+    payload = {
+        "bbox": params["bbox"],
+        "start_date": params["start_date"],
+        "end_date": params["end_date"],
+        "cloud_cover": params["cloud_cover"],
+        "bands_list": params["bands_list"],
+        "output_dir": params["output_dir"],
+        "workers": int(params.get("workers", 1) or 1),
+        "zip_output": params.get("zip_output", False),
+        "smart_filter": params.get("smart_filter", True),
+        "log_path": log_path,
+    }
+
+    runner_code = f'''import json
+import sys
+import traceback
+
+with open(r"{payload_path}", "r", encoding="utf-8") as pf:
+    payload = json.load(pf)
+
+log_path = payload.pop("log_path")
+
+with open(log_path, "a", encoding="utf-8", buffering=1) as logf:
     try:
-        # List of modules to reload to clear PROJ state
-        modules_to_reload = [
-            "pyproj.crs",
-            "pyproj.transformer",
-            "pyproj",
-        ]
-        for mod_name in modules_to_reload:
-            if mod_name in sys.modules:
-                try:
-                    importlib.reload(sys.modules[mod_name])
-                except Exception:
-                    pass
-        if logger:
-            logger("Reloaded pyproj modules to clear PROJ state")
-    except Exception as e:
-        if logger:
-            logger(f"Failed to reload pyproj: {e}")
+        from virtughan.extract import ExtractProcessor as ExtractorBackend
+        extr = ExtractorBackend(
+            bbox=payload["bbox"],
+            start_date=payload["start_date"],
+            end_date=payload["end_date"],
+            cloud_cover=payload["cloud_cover"],
+            bands_list=payload["bands_list"],
+            output_dir=payload["output_dir"],
+            log_file=logf,
+            workers=payload["workers"],
+            zip_output=payload["zip_output"],
+            smart_filter=payload["smart_filter"],
+        )
+        extr.extract()
+        logf.write("Extractor finished.\\n")
+    except Exception:
+        logf.write("[subprocess_exception]\\n")
+        logf.write(traceback.format_exc())
+        sys.exit(1)
+
+sys.exit(0)
+'''
+
+    try:
+        with open(payload_path, "w", encoding="utf-8") as pf:
+            json.dump(payload, pf)
+        with open(runner_path, "w", encoding="utf-8") as rf:
+            rf.write(runner_code)
+
+        if logf:
+            logf.write(f"[INFO] running extractor in subprocess: {python_exe}\n")
+
+        proc = subprocess.run(
+            [python_exe, runner_path],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if logf and proc.stdout:
+            logf.write("[subprocess_stdout]\n")
+            logf.write(proc.stdout.strip() + "\n")
+        if logf and proc.stderr:
+            logf.write("[subprocess_stderr]\n")
+            logf.write(proc.stderr.strip() + "\n")
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"Extractor subprocess failed (exit code {proc.returncode}).")
+    finally:
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def _log(widget, msg, level=Qgis.Info):
@@ -298,25 +383,40 @@ class _ExtractorTask(QgsTask):
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
                 _apply_pyproj_windows_guard(logger=lambda m, lvl=Qgis.Info: logf.write(f"[{lvl}] {m}\n"))
                 _reload_pyproj_modules(logger=lambda m: logf.write(f"[INFO] {m}\n"))
+                logf.write(f"[INFO] PROJ_LIB={os.environ.get('PROJ_LIB', '')}\n")
+                logf.write(f"[INFO] PROJ_DATA={os.environ.get('PROJ_DATA', '')}\n")
+                try:
+                    from pyproj import datadir as _pyproj_datadir
+                    logf.write(f"[INFO] pyproj_data_dir={_pyproj_datadir.get_data_dir()}\n")
+                except Exception as datadir_exc:
+                    logf.write(f"[INFO] pyproj_data_dir=unavailable ({datadir_exc})\n")
                 logf.write(
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
                 logf.write(f"Params: {self.params}\n")
-                extr = ExtractorBackend(
-                    bbox=self.params["bbox"],
-                    start_date=self.params["start_date"],
-                    end_date=self.params["end_date"],
-                    cloud_cover=self.params["cloud_cover"],
-                    bands_list=self.params["bands_list"],
-                    output_dir=self.params["output_dir"],
-                    log_file=logf,
-                    workers=self.params["workers"],
-                    zip_output=self.params["zip_output"],
-                    smart_filter=self.params["smart_filter"],
-                )
-                with _with_embedded_python_executable(logf=logf):
-                    extr.extract()
-                logf.write("Extractor finished.\n")
+                if os.name == "nt":
+                    _run_extractor_in_subprocess(self.params, self.log_path, logf=logf)
+                else:
+                    extr = ExtractorBackend(
+                        bbox=self.params["bbox"],
+                        start_date=self.params["start_date"],
+                        end_date=self.params["end_date"],
+                        cloud_cover=self.params["cloud_cover"],
+                        bands_list=self.params["bands_list"],
+                        output_dir=self.params["output_dir"],
+                        log_file=logf,
+                        workers=self.params["workers"],
+                        zip_output=self.params["zip_output"],
+                        smart_filter=self.params["smart_filter"],
+                    )
+                    workers = int(self.params.get("workers", 1) or 1)
+                    if workers > 1:
+                        with _with_embedded_python_executable(logf=logf):
+                            extr.extract()
+                    else:
+                        logf.write("[INFO] workers=1, skipping multiprocessing executable override\n")
+                        extr.extract()
+                    logf.write("Extractor finished.\n")
             return True
         except Exception as e:
             self.exc = e

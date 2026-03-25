@@ -1,56 +1,85 @@
-An error has occurred while executing Python code: 
+## Report Details
 
-AttributeError: 'TilerWidget' object has no attribute 'ui_root' 
-Traceback (most recent call last):
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\main_plugin.py", line 240, in show_engine
-    self._show_hub("engine")
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\main_plugin.py", line 218, in _show_hub
-    self._hub_dialog = self._VirtughanHubDialog(self.iface, start_page=start_page, parent=self.iface.mainWindow())
-                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\common\hub_dialog.py", line 352, in __init__
-    TilerDockWidget(self.iface),
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\tiler\tiler_widget.py", line 568, in __init__
-    self._content = TilerWidget(iface, self)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\tiler\tiler_widget.py", line 176, in __init__
-    self._init_index_controls()
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\tiler\tiler_widget.py", line 334, in _init_index_controls
-    self._on_formula_mode_toggled()
-  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\tiler\tiler_widget.py", line 357, in _on_formula_mode_toggled
-    tiler_tip = self.ui_root.findChild(QLabel, "tilerTipLabel")
-                ^^^^^^^^^^^^
-AttributeError: 'TilerWidget' object has no attribute 'ui_root'
+**Python Stack Trace**
+```
+Windows fatal exception: access violation
+
+Current thread 0x00000de0 (most recent call first):
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\pyproj\crs\crs.py", line 350 in __init__
+    self._local.crs = _CRS(self.srs)
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\pyproj\crs\crs.py", line 503 in from_user_input
+    return cls(value, **kwargs)
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\pyproj\transformer.py", line 627 in from_crs
+    cstrencode(CRS.from_user_input(crs_from).srs),
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\virtughan\extract.py", line 108 in _transform_bbox
+    transformer = Transformer.from_crs("epsg:4326", crs, always_xy=True)
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\virtughan\extract.py", line 186 in _fetch_and_save_bands
+    min_x, min_y, max_x, max_y = self._transform_bbox(band_cog.crs)
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\virtughan\extract.py", line 320 in extract
+    result = self._fetch_and_save_bands(band_urls, feature["id"])
+  File "C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\extractor\extractor_widget.py", line 326 in run
+    extr.extract()
+
+Thread 0x00007614 (most recent call first):
+  File "C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\threading.py", line 359 in wait
+    gotit = waiter.acquire(True, timeout)
+  File "C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\threading.py", line 655 in wait
+    signaled = self._cond.wait(timeout)
+  File "C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\tqdm\_monitor.py", line 60 in run
+    self.was_killed.wait(self.sleep_interval)
+  File "C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+    self.run()
+  File "C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\threading.py", line 1032 in _bootstrap
+    self._bootstrap_inner()
+
+Thread 0x00002924 (most recent call first):
+  <no Python frame>
+```
 
 
-Python version: 3.12.13 (main, Mar  5 2026, 15:14:54) [MSC v.1944 64 bit (AMD64)] 
-QGIS version: 3.44.8-Solothurn Solothurn, d25052deb8b 
+**Stack Trace**
 
-Python Path:
-C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\virtughan_qgis\vendor
-C:\Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins\OpenTopography-DEM-Downloader
-C:/PROGRA~1/QGIS34~1.8/apps/qgis-ltr/./python
-C:/Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python
-C:/Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python/plugins
-C:/PROGRA~1/QGIS34~1.8/apps/qgis-ltr/./python/plugins
-C:\PROGRA~1\QGIS34~1.8\apps\grass\grass84\etc\python
-C:\Users\ROG\Documents
-C:\Program Files\QGIS 3.44.8\bin\python312.zip
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\DLLs
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib
-C:\Program Files\QGIS 3.44.8\bin
-C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages
-C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\win32
-C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\win32\lib
-C:\Users\ROG\AppData\Roaming\Python\Python312\site-packages\Pythonwin
-C:\PROGRA~1\QGIS34~1.8\apps\Python312
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\site-packages
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\site-packages\win32
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\site-packages\win32\lib
-C:\PROGRA~1\QGIS34~1.8\apps\Python312\Lib\site-packages\Pythonwin
-C:/Users/ROG/AppData/Roaming/QGIS/QGIS3\profiles\default/python
-C:\Users\ROG\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\qfieldsync\libqfieldsync_62853968a3cc98953ff7f41f8770a7f9d1b6a80e.whl
-C:\Users\ROG\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins
-C:\Users\ROG\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\SentinelHub\external\oauthlib-3.2.2-py3-none-any.whl
-C:\Users\ROG\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\SentinelHub\external\requests_oauthlib-1.3.1-py2.py3-none-any.whl
-.
+```
+
+osgeo::proj::io::DatabaseContext::toWGS84AutocorrectWrongValues :
+osgeo::proj::io::DatabaseContext::toWGS84AutocorrectWrongValues :
+proj_create :
+PyObject_Vectorcall :
+PyObject_Vectorcall :
+PyEval_EvalFrameDefault :
+PyFunction_Vectorcall :
+PyNumber_Long :
+PyNumber_Negative :
+PyObject_Call :
+PyEval_EvalFrameDefault :
+PyFunction_Vectorcall :
+PyArg_CheckPositional :
+PyObject_Call :
+PyObject_Call :
+PyInit_sip :
+PyInit_sip :
+pdal::StreamPointTable::reset :
+QgsPresetSchemeColorRamp::clone :
+QgsTask::start :
+QThreadPoolPrivate::reset :
+QThread::start :
+BaseThreadInitThunk :
+RtlUserThreadStart :
+```
+
+
+
+**QGIS Info**
+QGIS Version: 3.44.8-Solothurn
+QGIS code revision: d25052deb8b
+Compiled against Qt: 5.15.13
+Running against Qt: 5.15.13
+Compiled against GDAL: 3.12.2
+Running against GDAL: 3.12.2
+
+
+
+**System Info**
+CPU Type: x86_64
+Kernel Type: winnt
+Kernel Version: 10.0.26200

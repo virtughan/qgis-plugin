@@ -330,6 +330,21 @@ class _VirtughanTask(QgsTask):
         self.exc = None
 
     def run(self):
+        managed_env_keys = (
+            "CPL_LOG",
+            "GDAL_HTTP_TIMEOUT",
+            "GDAL_HTTP_MAX_RETRY",
+            "GDAL_HTTP_RETRY_DELAY",
+            "GDAL_HTTP_MULTIRANGE",
+            "CPL_VSIL_CURL_USE_HEAD",
+            "VSI_CACHE",
+            "VSI_CACHE_SIZE",
+            "CPL_VSIL_CURL_CACHE_SIZE",
+            "CPL_DEBUG",
+            "PROJ_LIB",
+            "PROJ_DATA",
+        )
+        original_env = {key: os.environ.get(key) for key in managed_env_keys}
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
 
@@ -416,6 +431,12 @@ class _VirtughanTask(QgsTask):
             except Exception:
                 pass
             return False
+        finally:
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def finished(self, ok):
         if self.on_done:
