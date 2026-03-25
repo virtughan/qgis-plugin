@@ -1,3 +1,12 @@
+## v1.0.5 (2026-03-25)
+
+### Fix
+
+- **extractor-windows-stability**: fixes repeated Extractor-run crash on Windows by isolating extraction in a dedicated subprocess
+- **extractor-windows-proj-guard**: hardens PROJ path setup and pyproj data directory pinning before extraction starts
+- **extractor-windows-console**: hides blank command window during Windows subprocess launch
+- **platform-scope**: marks this crash fix path as Windows-only; macOS/Linux keep the existing execution path
+
 ## v1.0.4 (2026-03-24)
 
 ### Feat
