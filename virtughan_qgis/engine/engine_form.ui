@@ -3,7 +3,7 @@
  <class>EngineForm</class>
  <widget class="QWidget" name="EngineForm">
   <property name="windowTitle">
-   <string>VirtuGhan • Engine</string>
+    <string>VirtuGhan • Compute</string>
   </property>
   <property name="styleSheet">
    <string>QLineEdit, QComboBox, QDateEdit, QSpinBox, QListWidget { padding: 2px; }</string>
@@ -16,7 +16,7 @@
      <item>
       <widget class="QLabel" name="titleLabel">
        <property name="text">
-          <string>&lt;b&gt;VirtuGhan Engine (Compute on Images)&lt;/b&gt;</string>
+         <string>&lt;b&gt;VirtuGhan Compute (Derived Outputs)&lt;/b&gt;</string>
        </property>
       </widget>
      </item>
@@ -273,7 +273,7 @@
           </item>
           <item>
            <widget class="QPushButton" name="runButton">
-            <property name="text"><string>Run Engine</string></property>
+            <property name="text"><string>Run Compute</string></property>
             <property name="minimumHeight"><number>30</number></property>
             <property name="toolTip"><string>Start processing</string></property>
            </widget>

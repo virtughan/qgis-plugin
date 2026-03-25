@@ -65,7 +65,7 @@ class ResultsWidget(QWidget):
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
-        self.title = QLabel("<b>Engine Results</b>")
+        self.title = QLabel("<b>Compute Results</b>")
         self.btn_open_folder = QPushButton("Open Output Folder")
         self.btn_open_folder.setEnabled(False)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
@@ -90,7 +90,7 @@ class ResultsWidget(QWidget):
         title_row.addWidget(self.btn_clear_history)
         title_row.addWidget(self.btn_help)
 
-        self.info = QLabel("Run Engine to see Aggregate, Timeseries, and Trend outputs here.")
+        self.info = QLabel("Run Compute to see Aggregate, Timeseries, and Trend outputs here.")
         self.info.setWordWrap(True)
         self.meta = QLabel("")
         self.meta.setWordWrap(True)

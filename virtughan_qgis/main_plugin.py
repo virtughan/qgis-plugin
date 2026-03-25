@@ -86,7 +86,7 @@ class VirtuGhanPlugin:
                 "VirtuGhan",
                 f"VirtuGhan plugin could not initialize:\n\n{self._last_import_error}"
             )
-            self.action_engine = QAction("VirtuGhan • Engine (unavailable)", self.iface.mainWindow())
+            self.action_engine = QAction("VirtuGhan • Compute (unavailable)", self.iface.mainWindow())
             self.action_engine.setEnabled(False)
             self.action_extractor = QAction("VirtuGhan • Extractor (unavailable)", self.iface.mainWindow())
             self.action_extractor.setEnabled(False)
@@ -94,7 +94,7 @@ class VirtuGhanPlugin:
             self.iface.addPluginToMenu("VirtuGhan", self.action_extractor)
             return
 
-        self.action_engine = QAction("VirtuGhan • Engine", self.iface.mainWindow())
+        self.action_engine = QAction("VirtuGhan • Compute", self.iface.mainWindow())
         self.action_engine.triggered.connect(self.show_engine)
         self.iface.addPluginToMenu("VirtuGhan", self.action_engine)
 
@@ -177,7 +177,7 @@ class VirtuGhanPlugin:
                 setup_default_map(
                     self.iface,
                     center_wgs84=(85.3478258, 27.6934185),
-                    scale_m=5000,
+                    # Uses common.map_setup.DEFAULT_STARTUP_SCALE_M for startup zoom.
                     set_project_crs=False,            # respect current project CRS
                     skip_if_present=True,             # don't add another OSM if present
                     skip_zoom_if_present=True,        # don't recenter if OSM already present

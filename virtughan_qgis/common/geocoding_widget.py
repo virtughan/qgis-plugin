@@ -22,6 +22,9 @@ from qgis.core import (
 )
 
 
+GEOCODING_SCALE_M = 15000
+
+
 class GeocodingPlaceWidget(QWidget):
     def __init__(self, iface, parent=None):
         super().__init__(parent)
@@ -156,9 +159,9 @@ class GeocodingPlaceWidget(QWidget):
                 if dst_rect.isFinite() and not dst_rect.isNull():
                     canvas.setExtent(dst_rect)
                 else:
-                    canvas.zoomScale(25000)
+                    canvas.zoomScale(GEOCODING_SCALE_M)
             else:
-                canvas.zoomScale(25000)
+                canvas.zoomScale(GEOCODING_SCALE_M)
 
             canvas.refresh()
             self.status_label.setText(f"Moved to: {result.get('display_name', 'selected place')}")

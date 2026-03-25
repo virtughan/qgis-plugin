@@ -109,13 +109,13 @@ def _is_transient_raster_read_failure(exc, log_path: str | None = None) -> bool:
 def _build_engine_failure_message(exc, log_path: str | None = None) -> str:
     if _is_transient_raster_read_failure(exc, log_path=log_path):
         return (
-            "Engine failed after multiple retries while reading remote raster tiles.\n\n"
+            "Compute failed after multiple retries while reading remote raster tiles.\n\n"
             "This is usually a temporary network/data-access issue (internet instability, VPN/proxy/firewall interruption, or remote server throttling).\n\n"
             "Please check your internet connection and try again.\n"
             "If the issue persists, try a smaller AOI or shorter date range and review runtime.log."
         )
 
-    return f"Engine failed:\n{exc}\n\nSee runtime.log for details."
+    return f"Compute failed:\n{exc}\n\nSee runtime.log for details."
 
 
 def _resolve_embedded_python_executable() -> str:
@@ -456,7 +456,7 @@ class _UiLogTailer:
 
 class EngineDockWidget(QDockWidget):
     def __init__(self, iface):
-        super().__init__("VirtuGhan • Engine", iface.mainWindow())
+        super().__init__("VirtuGhan • Compute", iface.mainWindow())
         self.iface = iface
         self.setObjectName("VirtuGhanEngineDock")
 
@@ -507,8 +507,8 @@ class EngineDockWidget(QDockWidget):
         missing = [name for name, ref in critical.items() if ref is None]
         if missing:
             raise RuntimeError(
-                f"Engine UI missing widgets: {', '.join(missing)}. "
-                f"Make sure engine_form.ui names match the code."
+                f"Compute UI missing widgets: {', '.join(missing)}. "
+                f"Make sure form field names match the code."
             )
 
         self._init_common_widget()
@@ -522,13 +522,13 @@ class EngineDockWidget(QDockWidget):
         # Blue colors for Engine AOI
         self._aoi_fill_color = QColor(0, 102, 255, 60)      # light blue with transparency
         self._aoi_stroke_color = QColor(0, 102, 255, 200)   # darker blue stroke
-        self._aoi = AoiManager(self.iface, layer_name="Engine AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
+        self._aoi = AoiManager(self.iface, layer_name="Compute AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
         self._prev_tool = None  # Track previous map tool
         self._drawing_tool = None  # Track active drawing tool
 
-        # Convert dropdown to 3 options at runtime (no .ui change required)
+        # Convert dropdown to 4 options at runtime (no .ui change required)
         self.aoiModeCombo.clear()
-        self.aoiModeCombo.addItems(["Map extent", "Draw rectangle", "Draw polygon"])
+        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon"])
 
         # Use a single action button; hide the separate 'Use Canvas Extent' button
         self.aoiUseCanvasButton.setVisible(False)
@@ -637,8 +637,16 @@ class EngineDockWidget(QDockWidget):
         }
 
     def _aoi_mode_changed(self, text: str):
-        """Update the single action button text based on the selected mode."""
+        """Show AOI action controls only after mode selection and set action text."""
         t = (text or "").lower()
+        if "select" in t:
+            self.aoiStartDrawButton.setVisible(False)
+            self.aoiClearButton.setVisible(False)
+            return
+
+        self.aoiStartDrawButton.setVisible(True)
+        self.aoiClearButton.setVisible(True)
+
         if "extent" in t:
             self.aoiStartDrawButton.setText("Use Canvas Extent")
             self.aoiStartDrawButton.setToolTip("Capture current map canvas extent")
@@ -652,6 +660,8 @@ class EngineDockWidget(QDockWidget):
     def _aoi_action_clicked(self):
         """Single action button handler; dispatch by dropdown mode."""
         mode = (self.aoiModeCombo.currentText() or "").lower()
+        if "select" in mode:
+            return
         if "extent" in mode:
             self._use_canvas_extent()
         elif "rectangle" in mode:
@@ -886,7 +896,7 @@ class EngineDockWidget(QDockWidget):
 
         workers = max(1, int(self.workersSpin.value()))
         out_base = (self.outputPathEdit.text() or "").strip() or QgsProcessingUtils.tempFolder()
-        out_dir = os.path.join(out_base, f"virtughan_engine_{uuid.uuid4().hex[:8]}")
+        out_dir = os.path.join(out_base, f"virtughan_compute_{uuid.uuid4().hex[:8]}")
 
         return dict(
             bbox=self._aoi_bbox,
@@ -951,7 +961,7 @@ class EngineDockWidget(QDockWidget):
             self._stop_tailing()
             self._set_running(False)
             if not ok or exc:
-                _log(self, f"Engine failed: {exc}", Qgis.Critical)
+                _log(self, f"Compute failed: {exc}", Qgis.Critical)
                 user_msg = _build_engine_failure_message(exc, log_path=log_path)
                 QMessageBox.critical(self, "VirtuGhan", user_msg)
             else:
@@ -1012,7 +1022,7 @@ class EngineDockWidget(QDockWidget):
                     except Exception as e:
                         _log(self, f"Could not update Results tab: {e}", Qgis.Warning)
 
-                msg = f"Engine finished.\nOutput: {out_dir}"
+                msg = f"Compute finished.\nOutput: {out_dir}"
                 if self.timeseriesCheck.isChecked():
                     frames = 0
                     if isinstance(results_summary, dict):
@@ -1024,7 +1034,7 @@ class EngineDockWidget(QDockWidget):
 
                 QMessageBox.information(self, "VirtuGhan", msg)
 
-        self._current_task = _VirtughanTask("VirtuGhan Engine", params, log_path, on_done=_on_done)
+        self._current_task = _VirtughanTask("VirtuGhan Compute", params, log_path, on_done=_on_done)
         QgsApplication.taskManager().addTask(self._current_task)
 
     def _focus_log_section(self):
@@ -1159,7 +1169,7 @@ class EngineDockWidget(QDockWidget):
             return 0
         project = QgsProject.instance()
         dst_crs = project.crs()
-        layer = QgsVectorLayer(f"Polygon?crs={dst_crs.authid()}", "Engine Scene Footprints", "memory")
+        layer = QgsVectorLayer(f"Polygon?crs={dst_crs.authid()}", "Compute Scene Footprints", "memory")
         prov = layer.dataProvider()
         prov.addAttributes([
             QgsField("scene_id", QVariant.String),
@@ -1232,7 +1242,7 @@ class EngineDockWidget(QDockWidget):
 
     def _preview_matching_scenes(self):
         if engine_search_stac_api is None:
-            QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in virtughan.engine.")
+            QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in the compute backend.")
             return
         try:
             params = self._collect_search_params()
@@ -1261,7 +1271,7 @@ class EngineDockWidget(QDockWidget):
             dlg = ScenePreviewDialog(
                 parent=self,
                 scenes=scenes,
-                title="Engine Scene Preview",
+                title="Compute Scene Preview",
                 fill_color=QColor(156, 39, 176, 14),
                 stroke_color=QColor(156, 39, 176, 170),
                 aoi_geometry=aoi_geom,

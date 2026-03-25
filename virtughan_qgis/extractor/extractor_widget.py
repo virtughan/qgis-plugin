@@ -421,9 +421,9 @@ class ExtractorDockWidget(QDockWidget):
         if self.workersSpin.value() < 1:
             self.workersSpin.setValue(1)
 
-        # AOI: unifying to 3 options, single action button
+        # AOI: mode-first flow with hidden actions until a mode is chosen
         self.aoiModeCombo.clear()
-        self.aoiModeCombo.addItems(["Map extent", "Draw rectangle", "Draw polygon"])
+        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon"])
         self.aoiUseCanvasButton.setVisible(False)  # hide legacy button
 
         self.aoiStartDrawButton.clicked.connect(self._aoi_action_clicked)
@@ -559,6 +559,14 @@ class ExtractorDockWidget(QDockWidget):
 
     def _aoi_mode_changed(self, text):
         t = (text or "").lower()
+        if "select" in t:
+            self.aoiStartDrawButton.setVisible(False)
+            self.aoiClearButton.setVisible(False)
+            return
+
+        self.aoiStartDrawButton.setVisible(True)
+        self.aoiClearButton.setVisible(True)
+
         if "extent" in t:
             self.aoiStartDrawButton.setText("Use Canvas Extent")
             self.aoiStartDrawButton.setToolTip("Capture current map canvas extent")
@@ -571,6 +579,8 @@ class ExtractorDockWidget(QDockWidget):
 
     def _aoi_action_clicked(self):
         mode = (self.aoiModeCombo.currentText() or "").lower()
+        if "select" in mode:
+            return
         if "extent" in mode:
             self._use_canvas_extent()
         elif "rectangle" in mode:

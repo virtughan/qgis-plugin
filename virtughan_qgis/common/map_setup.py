@@ -8,6 +8,10 @@ from qgis.PyQt.QtCore import QTimer
 _OSM_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 _OSM_NAME = "OpenStreetMap"
 
+# Startup/default VirtuGhan map-open scale (used when the plugin hub opens).
+# Increase value to zoom out more on initial open.
+DEFAULT_STARTUP_SCALE_M = 15000.0
+
 
 def _find_osm_layer():
     """Return the existing OSM XYZ layer if present, else None."""
@@ -170,7 +174,7 @@ def zoom_to_wgs84_bbox(iface,
 def setup_default_map(
     iface,
     center_wgs84: tuple[float, float] | None = None,
-    scale_m: float = 10000.0,
+    scale_m: float = DEFAULT_STARTUP_SCALE_M,
     bbox_wgs84: tuple[float, float, float, float] | None = None,
     name: str = _OSM_NAME,
     set_project_crs: bool = True,
@@ -181,6 +185,7 @@ def setup_default_map(
 ):
     """
     One-shot convenience: add OSM (if missing) and zoom.
+        scale_m controls initial map-open zoom for plugin startup flow.
     If OSM already exists:
       - skip adding when skip_if_present=True,
       - skip zoom when skip_zoom_if_present=True.

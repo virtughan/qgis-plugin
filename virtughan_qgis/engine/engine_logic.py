@@ -119,10 +119,10 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             "OUTPUT_FOLDER", "Output folder (blank = temp)", optional=True))
 
     def name(self): return "virtughan_engine"
-    def displayName(self): return "VirtuGhan Engine"
+    def displayName(self): return "VirtuGhan Compute"
     def group(self): return "VirtuGhan"
     def groupId(self): return "virtughan"
-    def shortHelpString(self): return "Run VirtuGhan Engine from the Processing Toolbox."
+    def shortHelpString(self): return "Run VirtuGhan Compute from the Processing Toolbox."
     def createInstance(self): return VirtuGhanEngineAlgorithm()
 
     def processAlgorithm(self, parameters, context, feedback):
