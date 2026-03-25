@@ -1,5 +1,5 @@
 import os
-from qgis.PyQt.QtCore import Qt, QSize
+from qgis.PyQt.QtCore import Qt, QSize, QTimer
 from qgis.PyQt.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QHBoxLayout, QVBoxLayout, QWidget, QDockWidget,
@@ -261,6 +261,7 @@ class VirtughanHubDialog(QDialog):
 
         self._row_to_page = {}
         self._key_to_row = {}
+        self._dependencies_spacer_item = None
 
         root = QHBoxLayout(self)
         root.setContentsMargins(6, 6, 6, 6)
@@ -367,6 +368,7 @@ class VirtughanHubDialog(QDialog):
             key="results",
         )
         self._add_separator()
+        self._add_dependencies_spacer()
         self._add_page(
             "Dependencies",
             self._build_dependencies_page(),
@@ -375,6 +377,7 @@ class VirtughanHubDialog(QDialog):
         )
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
+        QTimer.singleShot(0, self._update_dependencies_spacer)
 
         # select initial page
         start_index = self._key_to_row.get(start_page.lower(), self._key_to_row.get("engine", 0))
@@ -626,6 +629,7 @@ class VirtughanHubDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._update_dependencies_spacer()
         if self._centered_once:
             return
         self._centered_once = True
@@ -637,6 +641,10 @@ class VirtughanHubDialog(QDialog):
                 self.move(geometry.topLeft())
         except Exception:
             pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_dependencies_spacer()
 
     def _add_page(self, title: str, content_widget: QWidget, icon: QIcon, key: str):
         # Strip dock chrome so it looks like a plain page
@@ -717,6 +725,30 @@ class VirtughanHubDialog(QDialog):
         bottom_space.setFlags(Qt.NoItemFlags)
         bottom_space.setSizeHint(QSize(200, 12))
         self.nav.addItem(bottom_space)
+
+    def _add_dependencies_spacer(self):
+        spacer = QListWidgetItem("")
+        spacer.setFlags(Qt.NoItemFlags)
+        spacer.setSizeHint(QSize(200, 0))
+        self.nav.addItem(spacer)
+        self._dependencies_spacer_item = spacer
+
+    def _update_dependencies_spacer(self):
+        if self._dependencies_spacer_item is None:
+            return
+        try:
+            viewport_height = self.nav.viewport().height()
+            used_height = 0
+            for index in range(self.nav.count()):
+                item = self.nav.item(index)
+                if item is None or item is self._dependencies_spacer_item:
+                    continue
+                used_height += item.sizeHint().height()
+
+            spacer_height = max(0, viewport_height - used_height)
+            self._dependencies_spacer_item.setSizeHint(QSize(200, spacer_height))
+        except Exception:
+            pass
 
     def _has_busy_tabs(self) -> bool:
         try:

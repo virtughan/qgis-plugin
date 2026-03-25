@@ -43,7 +43,6 @@ class VirtuGhanPlugin:
         self.action_extractor = None
         self.action_tiler = None
         self.action_toolbar_open = None
-        self.action_repair_dependencies = None
         self.toolbar = None
         self._hub_dialog = None
         self._results_history_session = []
@@ -107,10 +106,6 @@ class VirtuGhanPlugin:
         self.action_tiler.triggered.connect(self.show_tiler)
         self.iface.addPluginToMenu("VirtuGhan", self.action_tiler)
 
-        self.action_repair_dependencies = QAction("VirtuGhan • Repair Dependencies", self.iface.mainWindow())
-        self.action_repair_dependencies.triggered.connect(self.repair_dependencies)
-        self.iface.addPluginToMenu("VirtuGhan", self.action_repair_dependencies)
-
         self.toolbar = self.iface.addToolBar("VirtuGhan")
         self.toolbar.setObjectName("VirtuGhanToolbar")
         logo_path = os.path.join(PLUGIN_DIR, "static", "images", "virtughan-logo.png")
@@ -167,10 +162,6 @@ class VirtuGhanPlugin:
 
         if self.action_toolbar_open:
             self.action_toolbar_open = None
-
-        if self.action_repair_dependencies:
-            self.iface.removePluginMenu("VirtuGhan", self.action_repair_dependencies)
-            self.action_repair_dependencies = None
 
         if self.toolbar:
             try:
