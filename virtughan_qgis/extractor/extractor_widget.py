@@ -402,29 +402,7 @@ class _ExtractorTask(QgsTask):
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
                 logf.write(f"Params: {self.params}\n")
-                if os.name == "nt":
-                    _run_extractor_in_subprocess(self.params, self.log_path, logf=logf)
-                else:
-                    extr = ExtractorBackend(
-                        bbox=self.params["bbox"],
-                        start_date=self.params["start_date"],
-                        end_date=self.params["end_date"],
-                        cloud_cover=self.params["cloud_cover"],
-                        bands_list=self.params["bands_list"],
-                        output_dir=self.params["output_dir"],
-                        log_file=logf,
-                        workers=self.params["workers"],
-                        zip_output=self.params["zip_output"],
-                        smart_filter=self.params["smart_filter"],
-                    )
-                    workers = int(self.params.get("workers", 1) or 1)
-                    if workers > 1:
-                        with _with_embedded_python_executable(logf=logf):
-                            extr.extract()
-                    else:
-                        logf.write("[INFO] workers=1, skipping multiprocessing executable override\n")
-                        extr.extract()
-                    logf.write("Extractor finished.\n")
+                _run_extractor_in_subprocess(self.params, self.log_path, logf=logf)
             return True
         except Exception as e:
             self.exc = e
