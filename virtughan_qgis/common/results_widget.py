@@ -96,6 +96,19 @@ class ResultsWidget(QWidget):
         self.meta.setWordWrap(True)
         self.meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
+        self.btn_toggle_details = QPushButton("Show Run Details")
+        self.btn_toggle_details.setCheckable(True)
+        self.btn_toggle_details.setChecked(False)
+        self.btn_toggle_details.toggled.connect(self._on_toggle_details)
+
+        self.details_host = QWidget()
+        details_layout = QVBoxLayout(self.details_host)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(4)
+        details_layout.addWidget(self.info)
+        details_layout.addWidget(self.meta)
+        self.details_host.setVisible(False)
+
         self.history_list = QListWidget()
         self.history_list.setSelectionMode(self.history_list.SingleSelection)
         self.history_list.setMaximumHeight(120)
@@ -125,8 +138,8 @@ class ResultsWidget(QWidget):
         root.addWidget(QLabel("<b>Run History</b>"))
         root.addWidget(self.history_list)
         root.addWidget(self.entry_actions_host)
-        root.addWidget(self.info)
-        root.addWidget(self.meta)
+        root.addWidget(self.btn_toggle_details)
+        root.addWidget(self.details_host)
         root.addWidget(self.tabs, 1)
 
         self.aggregate_image = _ScaledImageLabel()
@@ -167,6 +180,10 @@ class ResultsWidget(QWidget):
         self.slider.valueChanged.connect(self._on_slider_changed)
 
         self._set_timeseries_controls_enabled(False)
+
+    def _on_toggle_details(self, checked: bool):
+        self.details_host.setVisible(checked)
+        self.btn_toggle_details.setText("Hide Run Details" if checked else "Show Run Details")
 
     def add_result(self, output_dir: str, run_metadata: dict | None = None):
         normalized = os.path.normpath(output_dir or "")

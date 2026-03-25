@@ -104,6 +104,21 @@ cz bump
 cz changelog
 ```
 
+### Vendored dependencies (plugin runtime)
+
+The plugin uses a **pip-bundled runtime install** strategy.
+
+- Bundle only `pip` in `virtughan_qgis/vendor/pip/`
+- On first QGIS load, bootstrap auto-installs `virtughan==1.0.1` + dependencies into `vendor/site-packages/`
+- Keeps plugin ZIP small for QGIS store uploads
+- Requires internet connection on first run
+- No separate OS folders needed for pip itself (pip is Python code); OS-specific wheels are resolved during runtime install
+
+Prepare dependencies:
+```bash
+python vendor_deps.py --clean
+```
+
 ### Building
 
 Use **one** of the following commands:
@@ -121,10 +136,26 @@ python build.py
 ./build.sh
 ```
 
+Notes:
+- `build.ps1` and `build.sh` automatically run `python vendor_deps.py --clean` before packaging.
+- Runtime dependencies are installed automatically by plugin bootstrap on first run.
+
 The build script:
 - Generates `metadata.txt` from `pyproject.toml`
 - Creates a clean plugin package
 - Outputs `dist/virtughan-qgis-plugin.zip`
+
+### Bootstrap log file
+
+The plugin writes dependency bootstrap logs to:
+
+`<QGIS settings dir>/virtughan/bootstrap.log`
+
+Typical locations:
+
+- Windows: `C:\Users\<you>\AppData\Roaming\QGIS\QGIS3\profiles\default\virtughan\bootstrap.log`
+- macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/virtughan/bootstrap.log`
+- Linux: `~/.local/share/QGIS/QGIS3/profiles/default/virtughan/bootstrap.log`
 
 ## Links
 

@@ -1,28 +1,55 @@
 # virtughan_qgis/bootstrap.py
 import importlib
 import os
-import platform
-import site
-import subprocess
 import shutil
 import sys
-import glob
+from datetime import datetime
 
-from qgis.core import Qgis, QgsMessageLog
-from qgis.PyQt.QtWidgets import (
-    QDialog,
-    QMessageBox,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-)
+from qgis.core import Qgis, QgsApplication, QgsMessageLog
+from qgis.PyQt.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout, QMessageBox
+
+from .dependency_versions import runtime_package_specs
 
 PKG_NAME = "virtughan"
+DEFAULT_PACKAGES = runtime_package_specs()
+
 _LAST_BOOTSTRAP_ERROR = None
+PLUGIN_DIR = os.path.dirname(__file__)
+VENDOR_DIR = os.path.join(PLUGIN_DIR, "vendor")
+LIBS_DIR = os.path.join(PLUGIN_DIR, "libs")
 
 
-def _log(msg, level=Qgis.Info):
+def get_bootstrap_log_path() -> str:
+    log_dir = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan")
+    os.makedirs(log_dir, exist_ok=True)
+    return os.path.join(log_dir, "bootstrap.log")
+
+
+def _level_name(level) -> str:
+    success_level = getattr(Qgis, "Success", None)
+    if level == Qgis.Critical:
+        return "CRITICAL"
+    if level == Qgis.Warning:
+        return "WARNING"
+    if success_level is not None and level == success_level:
+        return "SUCCESS"
+    return "INFO"
+
+
+def _append_file_log(msg: str, level=Qgis.Info):
+    try:
+        log_path = get_bootstrap_log_path()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"{timestamp} [{_level_name(level)}] {msg}\n"
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
+def _log(msg: str, level=Qgis.Info):
     QgsMessageLog.logMessage(f"VirtuGhan Bootstrap: {msg}", "VirtuGhan", level)
+    _append_file_log(msg, level)
 
 
 def _set_last_error(msg: str | None):
@@ -34,20 +61,48 @@ def get_last_bootstrap_error() -> str | None:
     return _LAST_BOOTSTRAP_ERROR
 
 
-def _activate_user_site():
-    try:
-        us = site.getusersitepackages()
-        if us and us not in sys.path and os.path.isdir(us):
-            sys.path.insert(0, us)
-            _log(f"Added user site-packages to sys.path: {us}")
-    except Exception:
-        pass
+def _activate_vendor_paths() -> list[str]:
+    candidate_dirs = [
+        os.path.join(VENDOR_DIR, "site-packages"),
+        VENDOR_DIR,
+        os.path.join(LIBS_DIR, "site-packages"),
+        LIBS_DIR,
+    ]
+
+    added: list[str] = []
+    for path in candidate_dirs:
+        if os.path.isdir(path) and path not in sys.path:
+            sys.path.insert(0, path)
+            added.append(path)
+
+    if added:
+        _log("Activated dependency paths: " + ", ".join(added))
+    return added
 
 
-def check_dependencies():
-    _activate_user_site()
+def _install_via_pip(packages: list[str]) -> bool:
+    target = os.path.join(VENDOR_DIR, "site-packages")
+    os.makedirs(target, exist_ok=True)
+
     try:
-        import virtughan
+        from .pip_installer import install_dependencies
+
+        success = install_dependencies(target, packages)
+        if success:
+            _log(f"Runtime installation successful: {', '.join(packages)}")
+        else:
+            _log("Runtime installation failed.", Qgis.Warning)
+        return success
+    except Exception as exc:
+        _log(f"Runtime install exception: {exc}", Qgis.Critical)
+        return False
+
+
+def check_dependencies() -> bool:
+    _activate_vendor_paths()
+    importlib.invalidate_caches()
+    try:
+        import virtughan  # noqa: F401
 
         _log("VirtuGhan package found")
         return True
@@ -56,222 +111,87 @@ def check_dependencies():
         return False
 
 
-def _get_safe_python_executable():
-    def _is_python_binary(path: str | None) -> bool:
-        if not path:
-            return False
-        name = os.path.basename(path).lower()
-        if platform.system() == "Windows":
-            return name == "python.exe" or name.startswith("python")
-        return name.startswith("python")
-
-    candidates: list[str] = []
-
-    if getattr(sys, "executable", None):
-        candidates.append(sys.executable)
-
-    for attr in ("_base_executable",):
-        value = getattr(sys, attr, None)
-        if value:
-            candidates.append(value)
-
-    for attr in ("prefix", "base_prefix", "exec_prefix", "base_exec_prefix"):
-        value = getattr(sys, attr, None)
-        if not value:
-            continue
-        if platform.system() == "Windows":
-            candidates.append(os.path.join(value, "python.exe"))
-        else:
-            candidates.append(os.path.join(value, "bin", "python3"))
-            candidates.append(os.path.join(value, "bin", "python"))
-
-    # QGIS on Windows often sets sys.executable to qgis-ltr-bin.exe.
-    if platform.system() == "Windows" and getattr(sys, "executable", None):
-        exe_name = os.path.basename(sys.executable).lower()
-        if "qgis" in exe_name:
-            qgis_bin_dir = os.path.dirname(sys.executable)
-            qgis_root = os.path.dirname(qgis_bin_dir)
-            candidates.extend(glob.glob(os.path.join(qgis_root, "apps", "Python*", "python.exe")))
-
-    for cmd in ("python", "python3"):
-        resolved = shutil.which(cmd)
-        if resolved:
-            candidates.append(resolved)
-
-    seen = set()
-    for candidate in candidates:
-        if not candidate:
-            continue
-        normalized = os.path.normpath(candidate)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        if os.path.isfile(normalized) and _is_python_binary(normalized):
-            _log(f"Selected Python executable: {normalized}")
-            return normalized
-
-    _log("Falling back to 'python' from PATH", Qgis.Warning)
-    return "python"
-
-
-def _run_subprocess(cmd: list[str], timeout: int = 240):
-    kwargs = {
-        "capture_output": True,
-        "text": True,
-        "timeout": timeout,
-        "cwd": os.path.expanduser("~"),
-    }
-
-    if platform.system() == "Windows":
-        try:
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-        except Exception:
-            pass
-
-    return subprocess.run(cmd, **kwargs)
-
-
-def _ensure_pip_available(python_exe: str) -> tuple[bool, str | None]:
+def check_runtime_tls_bundle() -> tuple[bool, str | None]:
+    """Validate TLS CA bundle availability (certifi) for HTTPS requests."""
+    _activate_vendor_paths()
+    importlib.invalidate_caches()
     try:
-        check = _run_subprocess([python_exe, "-m", "pip", "--version"], timeout=30)
-        if check.returncode == 0:
+        import certifi  # noqa: F401
+
+        bundle_path = certifi.where()
+        if bundle_path and os.path.isfile(bundle_path):
             return True, None
-    except Exception:
-        pass
-
-    try:
-        _log("pip not available; trying ensurepip")
-        ep = _run_subprocess([python_exe, "-m", "ensurepip", "--upgrade"], timeout=120)
-        if ep.returncode != 0:
-            detail = (ep.stderr or ep.stdout or "").strip()
-            return False, f"ensurepip failed: {detail}"
-    except Exception as e:
-        return False, f"ensurepip exception: {e}"
-
-    try:
-        up = _run_subprocess([python_exe, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], timeout=180)
-        if up.returncode != 0:
-            _log("pip upgrade failed; continuing with current pip", Qgis.Warning)
-    except Exception:
-        pass
-
-    try:
-        check2 = _run_subprocess([python_exe, "-m", "pip", "--version"], timeout=30)
-        if check2.returncode == 0:
-            return True, None
-    except Exception:
-        pass
-
-    return False, "pip is unavailable in QGIS Python environment"
+        return False, f"Missing TLS CA bundle: {bundle_path}"
+    except Exception as exc:
+        return False, f"TLS certificate setup error: {exc}"
 
 
-def _try_install_virtughan():
-    python_exe = _get_safe_python_executable()
+def ensure_runtime_network_ready(parent=None) -> bool:
+    """
+    Ensure runtime dependencies needed for network requests are healthy.
 
-    _log(f"Platform: {platform.system()}")
-    _log(f"Python executable: {python_exe}")
+    Returns True when ready. If TLS bundle is missing, prompts user to repair.
+    """
+    ok, details = check_runtime_tls_bundle()
+    if ok:
+        return True
 
-    pip_ok, pip_err = _ensure_pip_available(python_exe)
-    if not pip_ok:
-        return False, pip_err or "pip unavailable"
+    _set_last_error(details)
+    _log(details or "TLS CA bundle check failed", Qgis.Warning)
 
-    in_venv = hasattr(sys, "real_prefix") or (
-        hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix
+    if parent is None:
+        return False
+
+    reply = QMessageBox.question(
+        parent,
+        "VirtuGhan",
+        "Runtime TLS certificates are missing or broken, so online data requests will fail.\n\n"
+        "Do you want to repair dependencies now?",
+        QMessageBox.Yes | QMessageBox.No,
+        QMessageBox.Yes,
     )
+    if reply != QMessageBox.Yes:
+        return False
 
-    base_cmd = [python_exe, "-m", "pip", "install", PKG_NAME]
-    install_commands = []
-    if in_venv:
-        install_commands.append(base_cmd)
-    else:
-        install_commands.append(base_cmd + ["--user"])
-        install_commands.append(base_cmd)
-    install_commands.append(base_cmd + ["--no-cache-dir"])
+    repaired = repair_runtime_dependencies()
+    if not repaired:
+        warn = get_last_bootstrap_error() or "Could not fully clear dependency files."
+        QMessageBox.warning(parent, "VirtuGhan", f"Repair completed with warnings:\n\n{warn}")
 
-    errors: list[str] = []
+    installed = interactive_install_dependencies(parent)
+    if not installed:
+        err = get_last_bootstrap_error() or "Dependency reinstall failed."
+        QMessageBox.critical(parent, "VirtuGhan", f"Dependency repair failed:\n\n{err}")
+        return False
 
-    for i, cmd in enumerate(install_commands):
-        try:
-            _log(f"Trying installation method {i + 1}: {' '.join(cmd)}")
-            result = _run_subprocess(cmd, timeout=300)
+    ok_after, details_after = check_runtime_tls_bundle()
+    if not ok_after:
+        _set_last_error(details_after)
+        QMessageBox.critical(
+            parent,
+            "VirtuGhan",
+            f"Dependencies were reinstalled but TLS certificates are still unavailable:\n\n{details_after}",
+        )
+        return False
 
-            if result.returncode == 0:
-                _activate_user_site()
-                importlib.invalidate_caches()
-                _log(f"Installation successful with method {i + 1}")
-                return True, None
-            else:
-                _log(f"Method {i + 1} failed with return code {result.returncode}")
-                detail = (result.stderr or result.stdout or "").strip()
-                if detail:
-                    errors.append(f"Method {i + 1}: {detail}")
-
-        except subprocess.TimeoutExpired:
-            _log(f"Method {i + 1} timed out")
-            errors.append(f"Method {i + 1}: timeout")
-            continue
-        except FileNotFoundError:
-            _log(f"Method {i + 1} failed: command not found")
-            errors.append(f"Method {i + 1}: command not found")
-            continue
-        except Exception as e:
-            _log(f"Method {i + 1} failed with exception: {str(e)}")
-            errors.append(f"Method {i + 1}: {e}")
-            continue
-
-    error_msg = "All installation methods failed"
-    if errors:
-        error_msg += "\n\n" + "\n\n".join(errors[-3:])
-    return False, error_msg
+    return True
 
 
-def install_dependencies(parent=None, quiet=False):
+def install_dependencies(parent=None, quiet=False) -> bool:
     _set_last_error(None)
+
     if check_dependencies():
         return True
 
-    _log("Starting dependency installation")
+    _log("Attempting runtime dependency installation...", Qgis.Info)
 
-    if not quiet and parent:
-        reply = QMessageBox.question(
-            parent,
-            "Install VirtuGhan?",
-            "VirtuGhan package not found. Try automatic installation?\n\n"
-            "This will attempt to install the package using pip.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
+    if _install_via_pip(DEFAULT_PACKAGES) and check_dependencies():
+        return True
 
-        if reply != QMessageBox.Yes:
-            _log("User declined installation")
-            return False
-
-    try:
-        success, error = _try_install_virtughan()
-
-        if success and check_dependencies():
-            _set_last_error(None)
-            if not quiet and parent:
-                QMessageBox.information(
-                    parent,
-                    "Success",
-                    "VirtuGhan installed successfully!\n\nPlease restart QGIS to ensure proper functionality.",
-                )
-            _log("Installation completed successfully")
-            return True
-        else:
-            _log(f"Installation failed: {error}", Qgis.Warning)
-            _set_last_error(error or "Dependency installation failed")
-
-    except Exception as e:
-        _log(f"Installation error: {str(e)}", Qgis.Critical)
-        _set_last_error(str(e))
-        if not quiet and parent:
-            QMessageBox.warning(
-                parent,
-                "Installation Error",
-                f"An error occurred during installation:\n{str(e)}",
-            )
+    _set_last_error(
+        "Failed to install required dependencies at runtime.\n\n"
+        "Please ensure internet is available on first run, or pre-bundle dependencies manually."
+    )
 
     if not quiet and parent:
         _show_manual_install_dialog(parent)
@@ -281,46 +201,24 @@ def install_dependencies(parent=None, quiet=False):
 
 def _show_manual_install_dialog(parent):
     try:
+        log_path = get_bootstrap_log_path()
         dialog = QDialog(parent)
-        dialog.setWindowTitle("Manual Installation Required")
-        dialog.setMinimumSize(650, 400)
+        dialog.setWindowTitle("Dependency Installation Failed")
+        dialog.setMinimumSize(650, 420)
 
         layout = QVBoxLayout()
 
-        is_windows = platform.system() == "Windows"
-
-        if is_windows:
-            instruction_text = """Automatic installation failed. Please install manually:
-
-WINDOWS - Method 1 (OSGeo4W Shell):
-1. Open OSGeo4W Shell as Administrator
-2. Run: python -m pip install virtughan
-
-WINDOWS - Method 2 (Command Prompt):
-1. Open Command Prompt as Administrator
-2. Run: python -m pip install virtughan --user
-
-WINDOWS - Method 3 (QGIS Python Console):
-1. In QGIS, go to Plugins > Python Console
-2. Run: import subprocess; subprocess.run(['python', '-m', 'pip', 'install', 'virtughan', '--user'])
-
-After installation, restart QGIS completely.
-"""
-        else:
-            instruction_text = """Automatic installation failed. Please install manually:
-
-LINUX/MAC - Method 1:
-python3 -m pip install virtughan --break-system-packages
-
-LINUX/MAC - Method 2:
-python3 -m pip install virtughan --user
-
-LINUX/MAC - Method 3 (if using conda):
-conda install -c conda-forge pip
-pip install virtughan
-
-After installation, restart QGIS.
-"""
+        instruction_text = (
+            f"Could not auto-install '{PKG_NAME}'.\n\n"
+            "Troubleshooting:\n"
+            "1. Check internet connectivity\n"
+            "2. Retry by restarting QGIS\n"
+            "3. Check detailed log file:\n"
+            f"   - {log_path}\n"
+            "4. Or pre-vendor dependencies into: \n"
+            f"   - {os.path.join(VENDOR_DIR, 'site-packages', PKG_NAME)}\n"
+            f"   - {os.path.join(LIBS_DIR, PKG_NAME)}\n"
+        )
 
         text_edit = QTextEdit()
         text_edit.setPlainText(instruction_text)
@@ -333,15 +231,227 @@ After installation, restart QGIS.
 
         dialog.setLayout(layout)
         dialog.exec_()
-
-    except Exception as e:
-        _log(f"Error showing manual install dialog: {str(e)}", Qgis.Warning)
+    except Exception as exc:
+        _log(f"Error showing manual install dialog: {exc}", Qgis.Warning)
 
 
 def ensure_virtughan_installed(parent=None, quiet=True):
     try:
         return install_dependencies(parent, quiet)
-    except Exception as e:
-        _log(f"Bootstrap error: {str(e)}", Qgis.Critical)
-        _set_last_error(str(e))
+    except Exception as exc:
+        _log(f"Bootstrap error: {exc}", Qgis.Critical)
+        _set_last_error(str(exc))
         return check_dependencies()
+
+
+# ============================================================================
+# Installation State Management (for first-time installer UI)
+# ============================================================================
+
+
+def get_install_state_path() -> str:
+    """Get path to installation state flag file."""
+    state_dir = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan")
+    os.makedirs(state_dir, exist_ok=True)
+    return os.path.join(state_dir, "installed.flag")
+
+
+def is_already_installed() -> bool:
+    """Check if dependencies have been installed before."""
+    flag_path = get_install_state_path()
+    return os.path.isfile(flag_path)
+
+
+def mark_as_installed():
+    """Mark dependencies as installed by creating flag file."""
+    try:
+        flag_path = get_install_state_path()
+        with open(flag_path, "w", encoding="utf-8") as f:
+            f.write("installed\n")
+        _log("Installation state saved")
+    except Exception as exc:
+        _log(f"Could not save installation state: {exc}", Qgis.Warning)
+
+
+def clear_install_state():
+    """Clear the installation state (for retries)."""
+    try:
+        flag_path = get_install_state_path()
+        if os.path.isfile(flag_path):
+            os.remove(flag_path)
+        _log("Installation state cleared")
+    except Exception as exc:
+        _log(f"Could not clear installation state: {exc}", Qgis.Warning)
+
+
+def _clear_runtime_site_packages() -> tuple[int, list[str]]:
+    """Remove plugin-managed runtime packages under vendor/site-packages."""
+    target = os.path.join(VENDOR_DIR, "site-packages")
+    removed = 0
+    failed: list[str] = []
+
+    if not os.path.isdir(target):
+        return removed, failed
+
+    for name in os.listdir(target):
+        path = os.path.join(target, name)
+        try:
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            removed += 1
+        except Exception as exc:
+            failed.append(f"{name}: {exc}")
+
+    return removed, failed
+
+
+def repair_runtime_dependencies() -> bool:
+    """Clear plugin-managed runtime dependencies and install state for a clean reinstall."""
+    try:
+        removed, failed = _clear_runtime_site_packages()
+
+        clear_install_state()
+        importlib.invalidate_caches()
+
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("virtughan") or mod_name.startswith("rasterio"):
+                try:
+                    del sys.modules[mod_name]
+                except Exception:
+                    pass
+
+        if failed:
+            _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
+            _log("Dependency repair completed with warnings", Qgis.Warning)
+            return False
+
+        _log(f"Dependency repair completed: removed {removed} entries", Qgis.Info)
+        return True
+    except Exception as exc:
+        _set_last_error(str(exc))
+        _log(f"Dependency repair failed: {exc}", Qgis.Critical)
+        return False
+
+
+def uninstall_runtime_dependencies() -> bool:
+    """Uninstall plugin-managed runtime dependencies without reinstalling."""
+    try:
+        removed, failed = _clear_runtime_site_packages()
+        clear_install_state()
+        importlib.invalidate_caches()
+
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("virtughan") or mod_name.startswith("rasterio"):
+                try:
+                    del sys.modules[mod_name]
+                except Exception:
+                    pass
+
+        if failed:
+            _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
+            _log("Dependency uninstall completed with warnings", Qgis.Warning)
+            return False
+
+        _log(f"Dependency uninstall completed: removed {removed} entries", Qgis.Info)
+        return True
+    except Exception as exc:
+        _set_last_error(str(exc))
+        _log(f"Dependency uninstall failed: {exc}", Qgis.Critical)
+        return False
+
+
+def interactive_install_dependencies(parent=None) -> bool:
+    """
+    Show interactive installer dialog with real-time progress.
+    
+    Smart flow:
+    1. Check if dependencies already import correctly
+    2. If yes: Skip dialog, mark as installed, return True
+    3. If no: Show dialog with real-time progress
+    
+    Returns True if installation succeeds, False otherwise.
+    """
+    _set_last_error(None)
+
+    # Smart check: try to import first, skip dialog if everything works
+    _activate_vendor_paths()
+    if check_dependencies():
+        _log("Dependencies already properly installed, skipping installer dialog")
+        mark_as_installed()
+        return True
+
+    # Dependencies missing or broken - show interactive installer
+    _log("Dependencies not found, showing installer dialog", Qgis.Info)
+
+    # Define the installation callback
+    def _do_install(progress_callback=None) -> bool:
+        if progress_callback:
+            progress_callback("Preparing installation...\n")
+
+        if progress_callback:
+            progress_callback("Checking for existing installation...\n")
+        
+        # Re-check in case it was installed just now
+        _activate_vendor_paths()
+        if check_dependencies():
+            if progress_callback:
+                progress_callback("Dependencies already available\n")
+            return True
+
+        if progress_callback:
+            progress_callback("Starting package installation...\n")
+        _log("Attempting interactive runtime dependency installation...", Qgis.Info)
+
+        target = os.path.join(VENDOR_DIR, "site-packages")
+        os.makedirs(target, exist_ok=True)
+
+        try:
+            from .pip_installer import install_dependencies as pip_install
+
+            success = pip_install(target, DEFAULT_PACKAGES, progress_callback=progress_callback)
+
+            if success:
+                if progress_callback:
+                    progress_callback("\nVerifying installation...\n")
+                _activate_vendor_paths()
+                importlib.invalidate_caches()
+                if check_dependencies():
+                    _log("Interactive runtime installation successful", Qgis.Info)
+                    mark_as_installed()
+                    return True
+
+            _log("Interactive runtime installation failed", Qgis.Warning)
+            _set_last_error(
+                "Failed to install required dependencies at runtime.\n\n"
+                "Please ensure internet is available."
+            )
+            return False
+
+        except Exception as exc:
+            _log(f"Interactive runtime install exception: {exc}", Qgis.Critical)
+            if progress_callback:
+                progress_callback(f"\nException: {exc}\n")
+            return False
+
+    # Show installer dialog
+    try:
+        from .installer_dialog import FirstTimeInstallerDialog
+
+        dialog = FirstTimeInstallerDialog(parent, install_callback=_do_install)
+        success = dialog.exec_with_install()
+
+        if success:
+            mark_as_installed()
+            _log("First-time installation completed successfully", Qgis.Info)
+        else:
+            _log("First-time installation failed or cancelled", Qgis.Warning)
+
+        return success
+
+    except Exception as exc:
+        _log(f"Error launching installer dialog: {exc}", Qgis.Critical)
+        _set_last_error(f"Installer dialog failed: {exc}")
+        # Fallback to silent install
+        return install_dependencies(parent, quiet=False)

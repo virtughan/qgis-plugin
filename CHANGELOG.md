@@ -1,3 +1,28 @@
+## v1.0.4 (2026-03-24)
+
+### Feat
+
+- **first-run-installer**: adds interactive first-time dependency installer dialog with progress indicator and live installation logs
+- **smart-skip**: skips installer dialog when dependencies are already importable and marks install state automatically
+
+### Fix
+
+- **mac-runtime-install**: runs pip in-process first to avoid macOS QGIS executable argument parsing issues during dependency installation
+- **installer-reliability**: keeps subprocess fallback with improved Python executable resolution and clearer runtime logs
+- **reinstall-ux**: removes silent background reinstall path and always uses interactive dependency flow when packages are missing, with a 1-second delayed start message to avoid perceived startup hang
+
+## v1.0.3 (2026-03-24)
+
+### Feat
+
+- **runtime-deps**: switches plugin packaging to bundled-pip runtime installation for first-run dependency setup
+- **version-config**: centralizes runtime dependency and pip versions in a single shared configuration module
+
+### Fix
+
+- **bootstrap**: cleans dependency bootstrap flow and improves runtime install fallback/error handling
+- **packaging**: reduces plugin artifact size for store compatibility by avoiding pre-bundled heavy dependency trees
+
 ## v1.0.2 (2026-03-24)
 
 ### Feat

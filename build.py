@@ -15,6 +15,42 @@ DIST_DIR = "dist"
 ZIP_NAME = "virtughan-qgis-plugin.zip"
 
 
+def ensure_vendored_dependencies(root: Path) -> None:
+    """
+    Validate that either:
+    1. virtughan is pre-vendored (offline mode), OR
+    2. pip is bundled (for runtime installation)
+    """
+    plugin_root = root / PLUGIN_NAME
+    
+    # Check for pre-vendored virtughan
+    prevendored = [
+        plugin_root / "vendor" / "virtughan",
+        plugin_root / "libs" / "virtughan",
+    ]
+    
+    # Check for bundled pip
+    pip_path = plugin_root / "vendor" / "pip"
+    
+    if any(path.is_dir() for path in prevendored):
+        return
+    
+    if pip_path.is_dir():
+        return
+    
+    # If neither exists, fail
+    raise FileNotFoundError(
+        "Missing vendored dependencies.\n\n"
+        "Either:\n"
+        "  1. Pre-vendor virtughan: python vendor_deps.py --clean\n"
+        "  2. Or bundle pip: python vendor_deps.py --clean\n\n"
+        "Expected one of:\n"
+        f"  - {prevendored[0]}\n"
+        f"  - {prevendored[1]}\n"
+        f"  - {pip_path} (for runtime pip installation)"
+    )
+
+
 def remove_build_artifacts(path: Path) -> None:
     for item in path.rglob("*"):
         if item.name == "__pycache__" and item.is_dir():
@@ -33,6 +69,9 @@ def main() -> int:
     zip_path = dist_dir / ZIP_NAME
 
     print("Building QGIS plugin package...")
+
+    print("Validating vendored dependencies...")
+    ensure_vendored_dependencies(root)
 
     shutil.rmtree(build_dir, ignore_errors=True)
     shutil.rmtree(dist_dir, ignore_errors=True)
