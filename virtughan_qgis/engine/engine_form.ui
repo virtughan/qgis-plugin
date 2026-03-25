@@ -56,22 +56,151 @@
       <layout class="QVBoxLayout" name="basicsLayout" stretch="0,0,0,0,1">
        <property name="spacing"><number>2</number></property>
 
-       <!-- Common Parameters (host only; real fields come from CommonParamsWidget) -->
-       <item>
-        <widget class="QGroupBox" name="groupCommon">
-         <property name="title"><string>Common Parameters</string></property>
-         <layout class="QVBoxLayout" name="layoutCommon">
-          <property name="spacing"><number>2</number></property>
-          <property name="leftMargin"><number>2</number></property>
-          <property name="topMargin"><number>2</number></property>
-          <property name="rightMargin"><number>2</number></property>
-          <property name="bottomMargin"><number>2</number></property>
-          <item>
-           <widget class="QWidget" name="commonParamsContainer"/>
-          </item>
-         </layout>
-        </widget>
-       </item>
+      <!-- Common Parameters (host only; real fields come from CommonParamsWidget) -->
+      <item>
+       <widget class="QGroupBox" name="groupCommon">
+        <property name="title"><string>Common Parameters</string></property>
+        <layout class="QVBoxLayout" name="layoutCommon">
+         <property name="spacing"><number>2</number></property>
+         <property name="leftMargin"><number>2</number></property>
+         <property name="topMargin"><number>2</number></property>
+         <property name="rightMargin"><number>2</number></property>
+         <property name="bottomMargin"><number>2</number></property>
+         <item>
+          <widget class="QWidget" name="commonParamsContainer"/>
+         </item>
+        </layout>
+       </widget>
+      </item>
+
+      <!-- Index Selection (Simple/Advanced mode) -->
+      <item>
+       <widget class="QGroupBox" name="groupIndex">
+        <property name="title"><string>Index (Band Selector)</string></property>
+        <layout class="QGridLayout" name="gridIndex">
+         <property name="horizontalSpacing"><number>2</number></property>
+         <property name="verticalSpacing"><number>2</number></property>
+         <property name="leftMargin"><number>2</number></property>
+         <property name="topMargin"><number>2</number></property>
+         <property name="rightMargin"><number>2</number></property>
+         <property name="bottomMargin"><number>2</number></property>
+
+         <item row="0" column="0">
+          <widget class="QLabel" name="labelMode">
+           <property name="text"><string>Mode</string></property>
+          </widget>
+         </item>
+         <item row="0" column="1" colspan="4">
+          <layout class="QHBoxLayout" name="modeLayout">
+           <property name="spacing"><number>8</number></property>
+           <item>
+            <widget class="QRadioButton" name="simpleModeRadio">
+             <property name="text"><string>Simple (Presets)</string></property>
+             <property name="checked"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QRadioButton" name="advancedModeRadio">
+             <property name="text"><string>Advanced (Manual)</string></property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="modeSpacer">
+             <property name="orientation"><enum>Qt::Horizontal</enum></property>
+             <property name="sizeHint" stdset="0">
+              <size><width>40</width><height>20</height></size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </item>
+
+         <item row="1" column="0">
+          <widget class="QLabel" name="labelIndex">
+           <property name="text"><string>Index</string></property>
+           <property name="margin"><number>6</number></property>
+          </widget>
+         </item>
+         <item row="1" column="1" colspan="4">
+          <widget class="QComboBox" name="indexCombo">
+           <property name="toolTip"><string>Select a preset spectral index</string></property>
+          </widget>
+         </item>
+
+         <item row="2" column="0">
+          <widget class="QLabel" name="labelFormulaRef">
+           <property name="text"><string>Formula</string></property>
+           <property name="margin"><number>6</number></property>
+          </widget>
+         </item>
+         <item row="2" column="1" colspan="4">
+          <widget class="QLabel" name="formulaReferenceLabel">
+           <property name="text"><string>(formula will display here)</string></property>
+           <property name="wordWrap"><bool>true</bool></property>
+           <property name="toolTip"><string>Read-only formula reference for selected preset</string></property>
+          </widget>
+         </item>
+
+         <item row="3" column="0">
+          <widget class="QLabel" name="labelAdvancedBand1">
+           <property name="text"><string>Band 1 *</string></property>
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="QComboBox" name="advancedBand1Combo">
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="3" column="2">
+          <widget class="QLabel" name="labelAdvancedBand2">
+           <property name="text"><string>Band 2 *</string></property>
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="3" column="3" colspan="2">
+          <widget class="QComboBox" name="advancedBand2Combo">
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+
+         <item row="4" column="0">
+          <widget class="QLabel" name="labelAdvancedFormula">
+           <property name="text"><string>Formula *</string></property>
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+         <item row="4" column="1" colspan="4">
+          <widget class="QLineEdit" name="advancedFormulaEdit">
+           <property name="placeholderText"><string>(band2-band1)/(band2+band1)</string></property>
+           <property name="visible"><bool>false</bool></property>
+          </widget>
+         </item>
+
+         <item row="5" column="0" colspan="5">
+          <widget class="QLabel" name="indexTipLabel">
+           <property name="text"><string>&lt;i&gt;Tip: If Band 1 and Band 2 resolutions differ, the compute module resamples; you''ll see a warning.&lt;/i&gt;</string></property>
+             <property name="visible"><bool>true</bool></property>
+          </widget>
+         </item>
+
+         <item row="6" column="0" colspan="5">
+          <spacer name="indexStretch">
+           <property name="orientation"><enum>Qt::Vertical</enum></property>
+           <property name="sizeHint" stdset="0">
+            <size><width>0</width><height>0</height></size>
+           </property>
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
+             <horstretch>0</horstretch>
+             <verstretch>0</verstretch>
+            </sizepolicy>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </widget>
+      </item>
 
        <!-- AOI -->
        <item>

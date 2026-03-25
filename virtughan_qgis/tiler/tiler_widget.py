@@ -16,9 +16,18 @@ from .tiler_logic import TilerLogic
 CommonParamsWidget = None
 try:
     from ..common.common_widget import CommonParamsWidget
-    from ..common.common_logic import default_band_list
+    from ..common.common_logic import (
+        default_band_list,
+        index_presets_two_band,
+        get_index_preset,
+        match_index_preset,
+    )
 except Exception:
     CommonParamsWidget = None
+    default_band_list = lambda: ["red", "green", "blue", "nir", "nir08", "swir16", "swir22", "rededge1", "rededge2", "rededge3"]
+    index_presets_two_band = lambda: []
+    get_index_preset = lambda _label: None
+    match_index_preset = lambda _b1, _b2, _fx: None
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(os.path.dirname(__file__), "tiler_form.ui"))
 
@@ -161,8 +170,10 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.logic = TilerLogic(iface)
         self.server = _InProcessServerManager()
         self._tiler_layer_id = None  # track last added tiler layer id
+        self._index_updating = False
 
         self._init_defaults()
+        self._init_index_controls()
         self._wire_signals()
         self._apply_timeseries_visibility()
         self._apply_localserver_visibility()
@@ -298,6 +309,90 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.runLocalCheck.toggled.connect(self._apply_localserver_visibility)
         self.startServerBtn.clicked.connect(self._on_start_server)
         self.stopServerBtn.clicked.connect(self._on_stop_server)
+        self.simpleModeRadio.toggled.connect(self._on_formula_mode_toggled)
+        self.advancedModeRadio.toggled.connect(self._on_formula_mode_toggled)
+        self.indexCombo.currentTextChanged.connect(self._on_index_changed)
+        self.band1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        self.band2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        self.formulaLine.textChanged.connect(self._sync_reference_from_advanced)
+
+    def _init_index_controls(self):
+        self._index_presets = index_presets_two_band()
+        self.indexCombo.clear()
+        self.indexCombo.addItems([preset.get("label", "") for preset in self._index_presets])
+
+        matched = match_index_preset(
+            self.band1Combo.currentText().strip(),
+            self.band2Combo.currentText().strip(),
+            self.formulaLine.text().strip(),
+        )
+        if matched:
+            self.indexCombo.setCurrentText(matched)
+        elif self.indexCombo.count() > 0:
+            self.indexCombo.setCurrentIndex(0)
+
+        self._on_formula_mode_toggled()
+
+    def _on_index_changed(self, label):
+        if self._index_updating or not self.simpleModeRadio.isChecked():
+            return
+        self._apply_index_preset(label)
+
+    def _on_formula_mode_toggled(self, *_):
+        is_simple = self.simpleModeRadio.isChecked()
+
+        self.labelIndex.setVisible(is_simple)
+        self.indexCombo.setVisible(is_simple)
+        self.labelFormulaRef.setVisible(is_simple)
+        self.formulaReferenceLabel.setVisible(is_simple)
+
+        self.labelBand1.setVisible(not is_simple)
+        self.band1Combo.setVisible(not is_simple)
+        self.labelBand2.setVisible(not is_simple)
+        self.band2Combo.setVisible(not is_simple)
+        self.labelFormula.setVisible(not is_simple)
+        self.formulaLine.setVisible(not is_simple)
+
+        # Show tip in both modes; timeseries remains Advanced-only
+        tiler_tip = self.findChild(QLabel, "tilerTipLabel")
+        if tiler_tip is not None:
+            tiler_tip.setVisible(True)
+        self.labelTimeseries.setVisible(not is_simple)
+        self.timeseriesCheck.setVisible(not is_simple)
+
+        if is_simple:
+            self._apply_index_preset(self.indexCombo.currentText())
+        else:
+            self._sync_reference_from_advanced()
+
+    def _sync_reference_from_advanced(self, *_):
+        band1 = self.band1Combo.currentText().strip()
+        band2 = self.band2Combo.currentText().strip()
+        formula = self.formulaLine.text().strip()
+
+        matched = match_index_preset(band1, band2, formula)
+        if matched:
+            self._index_updating = True
+            try:
+                self.indexCombo.setCurrentText(matched)
+            finally:
+                self._index_updating = False
+
+        self.formulaReferenceLabel.setText(formula or "(formula will display here)")
+
+    def _apply_index_preset(self, label):
+        preset = get_index_preset(label)
+        if not preset:
+            return
+
+        self._index_updating = True
+        try:
+            self.band1Combo.setCurrentText(preset.get("band1", ""))
+            self.band2Combo.setCurrentText(preset.get("band2", ""))
+            self.formulaLine.setText(preset.get("formula", ""))
+            self.formulaReferenceLabel.setText(preset.get("formula", ""))
+        finally:
+            self._index_updating = False
 
     def _apply_timeseries_visibility(self):
         show = self.timeseriesCheck.isChecked()
@@ -370,6 +465,8 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._remove_tiler_layers()
         # re-init defaults and UI
         self._init_defaults()
+        self.simpleModeRadio.setChecked(True)
+        self._init_index_controls()
         self._apply_timeseries_visibility()
         self._apply_localserver_visibility()
 

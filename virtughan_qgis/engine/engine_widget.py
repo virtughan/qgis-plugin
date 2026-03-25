@@ -14,7 +14,7 @@ from qgis.PyQt.QtGui import QColor, QCursor, QPixmap
 from qgis.PyQt.QtWidgets import (
     QWidget, QDockWidget, QFileDialog, QMessageBox,
     QProgressBar, QPlainTextEdit, QComboBox, QCheckBox, QLabel,
-    QPushButton, QSpinBox, QLineEdit, QDateEdit, QFormLayout, QVBoxLayout, QHBoxLayout,
+    QPushButton, QSpinBox, QLineEdit, QDateEdit, QFormLayout, QVBoxLayout, QHBoxLayout, QRadioButton,
     QScrollArea
 )
 
@@ -42,6 +42,13 @@ from ..common.aoi import (
     AoiRectTool,
     rect_to_wgs84_bbox,
     geom_to_wgs84_bbox,
+)
+from ..common.common_logic import (
+    index_presets_two_band,
+    get_index_preset,
+    match_index_preset,
+    load_bands_meta,
+    populate_band_combos,
 )
 
 from ..common.map_setup import setup_default_map
@@ -491,6 +498,17 @@ class EngineDockWidget(QDockWidget):
         self.previewScenesButton = f(QPushButton,  "previewScenesButton")
         self.showSceneFootprintsCheck = f(QCheckBox, "showSceneFootprintsCheck")
 
+        self.simpleModeRadio    = f(QRadioButton,  "simpleModeRadio")
+        self.advancedModeRadio  = f(QRadioButton,  "advancedModeRadio")
+        self.indexCombo         = f(QComboBox,     "indexCombo")
+        self.formulaReferenceLabel = f(QLabel,     "formulaReferenceLabel")
+        self.labelAdvancedBand1 = f(QLabel,        "labelAdvancedBand1")
+        self.advancedBand1Combo = f(QComboBox,     "advancedBand1Combo")
+        self.labelAdvancedBand2 = f(QLabel,        "labelAdvancedBand2")
+        self.advancedBand2Combo = f(QComboBox,     "advancedBand2Combo")
+        self.labelAdvancedFormula = f(QLabel,      "labelAdvancedFormula")
+        self.advancedFormulaEdit = f(QLineEdit,    "advancedFormulaEdit")
+
         critical = {
             "progressBar": self.progressBar, "runButton": self.runButton,
             "resetButton": self.resetButton, "helpButton": self.helpButton,
@@ -503,6 +521,11 @@ class EngineDockWidget(QDockWidget):
             "outputBrowseButton": self.outputBrowseButton,
             "previewScenesButton": self.previewScenesButton,
             "showSceneFootprintsCheck": self.showSceneFootprintsCheck,
+            "simpleModeRadio": self.simpleModeRadio, "advancedModeRadio": self.advancedModeRadio,
+            "indexCombo": self.indexCombo, "formulaReferenceLabel": self.formulaReferenceLabel,
+            "labelAdvancedBand1": self.labelAdvancedBand1, "advancedBand1Combo": self.advancedBand1Combo,
+            "labelAdvancedBand2": self.labelAdvancedBand2, "advancedBand2Combo": self.advancedBand2Combo,
+            "labelAdvancedFormula": self.labelAdvancedFormula, "advancedFormulaEdit": self.advancedFormulaEdit,
         }
         missing = [name for name, ref in critical.items() if ref is None]
         if missing:
@@ -512,6 +535,8 @@ class EngineDockWidget(QDockWidget):
             )
 
         self._init_common_widget()
+
+        self._init_index_controls()
 
         self.progressBar.setVisible(False)
         self.workersSpin.setMinimum(1)
@@ -625,16 +650,124 @@ class EngineDockWidget(QDockWidget):
             _log(self, f"CommonParamsWidget not available: {COMMON_IMPORT_ERROR}", Qgis.Warning)
 
     def _get_common_params(self):
+        band1 = self.advancedBand1Combo.currentText().strip()
+        band2 = self.advancedBand2Combo.currentText().strip()
+        formula = self.advancedFormulaEdit.text().strip()
+
         if self._common is not None:
-            return self._common.get_params()
+            params = self._common.get_params()
+            params["band1"] = band1
+            params["band2"] = (band2 or None)
+            params["formula"] = formula
+            return params
         return {
             "start_date": self.fb_start.date().toString("yyyy-MM-dd"),
             "end_date": self.fb_end.date().toString("yyyy-MM-dd"),
             "cloud_cover": int(self.fb_cloud.value()),
-            "band1": self.fb_band1.text().strip(),
-            "band2": (self.fb_band2.text().strip() or None),
-            "formula": self.fb_formula.text().strip(),
+            "band1": band1,
+            "band2": (band2 or None),
+            "formula": formula,
         }
+
+    def _init_index_controls(self):
+        self._index_presets = index_presets_two_band()
+        self._index_updating = False
+
+        bands_meta = load_bands_meta()
+        populate_band_combos(self.advancedBand1Combo, self.advancedBand2Combo, bands_meta)
+        self.advancedBand1Combo.setCurrentText("red")
+        self.advancedBand2Combo.setCurrentText("nir")
+        self.advancedFormulaEdit.setText("(band2-band1)/(band2+band1)")
+
+        self.indexCombo.clear()
+        self.indexCombo.addItems([preset.get("label", "") for preset in self._index_presets])
+
+        self.indexCombo.currentTextChanged.connect(self._on_index_changed)
+        self.simpleModeRadio.toggled.connect(self._on_formula_mode_toggled)
+        self.advancedModeRadio.toggled.connect(self._on_formula_mode_toggled)
+
+        self.advancedBand1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        self.advancedBand2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        self.advancedFormulaEdit.textChanged.connect(self._sync_reference_from_advanced)
+
+        current = self._get_common_params()
+        matched = match_index_preset(current.get("band1"), current.get("band2"), current.get("formula"))
+        if matched:
+            self.indexCombo.setCurrentText(matched)
+        elif self.indexCombo.count() > 0:
+            self.indexCombo.setCurrentIndex(0)
+
+        self._on_formula_mode_toggled()
+
+    def _on_index_changed(self, label):
+        if self._index_updating or not self.simpleModeRadio.isChecked():
+            return
+        self._apply_index_preset(label)
+
+    def _on_formula_mode_toggled(self, *_):
+        is_simple = self.simpleModeRadio.isChecked()
+
+        label_index = self.ui_root.findChild(QLabel, "labelIndex")
+        label_formula_ref = self.ui_root.findChild(QLabel, "labelFormulaRef")
+        if label_index is not None:
+            label_index.setVisible(is_simple)
+        if label_formula_ref is not None:
+            label_formula_ref.setVisible(is_simple)
+        self.indexCombo.setVisible(is_simple)
+        self.formulaReferenceLabel.setVisible(is_simple)
+
+        self.labelAdvancedBand1.setVisible(not is_simple)
+        self.advancedBand1Combo.setVisible(not is_simple)
+        self.labelAdvancedBand2.setVisible(not is_simple)
+        self.advancedBand2Combo.setVisible(not is_simple)
+        self.labelAdvancedFormula.setVisible(not is_simple)
+        self.advancedFormulaEdit.setVisible(not is_simple)
+
+        # Show tip in both Simple and Advanced modes
+        index_tip = self.ui_root.findChild(QLabel, "indexTipLabel")
+        if index_tip is not None:
+            index_tip.setVisible(True)
+
+        if self._common is not None:
+            for widget_name in ("labelBand1", "band1Combo", "labelBand2", "band2Combo", "labelFormula", "formulaEdit"):
+                widget = self._common.findChild(QWidget, widget_name)
+                if widget is not None:
+                    widget.setVisible(False)
+
+        if is_simple:
+            self._apply_index_preset(self.indexCombo.currentText())
+        else:
+            self._sync_reference_from_advanced()
+
+    def _sync_reference_from_advanced(self, *_):
+        band1 = self.advancedBand1Combo.currentText().strip()
+        band2 = self.advancedBand2Combo.currentText().strip()
+        formula = self.advancedFormulaEdit.text().strip()
+
+        matched = match_index_preset(band1, band2, formula)
+        if matched:
+            self._index_updating = True
+            try:
+                self.indexCombo.setCurrentText(matched)
+            finally:
+                self._index_updating = False
+
+        self.formulaReferenceLabel.setText(formula or "(formula will display here)")
+
+    def _apply_index_preset(self, label):
+        preset = get_index_preset(label)
+        if not preset:
+            return
+
+        self._index_updating = True
+        try:
+            self.advancedBand1Combo.setCurrentText(preset.get("band1", ""))
+            self.advancedBand2Combo.setCurrentText(preset.get("band2", ""))
+            self.advancedFormulaEdit.setText(preset.get("formula", ""))
+
+            self.formulaReferenceLabel.setText(preset.get("formula", ""))
+        finally:
+            self._index_updating = False
 
     def _aoi_mode_changed(self, text: str):
         """Show AOI action controls only after mode selection and set action text."""
@@ -862,6 +995,12 @@ class EngineDockWidget(QDockWidget):
         self.outputPathEdit.clear()
         self.logText.clear()
 
+        self.advancedBand1Combo.setCurrentText("red")
+        self.advancedBand2Combo.setCurrentText("nir")
+        self.advancedFormulaEdit.setText("(band2-band1)/(band2+band1)")
+        self.simpleModeRadio.setChecked(True)
+        self._on_formula_mode_toggled()
+
   
     # Collect params / run task
     def _collect_params(self):
@@ -887,6 +1026,8 @@ class EngineDockWidget(QDockWidget):
             raise RuntimeError("Formula is required.")
         if not p.get("band1"):
             raise RuntimeError("Band 1 is required.")
+        if self.advancedModeRadio.isChecked() and not p.get("band2"):
+            raise RuntimeError("Band 2 is required in Advanced mode.")
 
         op_txt = (self.opCombo.currentText() or "").strip()
         operation = None if op_txt == "none" else op_txt

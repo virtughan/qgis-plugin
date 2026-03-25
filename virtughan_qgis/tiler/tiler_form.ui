@@ -149,9 +149,6 @@
        <verstretch>0</verstretch>
       </sizepolicy>
      </property>
-     <property name="maximumHeight">
-      <number>280</number>
-     </property>
      <layout class="QGridLayout" name="gridParams">
       <property name="horizontalSpacing">
        <number>2</number>
@@ -179,6 +176,11 @@
       <rowstretch>0</rowstretch>
       <rowstretch>0</rowstretch>
       <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <rowstretch>0</rowstretch>
+      <columnstretch>0</columnstretch>
+      <columnstretch>1</columnstretch>
       <item row="0" column="0">
        <widget class="QLabel" name="labelStart">
         <property name="text">
@@ -237,50 +239,127 @@
       </item>
 
       <item row="3" column="0">
-       <widget class="QLabel" name="labelBand1">
+       <widget class="QLabel" name="labelMode">
         <property name="text">
-                 <string>Band 1 *</string>
+         <string>Mode</string>
         </property>
        </widget>
       </item>
       <item row="3" column="1">
-       <widget class="QComboBox" name="band1Combo"/>
+       <layout class="QHBoxLayout" name="modeLayout">
+        <property name="spacing"><number>8</number></property>
+        <item>
+         <widget class="QRadioButton" name="simpleModeRadio">
+          <property name="text"><string>Simple (Presets)</string></property>
+          <property name="checked"><bool>true</bool></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QRadioButton" name="advancedModeRadio">
+          <property name="text"><string>Advanced (Manual)</string></property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="modeSpacer">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="sizeHint" stdset="0">
+           <size><width>40</width><height>20</height></size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
       </item>
 
       <item row="4" column="0">
+       <widget class="QLabel" name="labelIndex">
+        <property name="text">
+         <string>Index</string>
+        </property>
+        <property name="margin"><number>6</number></property>
+       </widget>
+      </item>
+      <item row="4" column="1" colspan="2">
+       <widget class="QComboBox" name="indexCombo">
+        <property name="toolTip"><string>Select a preset spectral index</string></property>
+       </widget>
+      </item>
+
+      <item row="5" column="0">
+       <widget class="QLabel" name="labelFormulaRef">
+        <property name="text">
+         <string>Formula</string>
+        </property>
+        <property name="margin"><number>6</number></property>
+       </widget>
+      </item>
+      <item row="5" column="1" colspan="2">
+       <widget class="QLabel" name="formulaReferenceLabel">
+        <property name="text"><string>(formula will display here)</string></property>
+        <property name="wordWrap"><bool>true</bool></property>
+        <property name="toolTip"><string>Read-only formula reference for selected preset</string></property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </widget>
+      </item>
+
+      <item row="6" column="0">
+       <widget class="QLabel" name="labelBand1">
+        <property name="text">
+                 <string>Band 1 *</string>
+        </property>
+        <property name="margin"><number>6</number></property>
+       </widget>
+      </item>
+      <item row="6" column="1" colspan="2">
+       <widget class="QComboBox" name="band1Combo"/>
+      </item>
+      <item row="7" column="0">
        <widget class="QLabel" name="labelBand2">
         <property name="text">
          <string>Band 2</string>
         </property>
+        <property name="margin"><number>6</number></property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="7" column="1" colspan="2">
        <widget class="QComboBox" name="band2Combo"/>
       </item>
-
-      <item row="5" column="0">
+      <item row="8" column="0">
        <widget class="QLabel" name="labelFormula">
         <property name="text">
                  <string>Formula *</string>
         </property>
        </widget>
       </item>
-      <item row="5" column="1">
+      <item row="8" column="1" colspan="2">
        <widget class="QLineEdit" name="formulaLine">
         <property name="placeholderText">
          <string>(band2 - band1) / (band2 + band1)</string>
         </property>
+        <property name="visible"><bool>false</bool></property>
        </widget>
       </item>
 
-      <item row="6" column="0">
+      <item row="9" column="0" colspan="3">
+       <widget class="QLabel" name="tilerTipLabel">
+        <property name="text"><string>&lt;i&gt;Tip: If Band 1 and Band 2 resolutions differ, the system resamples; you''ll see a warning.&lt;/i&gt;</string></property>
+        <property name="visible"><bool>true</bool></property>
+       </widget>
+      </item>
+
+      <item row="10" column="0">
        <widget class="QLabel" name="labelTimeseries">
         <property name="text">
          <string>Time series (aggregate)</string>
         </property>
+        <property name="visible"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="6" column="1">
+      <item row="10" column="1" colspan="2">
        <widget class="QCheckBox" name="timeseriesCheck">
         <property name="text">
          <string/>
@@ -288,10 +367,11 @@
         <property name="checked">
          <bool>false</bool>
         </property>
+        <property name="visible"><bool>false</bool></property>
        </widget>
       </item>
 
-      <item row="7" column="0">
+      <item row="11" column="0">
        <widget class="QLabel" name="labelOp">
         <property name="text">
          <string>Aggregation</string>
@@ -301,12 +381,27 @@
         </property>
        </widget>
       </item>
-      <item row="7" column="1">
+      <item row="11" column="1" colspan="2">
        <widget class="QComboBox" name="operationCombo">
         <property name="visible">
          <bool>false</bool>
         </property>
        </widget>
+      </item>
+
+      <item row="12" column="0" colspan="3">
+       <spacer name="paramsStretch">
+        <property name="orientation"><enum>Qt::Vertical</enum></property>
+        <property name="sizeHint" stdset="0">
+         <size><width>0</width><height>0</height></size>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Minimum" vsizetype="Expanding">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </spacer>
       </item>
 
      </layout>

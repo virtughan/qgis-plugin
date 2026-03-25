@@ -1,24 +1,24 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>CommonParamsForm</class>
  <widget class="QWidget" name="CommonParamsForm">
   <property name="windowTitle">
    <string>Common Params</string>
   </property>
-     <property name="styleSheet">
-      <string>QLineEdit, QComboBox, QDateEdit, QSpinBox { padding: 2px; }</string>
-     </property>
+  <property name="styleSheet">
+   <string>QLineEdit, QComboBox, QDateEdit, QSpinBox { padding: 2px; }</string>
+  </property>
   <layout class="QGridLayout" name="grid">
-       <property name="horizontalSpacing"><number>8</number></property>
-      <property name="verticalSpacing"><number>2</number></property>
-      <property name="leftMargin"><number>2</number></property>
-      <property name="topMargin"><number>2</number></property>
-      <property name="rightMargin"><number>2</number></property>
-      <property name="bottomMargin"><number>2</number></property>
+   <property name="horizontalSpacing"><number>8</number></property>
+   <property name="verticalSpacing"><number>2</number></property>
+   <property name="leftMargin"><number>2</number></property>
+   <property name="topMargin"><number>2</number></property>
+   <property name="rightMargin"><number>2</number></property>
+   <property name="bottomMargin"><number>2</number></property>
    <!-- Dates -->
    <item row="0" column="0">
     <widget class="QLabel" name="labelStart">
-         <property name="text"><string>Start date *</string></property>
+     <property name="text"><string>Start date *</string></property>
     </widget>
    </item>
    <item row="0" column="1">
@@ -29,7 +29,7 @@
    </item>
    <item row="0" column="2">
     <widget class="QLabel" name="labelEnd">
-         <property name="text"><string>End date *</string></property>
+     <property name="text"><string>End date *</string></property>
     </widget>
    </item>
    <item row="0" column="3">
@@ -38,11 +38,10 @@
      <property name="displayFormat"><string>yyyy-MM-dd</string></property>
     </widget>
    </item>
-
    <!-- Cloud -->
    <item row="1" column="0">
     <widget class="QLabel" name="labelCloud">
-         <property name="text"><string>Max cloud (%) *</string></property>
+     <property name="text"><string>Max cloud (%) *</string></property>
     </widget>
    </item>
    <item row="1" column="1">
@@ -52,11 +51,10 @@
      <property name="value"><number>30</number></property>
     </widget>
    </item>
-
    <!-- Bands -->
    <item row="2" column="0">
     <widget class="QLabel" name="labelBand1">
-         <property name="text"><string>Band 1 *</string></property>
+     <property name="text"><string>Band 1 *</string></property>
     </widget>
    </item>
    <item row="2" column="1">
@@ -70,11 +68,10 @@
    <item row="2" column="3">
     <widget class="QComboBox" name="band2Combo"/>
    </item>
-
    <!-- Formula -->
    <item row="3" column="0">
     <widget class="QLabel" name="labelFormula">
-         <property name="text"><string>Formula *</string></property>
+     <property name="text"><string>Formula *</string></property>
     </widget>
    </item>
    <item row="3" column="1" colspan="3">
@@ -82,12 +79,11 @@
      <property name="placeholderText"><string>(band2-band1)/(band2+band1)</string></property>
     </widget>
    </item>
-
    <!-- Hint -->
    <item row="4" column="0" colspan="4">
     <widget class="QLabel" name="hintLabel">
      <property name="text">
-     <string>&lt;i&gt;Tip: If Band 1 and Band 2 resolutions differ, the compute module resamples; you’ll see a warning.&lt;/i&gt;</string>
+      <string>&lt;i&gt;Tip: If Band 1 and Band 2 resolutions differ, the compute module resamples; you''ll see a warning.&lt;/i&gt;</string>
      </property>
     </widget>
    </item>

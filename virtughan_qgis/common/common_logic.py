@@ -1,3 +1,78 @@
+
+def index_presets_two_band():
+    """
+    Return list of 6 preset two-band spectral indices for Earth observation.
+    Each dict contains: label, band1, band2, formula.
+    """
+    return [
+        {
+            "label": "NDVI",
+            "band1": "red",
+            "band2": "nir",
+            "formula": "(band2 - band1) / (band2 + band1)"
+        },
+        {
+            "label": "NDWI",
+            "band1": "nir",
+            "band2": "swir16",
+            "formula": "(band1 - band2) / (band1 + band2)"
+        },
+        {
+            "label": "NDBI",
+            "band1": "swir16",
+            "band2": "nir",
+            "formula": "(band1 - band2) / (band1 + band2)"
+        },
+        {
+            "label": "NDMI",
+            "band1": "nir",
+            "band2": "swir16",
+            "formula": "(band1 - band2) / (band1 + band2)"
+        },
+        {
+            "label": "GNDVI",
+            "band1": "green",
+            "band2": "nir",
+            "formula": "(band2 - band1) / (band2 + band1)"
+        },
+        {
+            "label": "SAVI",
+            "band1": "red",
+            "band2": "nir",
+            "formula": "1.5 * (band2 - band1) / (band2 + band1 + 0.5)"
+        },
+    ]
+
+def get_index_preset(label):
+    """
+    Get preset dict by label (case-insensitive lookup).
+    Returns a copy of the preset dict, or None if not found.
+    """
+    wanted = (label or "").strip().lower()
+    for preset in index_presets_two_band():
+        if preset.get("label", "").strip().lower() == wanted:
+            return dict(preset)
+    return None
+
+def match_index_preset(band1, band2, formula):
+    """
+    Reverse-lookup: find preset label that matches given band1, band2, formula.
+    Comparison is case-insensitive and whitespace-insensitive.
+    Returns preset label (str) or None if no match found.
+    """
+    b1 = (band1 or "").strip().lower()
+    b2 = (band2 or "").strip().lower()
+    fx = "".join((formula or "").split()).lower()
+
+    for preset in index_presets_two_band():
+        p1 = (preset.get("band1") or "").strip().lower()
+        p2 = (preset.get("band2") or "").strip().lower()
+        pf = "".join((preset.get("formula") or "").split()).lower()
+
+        if b1 == p1 and b2 == p2 and fx == pf:
+            return preset.get("label")
+
+    return None
 import os, json
 
 from qgis.core import Qgis, QgsMessageLog
