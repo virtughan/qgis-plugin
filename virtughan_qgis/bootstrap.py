@@ -119,6 +119,14 @@ def _install_via_pip(packages: list[str]) -> bool:
 
 
 def check_dependencies() -> bool:
+    # Ensure we validate the currently installed files, not a stale in-memory module.
+    for mod_name in list(sys.modules.keys()):
+        if mod_name == "virtughan" or mod_name.startswith("virtughan."):
+            try:
+                del sys.modules[mod_name]
+            except Exception:
+                pass
+
     _activate_vendor_paths()
     importlib.invalidate_caches()
     try:
