@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 from datetime import datetime
+from importlib import metadata as importlib_metadata
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.PyQt.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout, QMessageBox
@@ -17,6 +18,8 @@ _LAST_BOOTSTRAP_ERROR = None
 PLUGIN_DIR = os.path.dirname(__file__)
 VENDOR_DIR = os.path.join(PLUGIN_DIR, "vendor")
 LIBS_DIR = os.path.join(PLUGIN_DIR, "libs")
+RUNTIME_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime")
+RUNTIME_SITE_PACKAGES_DIR = os.path.join(RUNTIME_ROOT, "site-packages")
 
 
 def get_bootstrap_log_path() -> str:
@@ -63,6 +66,8 @@ def get_last_bootstrap_error() -> str | None:
 
 def _activate_vendor_paths() -> list[str]:
     candidate_dirs = [
+        RUNTIME_SITE_PACKAGES_DIR,
+        RUNTIME_ROOT,
         os.path.join(VENDOR_DIR, "site-packages"),
         VENDOR_DIR,
         os.path.join(LIBS_DIR, "site-packages"),
@@ -100,8 +105,19 @@ def _is_installed_version_sufficient(installed: str, required: str) -> bool:
     return _parse_version_tuple(installed) >= _parse_version_tuple(required)
 
 
+def _get_installed_virtughan_version(module) -> str:
+    version = (getattr(module, "__version__", "") or "").strip()
+    if version:
+        return version
+
+    try:
+        return (importlib_metadata.version("virtughan") or "").strip()
+    except Exception:
+        return ""
+
+
 def _install_via_pip(packages: list[str]) -> bool:
-    target = os.path.join(VENDOR_DIR, "site-packages")
+    target = RUNTIME_SITE_PACKAGES_DIR
     os.makedirs(target, exist_ok=True)
 
     try:
@@ -131,21 +147,27 @@ def check_dependencies() -> bool:
     importlib.invalidate_caches()
     try:
         import virtughan
-
-        installed = getattr(virtughan, "__version__", "")
-        if not _is_installed_version_sufficient(installed, VIRTUGHAN_VERSION):
-            _log(
-                f"VirtuGhan version too old ({installed or 'unknown'}). "
-                f"Required: {VIRTUGHAN_VERSION}",
-                Qgis.Warning,
-            )
-            return False
-
-        _log(f"VirtuGhan package found (version {installed or 'unknown'})")
-        return True
     except ImportError:
+        _set_last_error("VirtuGhan package not found")
         _log("VirtuGhan package not found", Qgis.Warning)
         return False
+    except Exception as exc:
+        _set_last_error(f"VirtuGhan import failed: {exc}")
+        _log(f"VirtuGhan import failed: {exc}", Qgis.Warning)
+        return False
+
+    installed = _get_installed_virtughan_version(virtughan)
+    if installed and not _is_installed_version_sufficient(installed, VIRTUGHAN_VERSION):
+        details = (
+            f"VirtuGhan version too old ({installed}). Required: {VIRTUGHAN_VERSION}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    _set_last_error(None)
+    _log(f"VirtuGhan package found (version {installed or 'unknown'})")
+    return True
 
 
 def check_runtime_tls_bundle() -> tuple[bool, str | None]:
@@ -161,6 +183,24 @@ def check_runtime_tls_bundle() -> tuple[bool, str | None]:
         return False, f"Missing TLS CA bundle: {bundle_path}"
     except Exception as exc:
         return False, f"TLS certificate setup error: {exc}"
+
+
+def _check_plugin_import_health() -> tuple[bool, str | None]:
+    """Verify core plugin modules are discoverable without importing them."""
+    module_names = [
+        "virtughan_qgis.engine.engine_widget",
+        "virtughan_qgis.extractor.extractor_widget",
+        "virtughan_qgis.tiler.tiler_widget",
+        "virtughan_qgis.processing_provider",
+        "virtughan_qgis.common.hub_dialog",
+    ]
+    for name in module_names:
+        try:
+            if importlib.util.find_spec(name) is None:
+                return False, f"Plugin module not found: {name}"
+        except Exception as exc:
+            return False, f"Plugin module discovery failed ({name}): {exc}"
+    return True, None
 
 
 def ensure_runtime_network_ready(parent=None) -> bool:
@@ -252,8 +292,8 @@ def _show_manual_install_dialog(parent):
             "2. Retry by restarting QGIS\n"
             "3. Check detailed log file:\n"
             f"   - {log_path}\n"
-            "4. Or pre-vendor dependencies into: \n"
-            f"   - {os.path.join(VENDOR_DIR, 'site-packages', PKG_NAME)}\n"
+            "4. Or pre-vendor dependencies into:\n"
+            f"   - {os.path.join(RUNTIME_SITE_PACKAGES_DIR, PKG_NAME)}\n"
             f"   - {os.path.join(LIBS_DIR, PKG_NAME)}\n"
         )
 
@@ -322,24 +362,25 @@ def clear_install_state():
 
 
 def _clear_runtime_site_packages() -> tuple[int, list[str]]:
-    """Remove plugin-managed runtime packages under vendor/site-packages."""
-    target = os.path.join(VENDOR_DIR, "site-packages")
+    """Remove plugin-managed runtime packages from profile runtime directories."""
+    targets = [RUNTIME_SITE_PACKAGES_DIR, os.path.join(VENDOR_DIR, "site-packages")]
     removed = 0
     failed: list[str] = []
 
-    if not os.path.isdir(target):
-        return removed, failed
+    for target in targets:
+        if not os.path.isdir(target):
+            continue
 
-    for name in os.listdir(target):
-        path = os.path.join(target, name)
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-            else:
-                os.remove(path)
-            removed += 1
-        except Exception as exc:
-            failed.append(f"{name}: {exc}")
+        for name in os.listdir(target):
+            path = os.path.join(target, name)
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+                removed += 1
+            except Exception as exc:
+                failed.append(f"{target}::{name}: {exc}")
 
     return removed, failed
 
@@ -412,15 +453,21 @@ def interactive_install_dependencies(parent=None) -> bool:
     """
     _set_last_error(None)
 
-    # Smart check: try to import first, skip dialog if everything works
+    # Smart check: skip installer only if dependencies and core plugin imports are healthy.
     _activate_vendor_paths()
-    if check_dependencies():
+    deps_ok = check_dependencies()
+    imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
+    if deps_ok and imports_ok:
         _log("Dependencies already properly installed, skipping installer dialog")
         mark_as_installed()
         return True
+    if deps_ok and not imports_ok and import_err:
+        _set_last_error(import_err)
+        _log(import_err, Qgis.Warning)
+        return False
 
     # Dependencies missing or broken - show interactive installer
-    _log("Dependencies not found, showing installer dialog", Qgis.Info)
+    _log("Dependencies missing, showing installer dialog", Qgis.Info)
 
     # Define the installation callback
     def _do_install(progress_callback=None) -> bool:
@@ -432,16 +479,24 @@ def interactive_install_dependencies(parent=None) -> bool:
         
         # Re-check in case it was installed just now
         _activate_vendor_paths()
-        if check_dependencies():
+        deps_ready = check_dependencies()
+        imports_ready, import_err = _check_plugin_import_health() if deps_ready else (False, None)
+        if deps_ready and imports_ready:
             if progress_callback:
                 progress_callback("Dependencies already available\n")
             return True
+        if deps_ready and not imports_ready and import_err:
+            _set_last_error(import_err)
+            _log(import_err, Qgis.Warning)
+            if progress_callback:
+                progress_callback(f"{import_err}\n")
+            return False
 
         if progress_callback:
             progress_callback("Starting package installation...\n")
         _log("Attempting interactive runtime dependency installation...", Qgis.Info)
 
-        target = os.path.join(VENDOR_DIR, "site-packages")
+        target = RUNTIME_SITE_PACKAGES_DIR
         os.makedirs(target, exist_ok=True)
 
         try:
@@ -454,16 +509,24 @@ def interactive_install_dependencies(parent=None) -> bool:
                     progress_callback("\nVerifying installation...\n")
                 _activate_vendor_paths()
                 importlib.invalidate_caches()
-                if check_dependencies():
+                deps_ready = check_dependencies()
+                imports_ready, import_err = _check_plugin_import_health() if deps_ready else (False, None)
+                if deps_ready and imports_ready:
                     _log("Interactive runtime installation successful", Qgis.Info)
                     mark_as_installed()
                     return True
+                if import_err:
+                    _set_last_error(import_err)
+                    _log(import_err, Qgis.Warning)
+                    if progress_callback:
+                        progress_callback(f"{import_err}\n")
 
             _log("Interactive runtime installation failed", Qgis.Warning)
-            _set_last_error(
-                "Failed to install required dependencies at runtime.\n\n"
-                "Please ensure internet is available."
-            )
+            if not get_last_bootstrap_error():
+                _set_last_error(
+                    "Failed to install required dependencies at runtime.\n\n"
+                    "Please ensure internet is available."
+                )
             return False
 
         except Exception as exc:
