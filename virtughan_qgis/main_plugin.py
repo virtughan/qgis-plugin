@@ -23,10 +23,10 @@ try:
     )
 except Exception:
     def get_last_bootstrap_error():
-        return None
+        return "Bootstrap module failed to load."
 
     def interactive_install_dependencies(*args, **kwargs):
-        return True
+        return False
 
     def repair_runtime_dependencies(*args, **kwargs):
         return False
@@ -86,12 +86,6 @@ class VirtuGhanPlugin:
                 "VirtuGhan",
                 f"VirtuGhan plugin could not initialize:\n\n{self._last_import_error}"
             )
-            self.action_engine = QAction("VirtuGhan • Compute (unavailable)", self.iface.mainWindow())
-            self.action_engine.setEnabled(False)
-            self.action_extractor = QAction("VirtuGhan • Extractor (unavailable)", self.iface.mainWindow())
-            self.action_extractor.setEnabled(False)
-            self.iface.addPluginToMenu("VirtuGhan", self.action_engine)
-            self.iface.addPluginToMenu("VirtuGhan", self.action_extractor)
             return
 
         self.action_engine = QAction("VirtuGhan • Compute", self.iface.mainWindow())
