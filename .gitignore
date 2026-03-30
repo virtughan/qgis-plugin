@@ -96,6 +96,7 @@ virtughan_qgis/vendor/
 
 # Log files
 *.log
+log.txt
 
 # Temporary files
 *.tmp
