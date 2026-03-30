@@ -1,3 +1,16 @@
+## v1.0.8 (2026-03-30)
+
+### Fix
+
+- **runtime-single-source**: enforces runtime dependency loading from QGIS profile `virtughan_runtime` path and blocks non-runtime virtughan import sources
+- **version-reliability**: improves bootstrap dependency validation for missing package, wrong path source, and outdated runtime version scenarios
+- **repair-flow**: improves runtime repair/uninstall cleanup and reinstall behavior for broken or partially removed runtime packages
+- **engine-subprocess-import**: fixes Compute subprocess import failures by propagating runtime dependency paths in subprocess environment
+- **engine-log-stability**: separates GDAL CPL diagnostics into a dedicated `gdal.log` to keep `runtime.log` readable and prevent trace/progress corruption
+- **progress-log-parity**: restores Engine UI log carriage-return normalization so tqdm-style progress updates render like Extractor logs
+- **init-failure-gating**: blocks plugin menu/tool initialization when dependency bootstrap/import checks fail to avoid false-ready UI states
+- **docs-and-runtime-version**: updates runtime dependency baseline to `virtughan>=1.0.2` and aligns bootstrap/install guidance
+
 ## v1.0.7 (2026-03-25)
 
 ### Fix
