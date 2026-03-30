@@ -2059,7 +2059,7 @@ wheels = [
 
 [[package]]
 name = "virtughan"
-version = "1.0.1"
+version = "1.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiocache" },
@@ -2078,9 +2078,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b0/73/2175422946563f36596f28b2407473b6cbd31a1396baeb130ea64b2bc02f/virtughan-1.0.1.tar.gz", hash = "sha256:dec93b5cba104cceda520e23190ffe23305670431f48a4029140968afddbf774", size = 31738, upload-time = "2025-08-22T12:56:30.173Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/69/e64aac2281712dc9b0132f1e969579dd9bdbb51f979507524239194e8c27/virtughan-1.0.2.tar.gz", hash = "sha256:b8ae2dc59e031b4b5db91c4cc7286cbdec3d799121f706d7729cdc705cba962b", size = 31857, upload-time = "2026-03-30T17:21:57.37Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/eb/e3/3dfd22885e1f1ee33da9886206989b2e4a66935d99c92876460f76afd551/virtughan-1.0.1-py3-none-any.whl", hash = "sha256:6b7233ecfac3e78df1db1a54de506a8731d1226edb73c463815cf0b6cad22e44", size = 31912, upload-time = "2025-08-22T12:56:29.225Z" },
+    { url = "https://files.pythonhosted.org/packages/21/7f/3dc62ebfa60c62a5058eb7903768fabab6934effdc330632020fd953a805/virtughan-1.0.2-py3-none-any.whl", hash = "sha256:f9921fa52f9c2ad6f8d76fc44eab9f62cf83445bdb19267965802ed18f866c33", size = 32071, upload-time = "2026-03-30T17:21:58.381Z" },
 ]
 
 [[package]]
@@ -2101,7 +2101,7 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtughan", specifier = ">=1.0.1" }]
+requires-dist = [{ name = "virtughan", specifier = ">=1.0.2" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "commitizen", specifier = ">=4.8.3" }]

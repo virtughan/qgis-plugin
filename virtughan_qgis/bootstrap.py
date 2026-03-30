@@ -8,7 +8,7 @@ from datetime import datetime
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.PyQt.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout, QMessageBox
 
-from .dependency_versions import runtime_package_specs
+from .dependency_versions import VIRTUGHAN_VERSION, runtime_package_specs
 
 PKG_NAME = "virtughan"
 DEFAULT_PACKAGES = runtime_package_specs()
@@ -80,6 +80,26 @@ def _activate_vendor_paths() -> list[str]:
     return added
 
 
+def _parse_version_tuple(version_text: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for raw in (version_text or "").strip().split("."):
+        digits = ""
+        for ch in raw:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        if digits:
+            parts.append(int(digits))
+        else:
+            parts.append(0)
+    return tuple(parts)
+
+
+def _is_installed_version_sufficient(installed: str, required: str) -> bool:
+    return _parse_version_tuple(installed) >= _parse_version_tuple(required)
+
+
 def _install_via_pip(packages: list[str]) -> bool:
     target = os.path.join(VENDOR_DIR, "site-packages")
     os.makedirs(target, exist_ok=True)
@@ -102,9 +122,18 @@ def check_dependencies() -> bool:
     _activate_vendor_paths()
     importlib.invalidate_caches()
     try:
-        import virtughan  # noqa: F401
+        import virtughan
 
-        _log("VirtuGhan package found")
+        installed = getattr(virtughan, "__version__", "")
+        if not _is_installed_version_sufficient(installed, VIRTUGHAN_VERSION):
+            _log(
+                f"VirtuGhan version too old ({installed or 'unknown'}). "
+                f"Required: {VIRTUGHAN_VERSION}",
+                Qgis.Warning,
+            )
+            return False
+
+        _log(f"VirtuGhan package found (version {installed or 'unknown'})")
         return True
     except ImportError:
         _log("VirtuGhan package not found", Qgis.Warning)
