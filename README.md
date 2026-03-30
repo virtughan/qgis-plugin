@@ -109,7 +109,7 @@ cz changelog
 The plugin uses a **pip-bundled runtime install** strategy.
 
 - Bundle only `pip` in `virtughan_qgis/vendor/pip/`
-- On first QGIS load, bootstrap auto-installs `virtughan==1.0.1` + dependencies into `vendor/site-packages/`
+- On first QGIS load, bootstrap auto-installs `virtughan==1.0.2` + dependencies into `vendor/site-packages/`
 - Keeps plugin ZIP small for QGIS store uploads
 - Requires internet connection on first run
 - No separate OS folders needed for pip itself (pip is Python code); OS-specific wheels are resolved during runtime install
