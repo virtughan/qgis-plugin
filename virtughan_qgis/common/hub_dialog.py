@@ -508,7 +508,27 @@ class VirtughanHubDialog(QDialog):
             )
         else:
             details = get_last_bootstrap_error() or "Uninstall completed with warnings."
-            QMessageBox.warning(self, "VirtuGhan", f"Uninstall completed with warnings:\n\n{details}")
+            lower_details = details.lower()
+            is_lock_warning = (
+                "failed to remove some dependency files" in lower_details
+                or "winerror 5" in lower_details
+                or "access is denied" in lower_details
+            )
+            if is_lock_warning:
+                QMessageBox.information(
+                    self,
+                    "VirtuGhan",
+                    "Some dependency files are still in use.\n\n"
+                    "Please restart QGIS to complete dependency cleanup.",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "VirtuGhan",
+                    "Dependency uninstall failed.\n\n"
+                    "Please check details below:\n\n"
+                    f"{details}",
+                )
 
     def _set_help_for_row(self, row: int):
         key = None
