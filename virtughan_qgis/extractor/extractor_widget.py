@@ -9,7 +9,6 @@ import tempfile
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from contextlib import contextmanager
 
 from qgis.core import (
     Qgis,
@@ -59,7 +58,7 @@ from ..common.aoi import (
     geom_to_wgs84_bbox,
 )
 from ..common.scene_preview_dialog import ScenePreviewDialog
-from ..bootstrap import ensure_runtime_network_ready
+from ..bootstrap import RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR, ensure_runtime_network_ready
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -147,40 +146,50 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
         "smart_filter": params.get("smart_filter", True),
         "log_path": log_path,
     }
+    if params.get("polygon_wgs84"):
+        payload["polygon_wgs84"] = params["polygon_wgs84"]
 
-    runner_code = f'''import json
-import sys
-import traceback
-
-with open(r"{payload_path}", "r", encoding="utf-8") as pf:
-    payload = json.load(pf)
-
-log_path = payload.pop("log_path")
-
-with open(log_path, "a", encoding="utf-8", buffering=1) as logf:
-    try:
-        from virtughan.extract import ExtractProcessor as ExtractorBackend
-        extr = ExtractorBackend(
-            bbox=payload["bbox"],
-            start_date=payload["start_date"],
-            end_date=payload["end_date"],
-            cloud_cover=payload["cloud_cover"],
-            bands_list=payload["bands_list"],
-            output_dir=payload["output_dir"],
-            log_file=logf,
-            workers=payload["workers"],
-            zip_output=payload["zip_output"],
-            smart_filter=payload["smart_filter"],
-        )
-        extr.extract()
-        logf.write("Extractor finished.\\n")
-    except Exception:
-        logf.write("[subprocess_exception]\\n")
-        logf.write(traceback.format_exc())
-        sys.exit(1)
-
-sys.exit(0)
-'''
+    runner_code = "\n".join(
+        [
+            "import inspect",
+            "import json",
+            "import sys",
+            "import traceback",
+            "",
+            f"with open(r\"{payload_path}\", \"r\", encoding=\"utf-8\") as pf:",
+            "    payload = json.load(pf)",
+            "",
+            "log_path = payload.pop(\"log_path\")",
+            "",
+            "with open(log_path, \"a\", encoding=\"utf-8\", buffering=1) as logf:",
+            "    try:",
+            "        import virtughan",
+            "        from virtughan.extract import ExtractProcessor as ExtractorBackend",
+            "        logf.write(f\"[INFO] subprocess virtughan_version={getattr(virtughan, '__version__', '')}\\n\")",
+            "        logf.write(f\"[INFO] subprocess virtughan_file={getattr(virtughan, '__file__', '')}\\n\")",
+            "        backend_args = {k: v for k, v in payload.items() if k != \"log_path\"}",
+            "        backend_args[\"log_file\"] = logf",
+            "",
+            "        sig = inspect.signature(ExtractorBackend.__init__)",
+            "        accepts_kwargs = any(",
+            "            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()",
+            "        )",
+            "        if not accepts_kwargs:",
+            "            allowed = {name for name in sig.parameters.keys() if name != \"self\"}",
+            "            backend_args = {k: v for k, v in backend_args.items() if k in allowed}",
+            "",
+            "        extr = ExtractorBackend(**backend_args)",
+            "        extr.extract()",
+            "        logf.write(\"Extractor finished.\\n\")",
+            "    except Exception:",
+            "        logf.write(\"[subprocess_exception]\\n\")",
+            "        logf.write(traceback.format_exc())",
+            "        sys.exit(1)",
+            "",
+            "sys.exit(0)",
+            "",
+        ]
+    )
 
     try:
         with open(payload_path, "w", encoding="utf-8") as pf:
@@ -197,6 +206,28 @@ sys.exit(0)
             "text": True,
             "check": False,
         }
+
+        env = os.environ.copy()
+        python_path_entries = []
+        if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
+            python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
+        if os.path.isdir(RUNTIME_ROOT):
+            python_path_entries.append(RUNTIME_ROOT)
+
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            python_path_entries.append(existing_pythonpath)
+
+        if python_path_entries:
+            env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+
+        # Prevent user-level site-packages from shadowing plugin-managed runtime deps.
+        env["PYTHONNOUSERSITE"] = "1"
+        run_kwargs["env"] = env
+
+        if logf:
+            logf.write(f"[INFO] subprocess PYTHONPATH={env.get('PYTHONPATH', '')}\n")
+            logf.write(f"[INFO] subprocess PYTHONNOUSERSITE={env.get('PYTHONNOUSERSITE', '')}\n")
         if os.name == "nt":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -312,69 +343,6 @@ def _resolve_embedded_python_executable() -> str:
     if sys.executable and "python" in Path(sys.executable).name.lower():
         return sys.executable
     return ""
-
-
-@contextmanager
-def _with_embedded_python_executable(logf=None):
-    original_executable = sys.executable
-    mp_set_executable = None
-    original_python_executable_env = os.environ.get("PYTHONEXECUTABLE")
-    embedded_python = _resolve_embedded_python_executable()
-    try:
-        if embedded_python and embedded_python != original_executable:
-            sys.executable = embedded_python
-            if logf:
-                logf.write(f"Using embedded Python executable: {embedded_python}\n")
-        elif logf:
-            logf.write("Embedded Python executable not resolved; keeping current sys.executable\n")
-        if embedded_python:
-            os.environ["PYTHONEXECUTABLE"] = embedded_python
-        try:
-            import multiprocessing as _mp
-            try:
-                import multiprocessing.spawn as _mp_spawn
-            except Exception:
-                _mp_spawn = None
-
-            if sys.platform == "darwin":
-                try:
-                    current_method = _mp.get_start_method(allow_none=True)
-                except Exception:
-                    current_method = None
-                if current_method != "fork":
-                    try:
-                        _mp.set_start_method("fork", force=True)
-                        if logf:
-                            logf.write("Using multiprocessing start method: fork\n")
-                    except Exception as start_method_exc:
-                        if logf:
-                            logf.write(f"Could not set multiprocessing start method to fork: {start_method_exc}\n")
-
-            mp_set_executable = getattr(_mp, "set_executable", None)
-            if not callable(mp_set_executable) and _mp_spawn is not None:
-                mp_set_executable = getattr(_mp_spawn, "set_executable", None)
-
-            if callable(mp_set_executable) and embedded_python:
-                mp_set_executable(embedded_python)
-                if logf:
-                    logf.write(f"Using multiprocessing executable: {embedded_python}\n")
-            elif embedded_python and _mp_spawn is not None:
-                try:
-                    _mp_spawn._python_exe = os.fsencode(embedded_python)
-                    if logf:
-                        logf.write(f"Using multiprocessing _python_exe fallback: {embedded_python}\n")
-                except Exception:
-                    pass
-        except Exception as mp_exc:
-            if logf:
-                logf.write(f"Could not configure multiprocessing executable: {mp_exc}\n")
-        yield
-    finally:
-        if original_python_executable_env is None:
-            os.environ.pop("PYTHONEXECUTABLE", None)
-        else:
-            os.environ["PYTHONEXECUTABLE"] = original_python_executable_env
-        sys.executable = original_executable
 
 
 class _ExtractorTask(QgsTask):
