@@ -10,6 +10,10 @@ from qgis.core import (
     QgsRasterLayer,
 )
 
+from ..bootstrap import activate_runtime_paths
+
+activate_runtime_paths()
+
 try:
     from qgis.core import QgsProcessingParameterDate
     HAVE_DATE_PARAM = True
@@ -59,7 +63,7 @@ class _FeedbackTee(io.TextIOBase):
             return 0
         self.file.write(s)
         self.file.flush()
-        self._buf += s
+        self._buf += s.replace("\r\n", "\n").replace("\r", "\n")
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
             if line.strip():

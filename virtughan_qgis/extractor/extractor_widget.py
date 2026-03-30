@@ -58,7 +58,14 @@ from ..common.aoi import (
     geom_to_wgs84_bbox,
 )
 from ..common.scene_preview_dialog import ScenePreviewDialog
-from ..bootstrap import RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR, ensure_runtime_network_ready
+from ..bootstrap import (
+    RUNTIME_ROOT,
+    RUNTIME_SITE_PACKAGES_DIR,
+    activate_runtime_paths,
+    ensure_runtime_network_ready,
+)
+
+activate_runtime_paths()
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -144,6 +151,8 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
         "workers": int(params.get("workers", 1) or 1),
         "zip_output": params.get("zip_output", False),
         "smart_filter": params.get("smart_filter", True),
+        "runtime_site_packages_dir": RUNTIME_SITE_PACKAGES_DIR,
+        "runtime_root": RUNTIME_ROOT,
         "log_path": log_path,
     }
     if params.get("polygon_wgs84"):
@@ -153,6 +162,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
         [
             "import inspect",
             "import json",
+            "import os",
             "import sys",
             "import traceback",
             "",
@@ -163,6 +173,13 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
             "",
             "with open(log_path, \"a\", encoding=\"utf-8\", buffering=1) as logf:",
             "    try:",
+            "        runtime_paths = [",
+            "            payload.get('runtime_site_packages_dir', ''),",
+            "            payload.get('runtime_root', ''),",
+            "        ]",
+            "        for dep_path in reversed(runtime_paths):",
+            "            if dep_path and os.path.isdir(dep_path) and dep_path not in sys.path:",
+            "                sys.path.insert(0, dep_path)",
             "        import virtughan",
             "        from virtughan.extract import ExtractProcessor as ExtractorBackend",
             "        logf.write(f\"[INFO] subprocess virtughan_version={getattr(virtughan, '__version__', '')}\\n\")",
@@ -419,7 +436,9 @@ class _UiLogTailer:
                 f.seek(self._pos)
                 chunk = f.read()
                 if chunk:
-                    self._widget.appendPlainText(chunk.rstrip("\n"))
+                    # tqdm writes progress updates with carriage returns; normalize to line breaks for UI logs.
+                    normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    self._widget.appendPlainText(normalized.rstrip("\n"))
                     self._pos = f.tell()
         except Exception:
             pass

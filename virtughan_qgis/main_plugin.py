@@ -1,6 +1,5 @@
 # virtughan_qgis/main_plugin.py
 import os
-import sys
 
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtCore import Qt
@@ -11,9 +10,6 @@ from .common.map_setup import setup_default_map
 
 
 PLUGIN_DIR = os.path.dirname(__file__)
-LIBS_DIR = os.path.join(PLUGIN_DIR, "libs")
-if os.path.isdir(LIBS_DIR) and LIBS_DIR not in sys.path:
-    sys.path.insert(0, LIBS_DIR)
 
 try:
     from .bootstrap import (

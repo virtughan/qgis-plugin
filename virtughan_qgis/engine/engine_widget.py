@@ -57,7 +57,7 @@ from ..common.common_logic import (
 
 from ..common.map_setup import setup_default_map
 from ..common.scene_preview_dialog import ScenePreviewDialog
-from ..bootstrap import ensure_runtime_network_ready
+from ..bootstrap import RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR, ensure_runtime_network_ready
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -407,11 +407,13 @@ def main():
 
     params = payload["params"]
     log_path = payload["log_path"]
+    cpl_log_path = os.path.join(params["output_dir"], "gdal.log")
 
-    os.environ["CPL_LOG"] = log_path
+    os.environ["CPL_LOG"] = cpl_log_path
 
     with open(log_path, "a", encoding="utf-8", buffering=1) as logf:
         _configure_runtime(payload, logf)
+        logf.write(f"GDAL CPL_LOG: {cpl_log_path}\\n")
         logf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] Starting VirtughanProcessor\\n")
         logf.write(f"Params: {params}\\n")
         logf.write(f"PROJ_LIB: {os.environ.get('PROJ_LIB', '')}\\n")
@@ -484,6 +486,24 @@ if __name__ == "__main__":
             "text": True,
             "check": False,
         }
+
+        env = os.environ.copy()
+        python_path_entries = []
+        if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
+            python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
+        if os.path.isdir(RUNTIME_ROOT):
+            python_path_entries.append(RUNTIME_ROOT)
+
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            python_path_entries.append(existing_pythonpath)
+
+        if python_path_entries:
+            env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+
+        env["PYTHONNOUSERSITE"] = "1"
+        run_kwargs["env"] = env
+
         if os.name == "nt":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -537,7 +557,7 @@ class _VirtughanTask(QgsTask):
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
 
-            os.environ["CPL_LOG"] = self.log_path
+            os.environ["CPL_LOG"] = os.path.join(self.params["output_dir"], "gdal.log")
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
                 _run_engine_in_subprocess(self.params, self.log_path, logf=logf)
@@ -596,7 +616,9 @@ class _UiLogTailer:
                 f.seek(self._pos)
                 chunk = f.read()
                 if chunk:
-                    self._widget.appendPlainText(chunk.rstrip("\n"))
+                    # tqdm uses carriage returns for in-place progress updates.
+                    normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
+                    self._widget.appendPlainText(normalized.rstrip("\n"))
                     self._pos = f.tell()
         except Exception:
             pass

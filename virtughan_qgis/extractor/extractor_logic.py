@@ -11,6 +11,9 @@ from qgis.core import (
     QgsRasterLayer)
 
 from ..common.common_logic import default_band_list
+from ..bootstrap import activate_runtime_paths
+
+activate_runtime_paths()
 
 EXTRACTOR_IMPORT_ERROR = None
 try:
@@ -50,7 +53,7 @@ class _FeedbackTee(io.TextIOBase):
     def write(self, s):
         if not s: return 0
         self.file.write(s); self.file.flush()
-        self._buf += s
+        self._buf += s.replace("\r\n", "\n").replace("\r", "\n")
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
             if line.strip():

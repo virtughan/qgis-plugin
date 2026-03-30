@@ -16,8 +16,6 @@ DEFAULT_PACKAGES = runtime_package_specs()
 
 _LAST_BOOTSTRAP_ERROR = None
 PLUGIN_DIR = os.path.dirname(__file__)
-VENDOR_DIR = os.path.join(PLUGIN_DIR, "vendor")
-LIBS_DIR = os.path.join(PLUGIN_DIR, "libs")
 RUNTIME_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime")
 RUNTIME_SITE_PACKAGES_DIR = os.path.join(RUNTIME_ROOT, "site-packages")
 
@@ -68,10 +66,6 @@ def _activate_vendor_paths() -> list[str]:
     candidate_dirs = [
         RUNTIME_SITE_PACKAGES_DIR,
         RUNTIME_ROOT,
-        os.path.join(VENDOR_DIR, "site-packages"),
-        VENDOR_DIR,
-        os.path.join(LIBS_DIR, "site-packages"),
-        LIBS_DIR,
     ]
 
     added: list[str] = []
@@ -83,6 +77,10 @@ def _activate_vendor_paths() -> list[str]:
     if added:
         _log("Activated dependency paths: " + ", ".join(added))
     return added
+
+
+def activate_runtime_paths() -> list[str]:
+    return _activate_vendor_paths()
 
 
 def _parse_version_tuple(version_text: str) -> tuple[int, ...]:
@@ -157,6 +155,17 @@ def check_dependencies() -> bool:
         return False
 
     installed = _get_installed_virtughan_version(virtughan)
+    mod_file = os.path.normpath(getattr(virtughan, "__file__", "") or "")
+    runtime_site = os.path.normpath(RUNTIME_SITE_PACKAGES_DIR)
+    if mod_file and not mod_file.startswith(runtime_site):
+        details = (
+            "VirtuGhan was loaded from a non-runtime path: "
+            f"{mod_file}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
     if installed and not _is_installed_version_sufficient(installed, VIRTUGHAN_VERSION):
         details = (
             f"VirtuGhan version too old ({installed}). Required: {VIRTUGHAN_VERSION}"
@@ -294,7 +303,6 @@ def _show_manual_install_dialog(parent):
             f"   - {log_path}\n"
             "4. Or pre-vendor dependencies into:\n"
             f"   - {os.path.join(RUNTIME_SITE_PACKAGES_DIR, PKG_NAME)}\n"
-            f"   - {os.path.join(LIBS_DIR, PKG_NAME)}\n"
         )
 
         text_edit = QTextEdit()
@@ -363,7 +371,7 @@ def clear_install_state():
 
 def _clear_runtime_site_packages() -> tuple[int, list[str]]:
     """Remove plugin-managed runtime packages from profile runtime directories."""
-    targets = [RUNTIME_SITE_PACKAGES_DIR, os.path.join(VENDOR_DIR, "site-packages")]
+    targets = [RUNTIME_SITE_PACKAGES_DIR]
     removed = 0
     failed: list[str] = []
 

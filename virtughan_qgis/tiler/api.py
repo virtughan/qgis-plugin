@@ -13,7 +13,12 @@ import matplotlib
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
+from ..bootstrap import RUNTIME_SITE_PACKAGES_DIR, activate_runtime_paths
+
 matplotlib.use("Agg")
+
+
+activate_runtime_paths()
 
 
 def _find_tileprocessor() -> Tuple[type, str]:
@@ -28,6 +33,14 @@ def _find_tileprocessor() -> Tuple[type, str]:
             "Cannot import 'virtughan' in this QGIS Python. "
             "Install it into the same interpreter QGIS uses. "
             f"Underlying error: {e}"
+        )
+
+    mod_file = os.path.normpath(getattr(virtughan, "__file__", "") or "")
+    runtime_site = os.path.normpath(RUNTIME_SITE_PACKAGES_DIR)
+    if mod_file and runtime_site and not mod_file.startswith(runtime_site):
+        raise ImportError(
+            "Imported 'virtughan' from non-runtime path: "
+            f"{mod_file}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
 
     import virtughan  
