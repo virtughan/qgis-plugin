@@ -114,19 +114,34 @@ def _get_installed_virtughan_version(module) -> str:
         return ""
 
 
-def _install_via_pip(packages: list[str]) -> bool:
+def _install_via_pip(packages: list[str], progress_callback=None) -> bool:
     target = RUNTIME_SITE_PACKAGES_DIR
     os.makedirs(target, exist_ok=True)
 
     try:
         from .pip_installer import install_dependencies
 
-        success = install_dependencies(target, packages)
-        if success:
+        success = install_dependencies(target, packages, progress_callback=progress_callback)
+
+        # Some Windows sessions can report pip failure after writing files due to
+        # locked native modules during target cleanup. Always verify runtime imports.
+        _activate_vendor_paths()
+        importlib.invalidate_caches()
+        deps_ok = check_dependencies()
+
+        if success and deps_ok:
             _log(f"Runtime installation successful: {', '.join(packages)}")
-        else:
-            _log("Runtime installation failed.", Qgis.Warning)
-        return success
+            return True
+
+        if not success and deps_ok:
+            _log(
+                "Runtime installation completed with pip warnings, but dependencies verified successfully.",
+                Qgis.Warning,
+            )
+            return True
+
+        _log("Runtime installation failed.", Qgis.Warning)
+        return False
     except Exception as exc:
         _log(f"Runtime install exception: {exc}", Qgis.Critical)
         return False
@@ -370,25 +385,18 @@ def clear_install_state():
 
 
 def _clear_runtime_site_packages() -> tuple[int, list[str]]:
-    """Remove plugin-managed runtime packages from profile runtime directories."""
-    targets = [RUNTIME_SITE_PACKAGES_DIR]
+    """Remove plugin-managed runtime dependencies from profile runtime root."""
+    if not os.path.isdir(RUNTIME_ROOT):
+        return 0, []
+
     removed = 0
     failed: list[str] = []
-
-    for target in targets:
-        if not os.path.isdir(target):
-            continue
-
-        for name in os.listdir(target):
-            path = os.path.join(target, name)
-            try:
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
-                removed += 1
-            except Exception as exc:
-                failed.append(f"{target}::{name}: {exc}")
+    try:
+        # Prefer removing whole runtime root so uninstalls are complete.
+        shutil.rmtree(RUNTIME_ROOT)
+        removed = 1
+    except Exception as exc:
+        failed.append(f"{RUNTIME_ROOT}: {exc}")
 
     return removed, failed
 
@@ -504,30 +512,28 @@ def interactive_install_dependencies(parent=None) -> bool:
             progress_callback("Starting package installation...\n")
         _log("Attempting interactive runtime dependency installation...", Qgis.Info)
 
-        target = RUNTIME_SITE_PACKAGES_DIR
-        os.makedirs(target, exist_ok=True)
-
         try:
-            from .pip_installer import install_dependencies as pip_install
+            success = _install_via_pip(DEFAULT_PACKAGES, progress_callback=progress_callback)
 
-            success = pip_install(target, DEFAULT_PACKAGES, progress_callback=progress_callback)
-
-            if success:
+            if progress_callback:
+                progress_callback("\nVerifying installation...\n")
+            _activate_vendor_paths()
+            importlib.invalidate_caches()
+            deps_ready = check_dependencies()
+            imports_ready, import_err = _check_plugin_import_health() if deps_ready else (False, None)
+            if deps_ready and imports_ready:
                 if progress_callback:
-                    progress_callback("\nVerifying installation...\n")
-                _activate_vendor_paths()
-                importlib.invalidate_caches()
-                deps_ready = check_dependencies()
-                imports_ready, import_err = _check_plugin_import_health() if deps_ready else (False, None)
-                if deps_ready and imports_ready:
-                    _log("Interactive runtime installation successful", Qgis.Info)
-                    mark_as_installed()
-                    return True
-                if import_err:
-                    _set_last_error(import_err)
-                    _log(import_err, Qgis.Warning)
-                    if progress_callback:
-                        progress_callback(f"{import_err}\n")
+                    progress_callback(
+                        "Dependencies were installed and verified successfully.\n"
+                    )
+                _log("Interactive runtime installation successful", Qgis.Info)
+                mark_as_installed()
+                return True
+            if import_err:
+                _set_last_error(import_err)
+                _log(import_err, Qgis.Warning)
+                if progress_callback:
+                    progress_callback(f"{import_err}\n")
 
             _log("Interactive runtime installation failed", Qgis.Warning)
             if not get_last_bootstrap_error():

@@ -1,6 +1,6 @@
 [project]
 name = "virtughan-satellite-data-tools"
-version = "1.0.8"
+version = "1.0.9"
 description = "QGIS plugin for satellite data workflows with STAC search, scene preview, image download, tile basemap creation, and spectral analysis. Currently supports Sentinel-2. It includes Compute, Download, and Tiles tools from VirtuGhan."
 readme = "README.md"
 requires-python = ">=3.10"

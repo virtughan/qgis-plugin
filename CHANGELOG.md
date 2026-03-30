@@ -1,3 +1,12 @@
+## v1.0.9 (2026-03-30)
+
+### Fix
+
+- **uninstall-ux**: adds uninstall-time dependency cleanup prompt with default keep option and clearer user guidance
+- **windows-cleanup-message**: replaces noisy lock warnings with a simple restart-QGIS message for file-in-use cleanup cases
+- **runtime-cleanup-policy**: enforces single-source runtime folder policy and attempts full `virtughan_runtime` removal on uninstall
+- **install-verification**: improves runtime install result handling by accepting verified dependencies even when pip reports Windows file-lock warnings
+
 ## v1.0.8 (2026-03-30)
 
 ### Fix

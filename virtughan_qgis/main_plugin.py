@@ -1,7 +1,7 @@
 # virtughan_qgis/main_plugin.py
 import os
 
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QCheckBox
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsApplication
@@ -16,6 +16,7 @@ try:
         get_last_bootstrap_error,
         interactive_install_dependencies,
         repair_runtime_dependencies,
+        uninstall_runtime_dependencies,
     )
 except Exception:
     def get_last_bootstrap_error():
@@ -25,6 +26,9 @@ except Exception:
         return False
 
     def repair_runtime_dependencies(*args, **kwargs):
+        return False
+
+    def uninstall_runtime_dependencies(*args, **kwargs):
         return False
 
 
@@ -45,6 +49,59 @@ class VirtuGhanPlugin:
         self._imports_ready = False
         self._last_import_error = None
         self._VirtughanHubDialog = None
+
+    def _prompt_runtime_cleanup_on_unload(self):
+        runtime_root = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime")
+        if not os.path.isdir(runtime_root):
+            return
+
+        msg = QMessageBox(self.iface.mainWindow())
+        msg.setWindowTitle("VirtuGhan")
+        msg.setIcon(QMessageBox.Question)
+        msg.setText("VirtuGhan is being uninstalled.")
+        msg.setInformativeText(
+            "If you plan to reinstall the plugin soon, keep runtime dependencies to avoid re-downloading.\n\n"
+            "If you will not use the plugin, you can delete runtime dependencies now."
+        )
+        checkbox = QCheckBox("Also delete runtime dependencies (virtughan_runtime)")
+        checkbox.setChecked(False)
+        msg.setCheckBox(checkbox)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
+
+        if checkbox.isChecked():
+            ok = uninstall_runtime_dependencies()
+            if ok:
+                QMessageBox.information(
+                    self.iface.mainWindow(),
+                    "VirtuGhan",
+                    "Runtime dependencies were removed.",
+                )
+                return
+
+            details = get_last_bootstrap_error() or "Could not fully remove runtime dependencies."
+            lower_details = details.lower()
+            is_lock_warning = (
+                "failed to remove some dependency files" in lower_details
+                or "winerror 5" in lower_details
+                or "access is denied" in lower_details
+            )
+
+            if is_lock_warning:
+                QMessageBox.information(
+                    self.iface.mainWindow(),
+                    "VirtuGhan",
+                    "Some dependency files are still in use.\n\n"
+                    "Please restart QGIS to complete dependency cleanup.",
+                )
+            else:
+                QMessageBox.warning(
+                    self.iface.mainWindow(),
+                    "VirtuGhan",
+                    "Runtime dependency cleanup failed.\n\n"
+                    "Please check details below:\n\n"
+                    f"{details}",
+                )
 
     def _ensure_deps_and_imports(self):
         if self._imports_ready:
@@ -115,6 +172,11 @@ class VirtuGhanPlugin:
             )
 
     def unload(self):
+        try:
+            self._prompt_runtime_cleanup_on_unload()
+        except Exception:
+            pass
+
         try:
             if self._hub_dialog:
                 self._hub_dialog.close()
