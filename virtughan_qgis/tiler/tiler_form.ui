@@ -578,7 +578,7 @@
             <widget class="QSpinBox" name="workersSpin">
             <property name="minimum"><number>1</number></property>
             <property name="maximum"><number>64</number></property>
-            <property name="value"><number>1</number></property>
+            <property name="value"><number>4</number></property>
             </widget>
         </item>
 

@@ -39,7 +39,7 @@ FORM_CLASS, _ = uic.loadUiType(os.path.join(os.path.dirname(__file__), "tiler_fo
 class _InProcessServerManager:
     """
     Run uvicorn INSIDE this QGIS process on a background thread (Windows-safe).
-    Workers are forced to 1. If you need multi-workers, run uvicorn externally.
+    The workers value is used as request concurrency inside the app, not uvicorn multiprocess workers.
     """
     def __init__(self):
         self._server = None
@@ -47,17 +47,27 @@ class _InProcessServerManager:
         self._running = False
         self._bound_host = None
         self._bound_port = None
+        self._effective_workers = 1
 
     def is_running(self) -> bool:
         return bool(self._running and self._server and not getattr(self._server, "should_exit", False))
 
-    def start(self, app_path: str, host: str = "127.0.0.1", port: int = 8002, workers: int = 1):
+    def start(self, app_path: str, host: str = "127.0.0.1", port: int = 8002, workers: int = 4):
         """
         Start in-process uvicorn for the explicit app_path only.
         Supports 'module:function' or 'file.py:function'. No auto-discovery.
         """
         if self.is_running():
             return
+
+        effective_workers = max(1, int(workers or 1))
+        self._effective_workers = effective_workers
+
+        # Pass desired request concurrency to tiler API on import/reload.
+        try:
+            os.environ["VIRTUGHAN_TILER_CONCURRENCY"] = str(effective_workers)
+        except Exception:
+            os.environ["VIRTUGHAN_TILER_CONCURRENCY"] = "4"
 
         from fastapi import FastAPI
         import uvicorn
@@ -279,6 +289,10 @@ class TilerWidget(QWidget, FORM_CLASS):
                 return qd
         return fallback
 
+    def _recommended_default_workers(self) -> int:
+        cpu_count = os.cpu_count() or 1
+        return 2 if cpu_count <= 2 else 4
+
     def _init_defaults(self):
         d = self._load_common_defaults()
 
@@ -323,9 +337,8 @@ class TilerWidget(QWidget, FORM_CLASS):
         if self.portSpin.value() == 0:
             self.portSpin.setRange(1, 65535)
             self.portSpin.setValue(8002)
-        if self.workersSpin.value() == 0:
-            self.workersSpin.setRange(1, 64)
-            self.workersSpin.setValue(1)
+        self.workersSpin.setRange(1, 64)
+        self.workersSpin.setValue(self._recommended_default_workers())
 
     def _wire_signals(self):
         self.addLayerBtn.clicked.connect(self._on_add_layer)
@@ -472,7 +485,10 @@ class TilerWidget(QWidget, FORM_CLASS):
             "Tiles (Tiler) creates and adds map tiles for quick visual exploration as a basemap in QGIS.\n\n"
             "Main fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n"
             "Band 2 is optional.\n\n"
-            "Use Time series (aggregate) + Aggregation for temporal summaries, and Advanced Options for local server controls.",
+            "Use Time series (aggregate) + Aggregation for temporal summaries, and Advanced Options for local server controls.\n\n"
+            "Workers tip: In Tiler, Workers controls request concurrency. Increasing Workers can speed up tile responses on capable machines. "
+            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
+            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
         )
 
     def _remove_tiler_layers(self):
@@ -504,6 +520,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._remove_tiler_layers()
         # re-init defaults and UI
         self._init_defaults()
+        self.workersSpin.setValue(self._recommended_default_workers())
         self.simpleModeRadio.setChecked(True)
         self._init_index_controls()
         self._apply_timeseries_visibility()
@@ -536,14 +553,21 @@ class TilerWidget(QWidget, FORM_CLASS):
             app_path = self.appPathLine.text().strip()
             host = self.hostLine.text().strip() or "127.0.0.1"
             requested_port = int(self.portSpin.value() or 8002)
+            workers = max(1, int(self.workersSpin.value() or 1))
 
             if not self.server.is_running():
-                self.server.start(app_path=app_path, host=host, port=requested_port, workers=1)
+                self.server.start(app_path=app_path, host=host, port=requested_port, workers=workers)
+                effective_workers = getattr(self.server, "_effective_workers", workers)
+                if int(self.workersSpin.value()) != int(effective_workers):
+                    self.workersSpin.setValue(int(effective_workers))
                 bound_port = getattr(self.server, "_bound_port", requested_port)
                 if bound_port != requested_port:
                     self.portSpin.setValue(bound_port)
                 self.backendUrlLine.setText(f"http://{host}:{bound_port}")
-                self._log(f"Local uvicorn (in-process) listening at http://{host}:{bound_port}")
+                self._log(
+                    f"Local uvicorn (in-process) listening at http://{host}:{bound_port} "
+                    f"(request concurrency={effective_workers})"
+                )
                 self._apply_localserver_visibility()
             else:
                 self._log("Local server already running.")

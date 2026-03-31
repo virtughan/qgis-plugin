@@ -149,7 +149,7 @@ class VirtughanHubDialog(QDialog):
     <li><b>Aggregation</b>: aggregate multiple scenes with mean/median/min/max/etc.</li>
     <li><b>Generate timeseries</b>: export intermediate frames and GIF animation. The GIF file can be found in the project folder after the computation is complete.</li>
     <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
-    <li><b>Workers</b>: parallel processing count.</li>
+    <li><b>Workers</b>: parallel processing count. Increase for faster runs on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
     <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
     <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
@@ -174,7 +174,7 @@ class VirtughanHubDialog(QDialog):
 <h4>Options and output</h4>
 <ul>
     <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
-    <li><b>Workers</b>: parallel download/processing count.</li>
+    <li><b>Workers</b>: parallel download/processing count. Increase for faster runs on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
     <li><b>Output folder</b>: destination directory for downloaded rasters.</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
     <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
@@ -208,7 +208,7 @@ class VirtughanHubDialog(QDialog):
     <li><b>Advanced Options</b>: expands/collapses Local Server settings.</li>
     <li><b>Run locally</b>: use embedded local server and auto-fill Backend URL from Host/Port.</li>
     <li><b>App Path (module:function)</b>: FastAPI app entrypoint.</li>
-    <li><b>Host</b>, <b>Port</b>, <b>Workers</b>: local server binding/runtime options.</li>
+    <li><b>Host</b>, <b>Port</b>, <b>Workers</b>: local server binding/runtime options. In Tiler, Workers controls request concurrency. Increase for faster tile responses on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
     <li><b>Start server</b>, <b>Stop server</b>: control embedded local backend server.</li>
 </ul>
 <p><i>* Required fields</i></p>

@@ -491,8 +491,8 @@ class ExtractorDockWidget(QDockWidget):
 
         self._init_common_widget()
         self.progressBar.setVisible(False)
-        if self.workersSpin.value() < 1:
-            self.workersSpin.setValue(1)
+        self.workersSpin.setMinimum(1)
+        self.workersSpin.setValue(self._recommended_default_workers())
 
         # AOI: mode-first flow with hidden actions until a mode is chosen
         self.aoiModeCombo.clear()
@@ -826,7 +826,10 @@ class ExtractorDockWidget(QDockWidget):
             "VirtuGhan Download Help",
             "Download (Extractor) downloads satellite image bands to local raster files.\n\n"
             "Main fields: Start date, End date, Max cloud (%), Bands to download, and AOI.\n\n"
-            "You can also use smart filter, workers, output folder, and scene preview options before downloading.",
+            "You can also use smart filter, workers, output folder, and scene preview options before downloading.\n\n"
+            "Workers tip: Increasing Workers can speed up downloads on capable machines. "
+            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
+            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
         )
 
     def _browse_output(self):
@@ -847,6 +850,14 @@ class ExtractorDockWidget(QDockWidget):
                 self.commonWidget.reset()
             except Exception:
                 pass
+        self.workersSpin.setValue(self._recommended_default_workers())
+
+    def _recommended_default_workers(self) -> int:
+        cpu_count = os.cpu_count() or 1
+        return 2 if cpu_count <= 2 else 4
+
+    def _effective_workers(self) -> int:
+        return max(1, int(self.workersSpin.value()))
 
     def _collect_params(self):
         if ExtractorBackend is None:
@@ -881,7 +892,7 @@ class ExtractorDockWidget(QDockWidget):
         zip_out = False
         smart = self.smartFilterCheck.isChecked()
 
-        workers = max(1, int(self.workersSpin.value()))
+        workers = self._effective_workers()
         out_base = (
             self.outputPathEdit.text() or ""
         ).strip() or QgsProcessingUtils.tempFolder()

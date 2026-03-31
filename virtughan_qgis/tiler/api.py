@@ -192,10 +192,27 @@ def _safe_apply_colormap(result, colormap_str):
 
 TileProcessor.apply_colormap = staticmethod(_safe_apply_colormap)
 
+
+def _default_tiler_concurrency() -> int:
+    # Use one consistent default across platforms.
+    return 4
+
+
+def _resolve_tiler_concurrency() -> int:
+    raw = os.getenv("VIRTUGHAN_TILER_CONCURRENCY", "").strip()
+    if raw:
+        try:
+            return max(1, int(raw))
+        except Exception:
+            pass
+    return _default_tiler_concurrency()
+
+
 app = FastAPI(title="virtughan tiler (QGIS local)")
 processor = TileProcessor(cache_time=60)  
 logger = logging.getLogger(__name__)
-_TILE_REQUEST_SEMAPHORE = asyncio.Semaphore(4)
+_TILER_CONCURRENCY = _resolve_tiler_concurrency()
+_TILE_REQUEST_SEMAPHORE = asyncio.Semaphore(_TILER_CONCURRENCY)
 _LAST_TILE_ERROR: dict = {}
 
 
@@ -234,6 +251,7 @@ async def diag_imports():
     return {
         "runtime_site_packages": RUNTIME_SITE_PACKAGES_DIR,
         "runtime_fallback_site_packages": RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+        "request_concurrency": _TILER_CONCURRENCY,
         "modules": {
             "virtughan": _module_info("virtughan"),
             "rio_tiler": _module_info("rio_tiler"),

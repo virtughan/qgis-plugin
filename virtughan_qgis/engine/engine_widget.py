@@ -703,8 +703,7 @@ class EngineDockWidget(QDockWidget):
 
         self.progressBar.setVisible(False)
         self.workersSpin.setMinimum(1)
-        if self.workersSpin.value() < 1:
-            self.workersSpin.setValue(1)
+        self.workersSpin.setValue(self._recommended_default_workers())
 
         self._aoi_bbox = None
         # Blue colors for Engine AOI
@@ -1123,7 +1122,10 @@ class EngineDockWidget(QDockWidget):
             "Compute creates analysis rasters from Sentinel-2 imagery.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
             "Band 2 is optional.\n\n"
-            "You can also use Aggregation, Generate timeseries, smart filter, workers, and scene preview options before running.",
+            "You can also use Aggregation, Generate timeseries, smart filter, workers, output, and scene preview options before running.\n\n"
+            "Workers tip: Increasing Workers can speed up processing on capable machines. "
+            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
+            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
         )
 
     def _browse_output(self):
@@ -1165,8 +1167,7 @@ class EngineDockWidget(QDockWidget):
         self.timeseriesCheck.setChecked(False)
         self.smartFilterCheck.setChecked(False)
         self.workersSpin.setMinimum(1)
-        if self.workersSpin.value() < 1:
-            self.workersSpin.setValue(1)
+        self.workersSpin.setValue(self._recommended_default_workers())
         self.outputPathEdit.clear()
         self.logText.clear()
 
@@ -1178,6 +1179,13 @@ class EngineDockWidget(QDockWidget):
 
   
     # Collect params / run task
+    def _recommended_default_workers(self) -> int:
+        cpu_count = os.cpu_count() or 1
+        return 2 if cpu_count <= 2 else 4
+
+    def _effective_workers(self) -> int:
+        return max(1, int(self.workersSpin.value()))
+
     def _collect_params(self):
         if VirtughanProcessor is None:
             raise RuntimeError(f"VirtughanProcessor import failed: {VIRTUGHAN_IMPORT_ERROR}")
@@ -1210,7 +1218,7 @@ class EngineDockWidget(QDockWidget):
         if (not self.timeseriesCheck.isChecked()) and (operation is None):
             raise RuntimeError("Operation is required when 'Generate timeseries' is disabled.")
 
-        workers = max(1, int(self.workersSpin.value()))
+        workers = self._effective_workers()
         out_base = (self.outputPathEdit.text() or "").strip() or QgsProcessingUtils.tempFolder()
         out_dir = os.path.join(out_base, f"virtughan_compute_{uuid.uuid4().hex[:8]}")
 
