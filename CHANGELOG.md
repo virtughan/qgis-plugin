@@ -1,11 +1,13 @@
+
 ## v1.0.9 (2026-03-30)
 
 ### Fix
 
-- **uninstall-ux**: adds uninstall-time dependency cleanup prompt with default keep option and clearer user guidance
-- **windows-cleanup-message**: replaces noisy lock warnings with a simple restart-QGIS message for file-in-use cleanup cases
-- **runtime-cleanup-policy**: enforces single-source runtime folder policy and attempts full `virtughan_runtime` removal on uninstall
-- **install-verification**: improves runtime install result handling by accepting verified dependencies even when pip reports Windows file-lock warnings
+- **uninstall-ux**: keeps dependency cleanup as an explicit user action from the Dependencies tab and avoids close-time/unload dialogs
+- **plugin-manager-uninstall**: adds optional auto-cleanup linkage for uninstall from QGIS Plugin Manager with persisted checkbox preference
+- **windows-cleanup-retry**: adds deferred runtime cleanup retry marker to complete folder deletion after restart when files are locked
+- **runtime-version-pinning**: pins runtime install set to `virtughan==1.0.2`, `rasterio==1.4.3`, and `numpy==1.26.4` for deterministic cross-device installs
+- **metadata-pin-alignment**: aligns project dependency metadata to `virtughan==1.0.2`
 
 ## v1.0.8 (2026-03-30)
 

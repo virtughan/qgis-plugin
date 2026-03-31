@@ -2085,7 +2085,7 @@ wheels = [
 
 [[package]]
 name = "virtughan-satellite-data-tools"
-version = "1.0.8"
+version = "1.0.9"
 source = { virtual = "." }
 dependencies = [
     { name = "virtughan" },
@@ -2101,7 +2101,7 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "virtughan", specifier = ">=1.0.2" }]
+requires-dist = [{ name = "virtughan", specifier = "==1.0.2" }]
 
 [package.metadata.requires-dev]
 dev = [{ name = "commitizen", specifier = ">=4.8.3" }]
