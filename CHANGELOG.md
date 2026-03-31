@@ -1,4 +1,11 @@
 
+## v1.0.10 (2026-03-31)
+
+### Fix
+
+- **tiler-stability**: stabilizes Tiler runtime flow and local server request concurrency behavior for reliable tile loading
+- **worker-defaults**: sets safer device-aware worker defaults in UI (2 on low-core devices, otherwise 4) while still allowing manual user override
+
 ## v1.0.9 (2026-03-30)
 
 ### Fix
