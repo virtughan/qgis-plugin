@@ -1,6 +1,7 @@
 # virtughan_qgis/tiler/tiler_widget.py
 import os
 import sys
+import socket
 import threading
 import importlib
 import logging
@@ -89,7 +90,10 @@ class _InProcessServerManager:
                 module_name = mod_raw
 
             try:
-                m = importlib.import_module(module_name)
+                if module_name in sys.modules:
+                    m = importlib.reload(sys.modules[module_name])
+                else:
+                    m = importlib.import_module(module_name)
                 app = getattr(m, fn)
                 if isinstance(app, FastAPI):
                     return app, f"{module_name}:{fn}"
@@ -126,31 +130,46 @@ class _InProcessServerManager:
             )
             return uvicorn.Server(cfg)
 
+        def _can_bind(bind_host: str, bind_port: int) -> bool:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((bind_host, int(bind_port)))
+                return True
+            except OSError:
+                return False
+            finally:
+                sock.close()
+
         last_err = None
+        chosen_port = None
         for attempt in range(21):
             try_port = int(port) + attempt
-            try:
-                self._server = _make_server(try_port)
+            if _can_bind(host, try_port):
+                chosen_port = try_port
+                break
 
-                def _run():
-                    self._running = True
-                    try:
-                        _log(f"In-process uvicorn: using {chosen} on http://{host}:{try_port}")
-                        self._server.run()
-                    finally:
-                        self._running = False
+        if chosen_port is None:
+            raise RuntimeError(f"Failed to find a free local port starting at {host}:{port}")
 
-                self._thread = threading.Thread(target=_run, daemon=True)
-                self._thread.start()
-                self._bound_host = host
-                self._bound_port = try_port
-                return
-            except OSError as oe:
-                last_err = oe
-                continue
-            except Exception as e:
-                last_err = e
-                continue
+        try:
+            self._server = _make_server(chosen_port)
+
+            def _run():
+                self._running = True
+                try:
+                    _log(f"In-process uvicorn: using {chosen} on http://{host}:{chosen_port}")
+                    self._server.run()
+                finally:
+                    self._running = False
+
+            self._thread = threading.Thread(target=_run, daemon=True)
+            self._thread.start()
+            self._bound_host = host
+            self._bound_port = chosen_port
+            return
+        except Exception as e:
+            last_err = e
 
         raise RuntimeError(f"Failed to start local server on {host}:{port}. Last error: {last_err}")
 
