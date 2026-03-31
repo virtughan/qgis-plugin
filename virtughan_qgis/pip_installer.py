@@ -9,6 +9,37 @@ from pathlib import Path
 from typing import Callable
 
 
+_LAST_INSTALL_ERROR: str | None = None
+
+
+def _set_last_install_error(message: str | None):
+    global _LAST_INSTALL_ERROR
+    _LAST_INSTALL_ERROR = (message or "").strip() or None
+
+
+def get_last_install_error() -> str | None:
+    return _LAST_INSTALL_ERROR
+
+
+def _detect_lock_related_error(lines: list[str]) -> str | None:
+    combined = "\n".join(lines)
+    if not combined:
+        return None
+
+    lock_markers = [
+        "WinError 5",
+        "Access is denied",
+        "PermissionError",
+        "being used by another process",
+    ]
+    if any(marker in combined for marker in lock_markers):
+        return (
+            "Dependency files appear to be locked by the current QGIS session. "
+            "Please restart QGIS, then retry installation."
+        )
+    return None
+
+
 def _bundled_pip_root() -> Path | None:
     """Return bundled pip root (vendor/pip) if present."""
     plugin_root = Path(__file__).resolve().parent
@@ -116,6 +147,8 @@ def _run_pip_inprocess(
     progress_callback: Callable[[str], None] | None,
 ) -> bool:
     """Run pip inside the current Python process (preferred in QGIS)."""
+    _set_last_install_error(None)
+
     added_path = False
     if pip_root and str(pip_root) not in sys.path:
         sys.path.insert(0, str(pip_root))
@@ -148,7 +181,14 @@ def _run_pip_inprocess(
     if progress_callback:
         progress_callback("Using in-process pip execution")
 
-    stream = _CallbackStream(progress_callback)
+    captured_lines: list[str] = []
+
+    def _emit(line: str):
+        captured_lines.append(line)
+        if progress_callback:
+            progress_callback(line)
+
+    stream = _CallbackStream(_emit)
     original_executable = sys.executable
     embedded_python = _resolve_embedded_python_executable()
     try:
@@ -159,10 +199,15 @@ def _run_pip_inprocess(
         with redirect_stdout(stream), redirect_stderr(stream):
             result_code = pip_main(pip_args)
         stream.flush()
+        if result_code != 0 and not get_last_install_error():
+            _set_last_install_error(_detect_lock_related_error(captured_lines))
         return result_code == 0
     except Exception as exc:
         if progress_callback:
             progress_callback(f"In-process pip error: {exc}")
+        if not get_last_install_error():
+            detected = _detect_lock_related_error(captured_lines)
+            _set_last_install_error(detected or f"In-process pip error: {exc}")
         return False
     finally:
         sys.executable = original_executable

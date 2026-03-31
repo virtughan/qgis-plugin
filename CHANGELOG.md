@@ -6,8 +6,11 @@
 - **uninstall-ux**: keeps dependency cleanup as an explicit user action from the Dependencies tab and avoids close-time/unload dialogs
 - **plugin-manager-uninstall**: adds optional auto-cleanup linkage for uninstall from QGIS Plugin Manager with persisted checkbox preference
 - **windows-cleanup-retry**: adds deferred runtime cleanup retry marker to complete folder deletion after restart when files are locked
-- **runtime-version-pinning**: pins runtime install set to `virtughan==1.0.2`, `rasterio==1.4.3`, and `numpy==1.26.4` for deterministic cross-device installs
+- **runtime-version-pinning**: pins runtime install set to `virtughan==1.0.2`, `rasterio==1.4.3`, and Python-specific numpy pins (`2.2.6` for `<3.11`, `2.3.2` for `>=3.11`) for deterministic installs
 - **metadata-pin-alignment**: aligns project dependency metadata to `virtughan==1.0.2`
+- **runtime-preflight-cleanup**: checks and cleans runtime install folders before reinstall, skips blocked targets, and fails early when all targets are locked
+- **lock-aware-restart-guidance**: detects Windows file-lock install failures (`WinError 5` / access denied) and surfaces explicit restart-QGIS guidance in installer logs and final error message
+- **installer-error-surface**: shows the detailed bootstrap failure reason in the installer dialog instead of a generic failure line
 
 ## v1.0.8 (2026-03-30)
 

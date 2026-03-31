@@ -9,7 +9,13 @@ from importlib import metadata as importlib_metadata
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.PyQt.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout, QMessageBox
 
-from .dependency_versions import VIRTUGHAN_VERSION, runtime_package_specs
+from .dependency_versions import (
+    VIRTUGHAN_VERSION,
+    RASTERIO_VERSION,
+    NUMPY_VERSION_PY_LT_311,
+    NUMPY_VERSION_PY_GTE_311,
+    runtime_package_specs,
+)
 
 PKG_NAME = "virtughan"
 DEFAULT_PACKAGES = runtime_package_specs()
@@ -18,6 +24,13 @@ _LAST_BOOTSTRAP_ERROR = None
 PLUGIN_DIR = os.path.dirname(__file__)
 RUNTIME_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime")
 RUNTIME_SITE_PACKAGES_DIR = os.path.join(RUNTIME_ROOT, "site-packages")
+RUNTIME_FALLBACK_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime_fallback")
+RUNTIME_FALLBACK_SITE_PACKAGES_DIR = os.path.join(RUNTIME_FALLBACK_ROOT, "site-packages")
+
+
+def _runtime_site_packages_candidates() -> list[str]:
+    # Primary runtime first; fallback is used only if primary fails/locks.
+    return [RUNTIME_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_SITE_PACKAGES_DIR]
 
 
 def get_bootstrap_log_path() -> str:
@@ -62,11 +75,21 @@ def get_last_bootstrap_error() -> str | None:
     return _LAST_BOOTSTRAP_ERROR
 
 
-def _activate_vendor_paths() -> list[str]:
-    candidate_dirs = [
+def _activate_vendor_paths(preferred_site_packages: str | None = None) -> list[str]:
+    default_candidates = [
         RUNTIME_SITE_PACKAGES_DIR,
         RUNTIME_ROOT,
+        RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+        RUNTIME_FALLBACK_ROOT,
     ]
+
+    candidate_dirs: list[str] = []
+    if preferred_site_packages:
+        preferred_root = os.path.dirname(preferred_site_packages)
+        candidate_dirs.extend([preferred_site_packages, preferred_root])
+    for path in default_candidates:
+        if path not in candidate_dirs:
+            candidate_dirs.append(path)
 
     added: list[str] = []
     for path in candidate_dirs:
@@ -114,49 +137,201 @@ def _get_installed_virtughan_version(module) -> str:
         return ""
 
 
-def _install_via_pip(packages: list[str], progress_callback=None) -> bool:
-    target = RUNTIME_SITE_PACKAGES_DIR
-    os.makedirs(target, exist_ok=True)
+def _get_installed_distribution_version(dist_name: str, module=None) -> str:
+    version = (getattr(module, "__version__", "") or "").strip() if module else ""
+    if version:
+        return version
 
     try:
-        from .pip_installer import install_dependencies
+        return (importlib_metadata.version(dist_name) or "").strip()
+    except Exception:
+        return ""
 
-        success = install_dependencies(target, packages, progress_callback=progress_callback)
 
-        # Some Windows sessions can report pip failure after writing files due to
-        # locked native modules during target cleanup. Always verify runtime imports.
-        _activate_vendor_paths()
-        importlib.invalidate_caches()
-        deps_ok = check_dependencies()
+def _is_installed_version_exact(installed: str, required: str) -> bool:
+    if not installed or not required:
+        return False
+    return _parse_version_tuple(installed) == _parse_version_tuple(required)
 
-        if success and deps_ok:
-            _log(f"Runtime installation successful: {', '.join(packages)}")
-            return True
 
-        if not success and deps_ok:
-            _log(
-                "Runtime installation completed with pip warnings, but dependencies verified successfully.",
-                Qgis.Warning,
+def _is_module_loaded_from_runtime(module) -> bool:
+    mod_file = os.path.normpath(getattr(module, "__file__", "") or "")
+    if not mod_file:
+        return False
+    runtime_sites = [
+        os.path.normpath(path) for path in _runtime_site_packages_candidates()
+    ]
+    return any(mod_file.startswith(runtime_site) for runtime_site in runtime_sites)
+
+
+def _is_runtime_lock_failure(message: str) -> bool:
+    text = (message or "").lower()
+    markers = [
+        "winerror 5",
+        "access is denied",
+        "permissionerror",
+        "being used by another process",
+        "still exists after delete attempt",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _clear_runtime_module_cache():
+    for mod_name in list(sys.modules.keys()):
+        if (
+            mod_name.startswith("virtughan")
+            or mod_name.startswith("rasterio")
+            or mod_name.startswith("numpy")
+        ):
+            try:
+                del sys.modules[mod_name]
+            except Exception:
+                pass
+
+
+def _preflight_runtime_reinstall(progress_callback=None) -> tuple[bool, list[str]]:
+    """Prepare clean install targets before pip install starts.
+
+    Returns:
+        (True, targets) when at least one runtime target can be used.
+        (False, []) when all targets are blocked (typically by file locks).
+    """
+    removed, failed = _clear_runtime_site_packages()
+    clear_install_state()
+    importlib.invalidate_caches()
+    _clear_runtime_module_cache()
+
+    runtime_pairs = [
+        (RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR),
+        (RUNTIME_FALLBACK_ROOT, RUNTIME_FALLBACK_SITE_PACKAGES_DIR),
+    ]
+
+    blocked_roots: set[str] = set()
+    for item in failed:
+        for root, _site in runtime_pairs:
+            if item.startswith(f"{root}:"):
+                blocked_roots.add(root)
+
+    targets: list[str] = []
+    for root, site in runtime_pairs:
+        if root in blocked_roots:
+            continue
+        targets.append(site)
+
+    if failed:
+        details = "Failed to remove some dependency files:\n" + "\n".join(failed[:20])
+        _log(details, Qgis.Warning)
+        if progress_callback:
+            progress_callback(f"Cleanup warnings: {details}")
+
+    if not targets:
+        lock_detected = any(_is_runtime_lock_failure(item) for item in failed)
+        if lock_detected:
+            msg = (
+                "Runtime folders are locked by this QGIS session and could not be cleaned. "
+                "Please restart QGIS and try installation again."
             )
-            return True
+        else:
+            msg = (
+                "Could not prepare any runtime install folder. "
+                "Please restart QGIS and try again."
+            )
+        _set_last_error(msg)
+        _log(msg, Qgis.Warning)
+        if progress_callback:
+            progress_callback(msg)
+        return False, []
 
-        _log("Runtime installation failed.", Qgis.Warning)
+    _log(
+        f"Runtime preflight ready: removed={removed}, targets={', '.join(targets)}",
+        Qgis.Info,
+    )
+    return True, targets
+
+
+def _install_via_pip(packages: list[str], progress_callback=None, targets: list[str] | None = None) -> bool:
+    try:
+        from .pip_installer import get_last_install_error, install_dependencies
+
+        install_targets = targets or _runtime_site_packages_candidates()
+        saw_lock_issue = False
+        for idx, target in enumerate(install_targets):
+            os.makedirs(target, exist_ok=True)
+            if progress_callback:
+                progress_callback(f"Installing runtime packages into: {target}")
+
+            success = install_dependencies(target, packages, progress_callback=progress_callback)
+
+            # Some Windows sessions can report pip failure after writing files due to
+            # locked native modules during target cleanup. Always verify runtime imports.
+            _activate_vendor_paths(preferred_site_packages=target)
+            importlib.invalidate_caches()
+            deps_ok = check_dependencies(preferred_site_packages=target)
+
+            if success and deps_ok:
+                _log(f"Runtime installation successful: {', '.join(packages)}")
+                return True
+
+            if not success and deps_ok:
+                _log(
+                    "Runtime installation completed with pip warnings, but dependencies verified successfully.",
+                    Qgis.Warning,
+                )
+                return True
+
+            pip_err = get_last_install_error() or ""
+            if "locked by the current QGIS session" in pip_err:
+                saw_lock_issue = True
+                _log(pip_err, Qgis.Warning)
+                if progress_callback:
+                    progress_callback(pip_err)
+
+            if idx < len(install_targets) - 1:
+                msg = (
+                    f"Runtime installation did not verify cleanly in {target}; "
+                    "retrying in fallback runtime folder."
+                )
+                _log(msg, Qgis.Warning)
+                if progress_callback:
+                    progress_callback(msg)
+
+        if saw_lock_issue:
+            restart_msg = (
+                "Runtime installation failed because dependency files are locked by this QGIS session. "
+                "Please restart QGIS and try installation again."
+            )
+        else:
+            restart_msg = (
+                "Runtime installation failed in both primary and fallback folders. "
+                "Please restart QGIS and try installation again."
+            )
+        _set_last_error(restart_msg)
+        _log(restart_msg, Qgis.Warning)
+        if progress_callback:
+            progress_callback(restart_msg)
         return False
     except Exception as exc:
         _log(f"Runtime install exception: {exc}", Qgis.Critical)
         return False
 
 
-def check_dependencies() -> bool:
+def check_dependencies(preferred_site_packages: str | None = None) -> bool:
     # Ensure we validate the currently installed files, not a stale in-memory module.
     for mod_name in list(sys.modules.keys()):
-        if mod_name == "virtughan" or mod_name.startswith("virtughan."):
+        if (
+            mod_name == "virtughan"
+            or mod_name.startswith("virtughan.")
+            or mod_name == "rasterio"
+            or mod_name.startswith("rasterio.")
+            or mod_name == "numpy"
+            or mod_name.startswith("numpy.")
+        ):
             try:
                 del sys.modules[mod_name]
             except Exception:
                 pass
 
-    _activate_vendor_paths()
+    _activate_vendor_paths(preferred_site_packages)
     importlib.invalidate_caches()
     try:
         import virtughan
@@ -170,12 +345,10 @@ def check_dependencies() -> bool:
         return False
 
     installed = _get_installed_virtughan_version(virtughan)
-    mod_file = os.path.normpath(getattr(virtughan, "__file__", "") or "")
-    runtime_site = os.path.normpath(RUNTIME_SITE_PACKAGES_DIR)
-    if mod_file and not mod_file.startswith(runtime_site):
+    if not _is_module_loaded_from_runtime(virtughan):
         details = (
             "VirtuGhan was loaded from a non-runtime path: "
-            f"{mod_file}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+            f"{getattr(virtughan, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
         _log(details, Qgis.Warning)
@@ -189,8 +362,74 @@ def check_dependencies() -> bool:
         _log(details, Qgis.Warning)
         return False
 
+    if not _is_installed_version_exact(installed, VIRTUGHAN_VERSION):
+        details = f"VirtuGhan version mismatch ({installed}). Expected: {VIRTUGHAN_VERSION}"
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    try:
+        import rasterio
+        import rasterio.control  # noqa: F401
+    except Exception as exc:
+        details = f"rasterio import failed: {exc}"
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    if not _is_module_loaded_from_runtime(rasterio):
+        details = (
+            "rasterio was loaded from a non-runtime path: "
+            f"{getattr(rasterio, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    rasterio_version = _get_installed_distribution_version("rasterio", rasterio)
+    if not _is_installed_version_exact(rasterio_version, RASTERIO_VERSION):
+        details = f"rasterio version mismatch ({rasterio_version}). Expected: {RASTERIO_VERSION}"
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    try:
+        import numpy
+    except Exception as exc:
+        details = f"numpy import failed: {exc}"
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    if not _is_module_loaded_from_runtime(numpy):
+        details = (
+            "numpy was loaded from a non-runtime path: "
+            f"{getattr(numpy, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    numpy_version = _get_installed_distribution_version("numpy", numpy)
+    expected_numpy_version = (
+        NUMPY_VERSION_PY_GTE_311
+        if sys.version_info >= (3, 11)
+        else NUMPY_VERSION_PY_LT_311
+    )
+    if not _is_installed_version_exact(numpy_version, expected_numpy_version):
+        details = (
+            f"numpy version mismatch ({numpy_version}). "
+            f"Expected: {expected_numpy_version}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
     _set_last_error(None)
-    _log(f"VirtuGhan package found (version {installed or 'unknown'})")
+    _log(
+        "Runtime dependencies verified: "
+        f"virtughan={installed}, rasterio={rasterio_version}, numpy={numpy_version}"
+    )
     return True
 
 
@@ -284,9 +523,16 @@ def install_dependencies(parent=None, quiet=False) -> bool:
     if check_dependencies():
         return True
 
+    # If deps are unhealthy, prepare clean runtime targets before reinstall.
+    preflight_ok, install_targets = _preflight_runtime_reinstall()
+    if not preflight_ok:
+        if not quiet and parent:
+            _show_manual_install_dialog(parent)
+        return False
+
     _log("Attempting runtime dependency installation...", Qgis.Info)
 
-    if _install_via_pip(DEFAULT_PACKAGES) and check_dependencies():
+    if _install_via_pip(DEFAULT_PACKAGES, targets=install_targets) and check_dependencies():
         return True
 
     _set_last_error(
@@ -386,17 +632,31 @@ def clear_install_state():
 
 def _clear_runtime_site_packages() -> tuple[int, list[str]]:
     """Remove plugin-managed runtime dependencies from profile runtime root."""
-    if not os.path.isdir(RUNTIME_ROOT):
+    runtime_roots = [RUNTIME_ROOT, RUNTIME_FALLBACK_ROOT]
+    if not any(os.path.isdir(root) for root in runtime_roots):
         return 0, []
+
+    def _on_rm_error(func, path, _exc_info):
+        try:
+            os.chmod(path, 0o700)
+            func(path)
+        except Exception:
+            pass
 
     removed = 0
     failed: list[str] = []
-    try:
-        # Prefer removing whole runtime root so uninstalls are complete.
-        shutil.rmtree(RUNTIME_ROOT)
-        removed = 1
-    except Exception as exc:
-        failed.append(f"{RUNTIME_ROOT}: {exc}")
+    for root in runtime_roots:
+        if not os.path.isdir(root):
+            continue
+        try:
+            # Prefer removing whole runtime root so uninstalls are complete.
+            shutil.rmtree(root, onerror=_on_rm_error)
+            if os.path.isdir(root):
+                failed.append(f"{root}: runtime folder still exists after delete attempt")
+            else:
+                removed += 1
+        except Exception as exc:
+            failed.append(f"{root}: {exc}")
 
     return removed, failed
 
@@ -509,11 +769,23 @@ def interactive_install_dependencies(parent=None) -> bool:
             return False
 
         if progress_callback:
+            progress_callback("Preparing runtime folders before reinstall...\n")
+        preflight_ok, install_targets = _preflight_runtime_reinstall(
+            progress_callback=progress_callback
+        )
+        if not preflight_ok:
+            return False
+
+        if progress_callback:
             progress_callback("Starting package installation...\n")
         _log("Attempting interactive runtime dependency installation...", Qgis.Info)
 
         try:
-            success = _install_via_pip(DEFAULT_PACKAGES, progress_callback=progress_callback)
+            success = _install_via_pip(
+                DEFAULT_PACKAGES,
+                progress_callback=progress_callback,
+                targets=install_targets,
+            )
 
             if progress_callback:
                 progress_callback("\nVerifying installation...\n")

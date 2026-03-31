@@ -224,9 +224,17 @@ class FirstTimeInstallerDialog(QDialog):
                         True, "All dependencies installed successfully"
                     )
                 else:
+                    detail = None
+                    try:
+                        from .bootstrap import get_last_bootstrap_error
+
+                        detail = get_last_bootstrap_error()
+                    except Exception:
+                        detail = None
+
                     self.progress.install_complete.emit(
                         False,
-                        "Installation failed. Check log above for details.",
+                        detail or "Installation failed. Check log above for details.",
                     )
             except Exception as exc:
                 self.progress.install_complete.emit(
