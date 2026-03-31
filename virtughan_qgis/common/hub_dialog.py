@@ -493,7 +493,7 @@ class VirtughanHubDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
 
-        ok = uninstall_runtime_dependencies(remove_runtime_folder=True)
+        ok = uninstall_runtime_dependencies()
         if ok:
             QMessageBox.information(
                 self,
