@@ -57,7 +57,13 @@ from ..common.common_logic import (
 
 from ..common.map_setup import setup_default_map
 from ..common.scene_preview_dialog import ScenePreviewDialog
-from ..bootstrap import RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR, ensure_runtime_network_ready
+from ..bootstrap import (
+    RUNTIME_ROOT,
+    RUNTIME_SITE_PACKAGES_DIR,
+    RUNTIME_FALLBACK_ROOT,
+    RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+    ensure_runtime_network_ready,
+)
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -124,6 +130,19 @@ def _build_engine_failure_message(exc, log_path: str | None = None) -> str:
             "This is usually a temporary network/data-access issue (internet instability, VPN/proxy/firewall interruption, or remote server throttling).\n\n"
             "Please check your internet connection and try again.\n"
             "If the issue persists, try a smaller AOI or shorter date range and review runtime.log."
+        )
+
+    text = str(exc or "")
+    if "SVD did not converge in Linear Least Squares" in text:
+        return (
+            "Compute failed while fitting trend statistics on the selected scenes.\n\n"
+            "This usually happens when there are too few valid observations or unstable/invalid values for the selected AOI/date/formula.\n\n"
+            "Try one or more of the following:\n"
+            "- Expand the date range (to include more scenes)\n"
+            "- Reduce cloud threshold and/or enable Smart Filter\n"
+            "- Use a different formula or simpler AOI\n"
+            "- Retry with a nearby date window\n\n"
+            "See runtime.log for details."
         )
 
     return f"Compute failed:\n{exc}\n\nSee runtime.log for details."
@@ -493,6 +512,10 @@ if __name__ == "__main__":
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
         if os.path.isdir(RUNTIME_ROOT):
             python_path_entries.append(RUNTIME_ROOT)
+        if os.path.isdir(RUNTIME_FALLBACK_SITE_PACKAGES_DIR):
+            python_path_entries.append(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
+        if os.path.isdir(RUNTIME_FALLBACK_ROOT):
+            python_path_entries.append(RUNTIME_FALLBACK_ROOT)
 
         existing_pythonpath = env.get("PYTHONPATH", "")
         if existing_pythonpath:
@@ -500,6 +523,8 @@ if __name__ == "__main__":
 
         if python_path_entries:
             env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+            if logf:
+                logf.write(f"[INFO] subprocess PYTHONPATH={env['PYTHONPATH']}\n")
 
         env["PYTHONNOUSERSITE"] = "1"
         run_kwargs["env"] = env
@@ -1254,6 +1279,7 @@ class EngineDockWidget(QDockWidget):
             return
 
         try:
+            self._validate_minimum_matching_scenes(min_count=2)
             params = self._collect_params()
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
@@ -1486,6 +1512,25 @@ class EngineDockWidget(QDockWidget):
             "end_date": p["end_date"],
             "cloud_cover": int(p.get("cloud_cover", 30)),
         }
+
+    def _validate_minimum_matching_scenes(self, min_count: int = 2):
+        if engine_search_stac_api is None:
+            raise RuntimeError("search_stac_api is not available in the compute backend.")
+
+        params = self._collect_search_params()
+        scenes = engine_search_stac_api(
+            params["bbox"],
+            params["start_date"],
+            params["end_date"],
+            params["cloud_cover"],
+        )
+        count = len(scenes or [])
+        if count < min_count:
+            raise RuntimeError(
+                "Compute requires at least 2 matching scenes for the selected filters. "
+                f"Found {count} scene(s). "
+                "Try expanding the date range, increasing cloud threshold, or enabling Smart Filter."
+            )
 
     def _render_scene_footprints(self, scenes, below_layer_ids=None):
         self._clear_scene_footprints_layer()

@@ -61,6 +61,8 @@ from ..common.scene_preview_dialog import ScenePreviewDialog
 from ..bootstrap import (
     RUNTIME_ROOT,
     RUNTIME_SITE_PACKAGES_DIR,
+    RUNTIME_FALLBACK_ROOT,
+    RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
     activate_runtime_paths,
     ensure_runtime_network_ready,
 )
@@ -153,6 +155,8 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
         "smart_filter": params.get("smart_filter", True),
         "runtime_site_packages_dir": RUNTIME_SITE_PACKAGES_DIR,
         "runtime_root": RUNTIME_ROOT,
+        "runtime_fallback_site_packages_dir": RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+        "runtime_fallback_root": RUNTIME_FALLBACK_ROOT,
         "log_path": log_path,
     }
     if params.get("polygon_wgs84"):
@@ -176,6 +180,8 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
             "        runtime_paths = [",
             "            payload.get('runtime_site_packages_dir', ''),",
             "            payload.get('runtime_root', ''),",
+            "            payload.get('runtime_fallback_site_packages_dir', ''),",
+            "            payload.get('runtime_fallback_root', ''),",
             "        ]",
             "        for dep_path in reversed(runtime_paths):",
             "            if dep_path and os.path.isdir(dep_path) and dep_path not in sys.path:",
@@ -230,6 +236,10 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
         if os.path.isdir(RUNTIME_ROOT):
             python_path_entries.append(RUNTIME_ROOT)
+        if os.path.isdir(RUNTIME_FALLBACK_SITE_PACKAGES_DIR):
+            python_path_entries.append(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
+        if os.path.isdir(RUNTIME_FALLBACK_ROOT):
+            python_path_entries.append(RUNTIME_FALLBACK_ROOT)
 
         existing_pythonpath = env.get("PYTHONPATH", "")
         if existing_pythonpath:
@@ -921,6 +931,7 @@ class ExtractorDockWidget(QDockWidget):
             return
 
         try:
+            self._validate_minimum_matching_scenes(min_count=1)
             params = self._collect_params()
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
@@ -1134,6 +1145,25 @@ class ExtractorDockWidget(QDockWidget):
             "end_date": p["end_date"],
             "cloud_cover": int(p.get("cloud_cover", 30)),
         }
+
+    def _validate_minimum_matching_scenes(self, min_count: int = 1):
+        if extractor_search_stac_api is None:
+            raise RuntimeError("search_stac_api is not available in virtughan.extract.")
+
+        params = self._collect_search_params()
+        scenes = extractor_search_stac_api(
+            params["bbox"],
+            params["start_date"],
+            params["end_date"],
+            params["cloud_cover"],
+        )
+        count = len(scenes or [])
+        if count < min_count:
+            raise RuntimeError(
+                "Extractor requires at least 1 matching scene for the selected filters. "
+                f"Found {count} scene(s). "
+                "Try expanding the date range or increasing cloud threshold."
+            )
 
     def _render_scene_footprints(self, scenes, below_layer_ids=None):
         self._clear_scene_footprints_layer()

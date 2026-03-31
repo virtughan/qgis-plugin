@@ -13,7 +13,13 @@ from qgis.PyQt.QtWidgets import QWidget, QMessageBox, QDockWidget, QLabel, QHBox
 from qgis.core import QgsMessageLog, Qgis, QgsProject
 
 from .tiler_logic import TilerLogic
-from ..bootstrap import RUNTIME_ROOT, RUNTIME_SITE_PACKAGES_DIR, activate_runtime_paths
+from ..bootstrap import (
+    RUNTIME_ROOT,
+    RUNTIME_SITE_PACKAGES_DIR,
+    RUNTIME_FALLBACK_ROOT,
+    RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+    activate_runtime_paths,
+)
 
 activate_runtime_paths()
 
@@ -73,7 +79,12 @@ class _InProcessServerManager:
         import uvicorn
 
         # Prefer plugin-managed runtime dependencies over user site-packages.
-        for dep_path in (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT):
+        for dep_path in (
+            RUNTIME_SITE_PACKAGES_DIR,
+            RUNTIME_ROOT,
+            RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+            RUNTIME_FALLBACK_ROOT,
+        ):
             if dep_path and os.path.isdir(dep_path) and dep_path not in sys.path:
                 sys.path.insert(0, dep_path)
 
