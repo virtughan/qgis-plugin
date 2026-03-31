@@ -170,6 +170,7 @@ def _run_pip_inprocess(
         "install",
         "--disable-pip-version-check",
         "--upgrade",
+        "--ignore-installed",
         "--prefer-binary",
         "--only-binary",
         "rasterio",

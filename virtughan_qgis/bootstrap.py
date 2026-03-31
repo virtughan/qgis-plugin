@@ -751,24 +751,6 @@ def interactive_install_dependencies(parent=None) -> bool:
             progress_callback("Preparing installation...\n")
 
         if progress_callback:
-            progress_callback("Checking for existing installation...\n")
-        
-        # Re-check in case it was installed just now
-        _activate_vendor_paths()
-        deps_ready = check_dependencies()
-        imports_ready, import_err = _check_plugin_import_health() if deps_ready else (False, None)
-        if deps_ready and imports_ready:
-            if progress_callback:
-                progress_callback("Dependencies already available\n")
-            return True
-        if deps_ready and not imports_ready and import_err:
-            _set_last_error(import_err)
-            _log(import_err, Qgis.Warning)
-            if progress_callback:
-                progress_callback(f"{import_err}\n")
-            return False
-
-        if progress_callback:
             progress_callback("Preparing runtime folders before reinstall...\n")
         preflight_ok, install_targets = _preflight_runtime_reinstall(
             progress_callback=progress_callback

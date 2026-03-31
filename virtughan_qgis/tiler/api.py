@@ -9,16 +9,15 @@ import inspect
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
+from ..bootstrap import RUNTIME_SITE_PACKAGES_DIR, activate_runtime_paths
+
+activate_runtime_paths()
+
 import matplotlib
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
-from ..bootstrap import RUNTIME_SITE_PACKAGES_DIR, activate_runtime_paths
-
 matplotlib.use("Agg")
-
-
-activate_runtime_paths()
 
 
 def _find_tileprocessor() -> Tuple[type, str]:
