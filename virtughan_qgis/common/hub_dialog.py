@@ -18,7 +18,6 @@ from .results_widget import ResultsWidget
 from ..bootstrap import (
     get_last_bootstrap_error,
     interactive_install_dependencies,
-    repair_runtime_dependencies,
     uninstall_runtime_dependencies,
 )
 
@@ -471,11 +470,6 @@ class VirtughanHubDialog(QDialog):
         )
         if reply != QMessageBox.Yes:
             return
-
-        repaired = repair_runtime_dependencies()
-        if not repaired:
-            details = get_last_bootstrap_error() or "Some files could not be cleared."
-            QMessageBox.warning(self, "VirtuGhan", f"Repair completed with warnings:\n\n{details}")
 
         ok = interactive_install_dependencies(self)
         if ok:
