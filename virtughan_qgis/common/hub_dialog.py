@@ -4,7 +4,7 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QListWidget, QListWidgetItem, QStackedWidget,
     QHBoxLayout, QVBoxLayout, QWidget, QDockWidget,
     QFrame, QAbstractItemView, QApplication, QStyle,
-    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy, QMessageBox,
+    QLabel, QTextBrowser, QPushButton, QScrollArea, QSizePolicy, QMessageBox, QCheckBox,
     QStyledItemDelegate
 )
 from qgis.PyQt.QtGui import QIcon, QColor, QPixmap, QPainter, QPen
@@ -17,8 +17,10 @@ from .geocoding_widget import GeocodingPlaceWidget
 from .results_widget import ResultsWidget
 from ..bootstrap import (
     get_last_bootstrap_error,
+    repair_runtime_dependencies,
     interactive_install_dependencies,
-    uninstall_runtime_dependencies,
+    get_uninstall_on_plugin_uninstall,
+    set_uninstall_on_plugin_uninstall,
 )
 
 
@@ -252,9 +254,11 @@ class VirtughanHubDialog(QDialog):
 """,
     "dependencies": """
 <h3>Dependencies</h3>
-<p><b>Repair Dependencies</b> clears plugin-managed runtime packages and reinstalls them cleanly.</p>
-<p><b>Uninstall Dependencies</b> removes plugin-managed runtime packages without reinstalling.</p>
-<p><i>After either operation, restart QGIS for a clean runtime reload.</i></p>
+<p><b>Repair Dependencies</b> checks core runtime packages (<b>virtughan</b>, <b>rasterio</b>, <b>numpy</b>). If healthy, it leaves them unchanged; if broken/missing, it repairs automatically.</p>
+<p><b>Reinstall Dependencies</b> force-clears plugin-managed runtime folders and reinstalls dependencies from scratch.</p>
+<p>If one runtime folder is locked, installer automatically retries in the alternate runtime folder. If both are locked, restart QGIS and try again.</p>
+<p><b>Uninstall dependencies during plugin uninstall</b>: when enabled, dependencies are removed when plugin files are removed from QGIS Plugin Manager.</p>
+<p><i>After successful reinstall, restart QGIS for a clean runtime reload.</i></p>
 """,
         }
 
@@ -453,58 +457,103 @@ class VirtughanHubDialog(QDialog):
         repair_btn.clicked.connect(self._on_repair_dependencies)
         layout.addWidget(repair_btn)
 
-        uninstall_btn = QPushButton("Uninstall Dependencies")
-        uninstall_btn.clicked.connect(self._on_uninstall_dependencies)
-        layout.addWidget(uninstall_btn)
+        reinstall_btn = QPushButton("Reinstall Dependencies")
+        reinstall_btn.clicked.connect(self._on_uninstall_dependencies)
+        layout.addWidget(reinstall_btn)
+
+        uninstall_with_plugin_check = QCheckBox("Uninstall dependencies during plugin uninstall")
+        uninstall_with_plugin_check.setChecked(get_uninstall_on_plugin_uninstall())
+        uninstall_with_plugin_check.toggled.connect(self._on_toggle_uninstall_with_plugin)
+        layout.addWidget(uninstall_with_plugin_check)
+
+        cleanup_help = QLabel(
+            "Note: On some systems, uninstall can leave locked dependency files.\n"
+            "For complete cleanup after uninstall and after closing QGIS, use one of these commands:\n\n"
+            "Windows (PowerShell):\n"
+            "Remove-Item -Recurse -Force \"$env:APPDATA\\QGIS\\QGIS3\\profiles\\default\\virtughan_runtime\",\"$env:APPDATA\\QGIS\\QGIS3\\profiles\\default\\virtughan_runtime_fallback\"\n\n"
+            "macOS (Terminal):\n"
+            "rm -rf \"$HOME/Library/Application Support/QGIS/QGIS3/profiles/default/virtughan_runtime\" \"$HOME/Library/Application Support/QGIS/QGIS3/profiles/default/virtughan_runtime_fallback\"\n\n"
+            "Linux (Terminal):\n"
+            "rm -rf \"$HOME/.local/share/QGIS/QGIS3/profiles/default/virtughan_runtime\" \"$HOME/.local/share/QGIS/QGIS3/profiles/default/virtughan_runtime_fallback\"\n\n"
+            "Safety: QGIS profile paths can differ across devices. Confirm your actual QGIS profile path before running delete commands."
+        )
+        cleanup_help.setWordWrap(True)
+        layout.addWidget(cleanup_help)
 
         layout.addStretch(1)
         return page
+
+    def _on_toggle_uninstall_with_plugin(self, checked: bool):
+        set_uninstall_on_plugin_uninstall(bool(checked))
 
     def _on_repair_dependencies(self):
         reply = QMessageBox.question(
             self,
             "VirtuGhan",
-            "This will clear plugin runtime dependencies and reinstall them.\n\nContinue?",
+            "This will check core runtime dependencies and repair only if needed.\n\nContinue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
-        ok = interactive_install_dependencies(self)
+        ok = interactive_install_dependencies(self, force_reinstall=False)
         if ok:
             QMessageBox.information(
                 self,
                 "VirtuGhan",
-                "Dependencies repaired and reinstalled successfully.\n\nPlease restart QGIS.",
+                "Dependency check completed.\n\nCore dependencies are healthy or were repaired successfully.",
             )
         else:
             details = get_last_bootstrap_error() or "Dependency installation failed."
-            QMessageBox.critical(self, "VirtuGhan", f"Dependency reinstall failed:\n\n{details}")
+            lower_details = details.lower()
+            if "locked" in lower_details or "access is denied" in lower_details or "winerror 5" in lower_details:
+                QMessageBox.warning(
+                    self,
+                    "VirtuGhan",
+                    "Dependency repair could not continue because runtime folders are locked.\n\n"
+                    "If one folder is locked, alternate-folder install is attempted automatically. "
+                    "If both are locked, restart QGIS and try again.\n\n"
+                    f"Details:\n{details}",
+                )
+            else:
+                QMessageBox.critical(self, "VirtuGhan", f"Dependency repair failed:\n\n{details}")
 
     def _on_uninstall_dependencies(self):
         reply = QMessageBox.question(
             self,
             "VirtuGhan",
-            "This will remove plugin runtime dependencies without reinstalling.\n\nContinue?",
+            "This will force a clean reinstall: clear existing runtime dependencies and install again.\n\nContinue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
-        ok = uninstall_runtime_dependencies()
+        cleaned = repair_runtime_dependencies()
+        if not cleaned:
+            details = get_last_bootstrap_error() or "Some dependency files could not be cleared."
+            QMessageBox.warning(
+                self,
+                "VirtuGhan",
+                "Dependency cleanup completed with warnings.\n\n"
+                "Reinstall will continue and may use the alternate runtime folder if available.\n\n"
+                f"Details:\n{details}",
+            )
+
+        ok = interactive_install_dependencies(self, force_reinstall=True)
         if ok:
             QMessageBox.information(
                 self,
                 "VirtuGhan",
-                "Dependencies uninstalled successfully.\n\nPlease restart QGIS.",
+                "Dependencies reinstalled successfully.\n\nPlease restart QGIS.",
             )
         else:
-            details = get_last_bootstrap_error() or "Uninstall completed with warnings."
+            details = get_last_bootstrap_error() or "Dependency reinstall failed."
             lower_details = details.lower()
             is_lock_warning = (
                 "failed to remove some dependency files" in lower_details
+                or "locked" in lower_details
                 or "winerror 5" in lower_details
                 or "access is denied" in lower_details
             )
@@ -512,14 +561,15 @@ class VirtughanHubDialog(QDialog):
                 QMessageBox.information(
                     self,
                     "VirtuGhan",
-                    "Some dependency files are still in use.\n\n"
-                    "Please restart QGIS to complete dependency cleanup.",
+                    "Runtime folders are locked or in use.\n\n"
+                    "If one folder is locked, alternate-folder reinstall is attempted automatically. "
+                    "If both are locked, restart QGIS and try again.",
                 )
             else:
-                QMessageBox.warning(
+                QMessageBox.critical(
                     self,
                     "VirtuGhan",
-                    "Dependency uninstall failed.\n\n"
+                    "Dependency reinstall failed.\n\n"
                     "Please check details below:\n\n"
                     f"{details}",
                 )

@@ -8,6 +8,7 @@ from importlib import metadata as importlib_metadata
 
 from qgis.core import Qgis, QgsApplication, QgsMessageLog
 from qgis.PyQt.QtWidgets import QDialog, QPushButton, QTextEdit, QVBoxLayout, QMessageBox
+from qgis.PyQt.QtCore import QSettings
 
 from .dependency_versions import (
     VIRTUGHAN_VERSION,
@@ -26,6 +27,21 @@ RUNTIME_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_run
 RUNTIME_SITE_PACKAGES_DIR = os.path.join(RUNTIME_ROOT, "site-packages")
 RUNTIME_FALLBACK_ROOT = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan_runtime_fallback")
 RUNTIME_FALLBACK_SITE_PACKAGES_DIR = os.path.join(RUNTIME_FALLBACK_ROOT, "site-packages")
+UNINSTALL_ON_PLUGIN_UNINSTALL_KEY = "virtughan/dependencies/uninstall_on_plugin_uninstall"
+
+
+def get_uninstall_on_plugin_uninstall() -> bool:
+    try:
+        return bool(QSettings().value(UNINSTALL_ON_PLUGIN_UNINSTALL_KEY, True, type=bool))
+    except Exception:
+        return True
+
+
+def set_uninstall_on_plugin_uninstall(enabled: bool):
+    try:
+        QSettings().setValue(UNINSTALL_ON_PLUGIN_UNINSTALL_KEY, bool(enabled))
+    except Exception:
+        pass
 
 
 def _runtime_site_packages_candidates() -> list[str]:
@@ -670,14 +686,26 @@ def repair_runtime_dependencies() -> bool:
         importlib.invalidate_caches()
 
         for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("virtughan") or mod_name.startswith("rasterio"):
+            if (
+                mod_name.startswith("virtughan")
+                or mod_name.startswith("rasterio")
+                or mod_name.startswith("numpy")
+            ):
                 try:
                     del sys.modules[mod_name]
                 except Exception:
                     pass
 
         if failed:
-            _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
+            lock_failures = [item for item in failed if _is_runtime_lock_failure(item)]
+            if lock_failures and len(lock_failures) == len(failed):
+                _set_last_error(
+                    "Runtime dependency folders are locked by this QGIS session. "
+                    "If one folder is locked, reinstall will try the alternate runtime folder automatically. "
+                    "If both folders are locked, restart QGIS and try again."
+                )
+            else:
+                _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
             _log("Dependency repair completed with warnings", Qgis.Warning)
             return False
 
@@ -697,14 +725,25 @@ def uninstall_runtime_dependencies() -> bool:
         importlib.invalidate_caches()
 
         for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("virtughan") or mod_name.startswith("rasterio"):
+            if (
+                mod_name.startswith("virtughan")
+                or mod_name.startswith("rasterio")
+                or mod_name.startswith("numpy")
+            ):
                 try:
                     del sys.modules[mod_name]
                 except Exception:
                     pass
 
         if failed:
-            _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
+            lock_failures = [item for item in failed if _is_runtime_lock_failure(item)]
+            if lock_failures and len(lock_failures) == len(failed):
+                _set_last_error(
+                    "Runtime dependency folders are locked by this QGIS session. "
+                    "Restart QGIS to complete uninstall cleanup and try again."
+                )
+            else:
+                _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
             _log("Dependency uninstall completed with warnings", Qgis.Warning)
             return False
 
@@ -716,7 +755,7 @@ def uninstall_runtime_dependencies() -> bool:
         return False
 
 
-def interactive_install_dependencies(parent=None) -> bool:
+def interactive_install_dependencies(parent=None, force_reinstall: bool = False) -> bool:
     """
     Show interactive installer dialog with real-time progress.
     
@@ -730,17 +769,21 @@ def interactive_install_dependencies(parent=None) -> bool:
     _set_last_error(None)
 
     # Smart check: skip installer only if dependencies and core plugin imports are healthy.
+    # For repair action, force_reinstall=True bypasses this shortcut.
     _activate_vendor_paths()
-    deps_ok = check_dependencies()
-    imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
-    if deps_ok and imports_ok:
-        _log("Dependencies already properly installed, skipping installer dialog")
-        mark_as_installed()
-        return True
-    if deps_ok and not imports_ok and import_err:
-        _set_last_error(import_err)
-        _log(import_err, Qgis.Warning)
-        return False
+    if not force_reinstall:
+        deps_ok = check_dependencies()
+        imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
+        if deps_ok and imports_ok:
+            _log("Dependencies already properly installed, skipping installer dialog")
+            mark_as_installed()
+            return True
+        if deps_ok and not imports_ok and import_err:
+            _set_last_error(import_err)
+            _log(import_err, Qgis.Warning)
+            return False
+    else:
+        _log("Force reinstall requested: bypassing healthy-dependencies shortcut", Qgis.Info)
 
     # Dependencies missing or broken - show interactive installer
     _log("Dependencies missing, showing installer dialog", Qgis.Info)

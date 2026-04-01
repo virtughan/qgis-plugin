@@ -2,9 +2,9 @@
 import os
 
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
-from qgis.core import QgsApplication
+from qgis.core import QgsApplication, QgsMessageLog, Qgis
 
 from .common.map_setup import setup_default_map
 
@@ -16,6 +16,8 @@ try:
         get_last_bootstrap_error,
         interactive_install_dependencies,
         repair_runtime_dependencies,
+        uninstall_runtime_dependencies,
+        get_uninstall_on_plugin_uninstall,
     )
 except Exception:
     def get_last_bootstrap_error():
@@ -25,6 +27,12 @@ except Exception:
         return False
 
     def repair_runtime_dependencies(*args, **kwargs):
+        return False
+
+    def uninstall_runtime_dependencies(*args, **kwargs):
+        return False
+
+    def get_uninstall_on_plugin_uninstall():
         return False
 
 class VirtuGhanPlugin:
@@ -114,6 +122,8 @@ class VirtuGhanPlugin:
             )
 
     def unload(self):
+        self._schedule_dependency_cleanup_if_uninstalled()
+
         try:
             if self._hub_dialog:
                 self._hub_dialog.close()
@@ -158,6 +168,62 @@ class VirtuGhanPlugin:
             except Exception:
                 pass
             self.toolbar = None
+
+    def _schedule_dependency_cleanup_if_uninstalled(self):
+        # Best effort: run cleanup only if plugin files are removed shortly after unload
+        # (typical plugin-manager uninstall path), not for normal disable/reload.
+        try:
+            if not get_uninstall_on_plugin_uninstall():
+                return
+            if QCoreApplication.closingDown():
+                return
+        except Exception:
+            return
+
+        iface = self.iface
+
+        def _emit_info(msg: str):
+            try:
+                QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
+                if iface and iface.messageBar():
+                    iface.messageBar().pushInfo("VirtuGhan", msg)
+            except Exception:
+                pass
+
+        def _emit_warning(msg: str):
+            try:
+                QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Warning)
+                if iface and iface.messageBar():
+                    iface.messageBar().pushWarning("VirtuGhan", msg)
+            except Exception:
+                pass
+
+        def _attempt_cleanup(attempt: int = 0):
+            # Wait for plugin manager to remove plugin files.
+            if os.path.isdir(PLUGIN_DIR):
+                if attempt < 5:
+                    QTimer.singleShot(800, lambda: _attempt_cleanup(attempt + 1))
+                return
+
+            ok = uninstall_runtime_dependencies()
+            if ok:
+                _emit_info("Plugin uninstall detected: runtime dependencies were removed.")
+                return
+
+            details = get_last_bootstrap_error() or "Dependency cleanup finished with warnings."
+            lower = details.lower()
+            if "locked" in lower or "winerror 5" in lower or "access is denied" in lower:
+                _emit_info(
+                    "Plugin uninstall succeeded. Some dependency files are still locked; "
+                    "restart QGIS to complete dependency cleanup."
+                )
+            else:
+                _emit_info(
+                    "Plugin uninstall succeeded, but dependency cleanup was partial. "
+                    f"Details: {details}"
+                )
+
+        QTimer.singleShot(800, lambda: _attempt_cleanup(0))
 
     def _show_hub(self, start_page: str):
         # Optional: add basemap once per click, but skip if already present
