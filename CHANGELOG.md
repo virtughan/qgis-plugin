@@ -1,4 +1,11 @@
 
+## v1.0.11 (2026-04-01)
+
+### Fix
+
+- **plugin-uninstall-repair**: improves uninstall/reinstall repair flow and runtime cleanup handling during plugin uninstall lifecycle
+- **tiler-viewport-priority**: hardens Tiler request controls with settle-delay pacing, stale-request cancellation, and strict settled-viewport tile gating
+
 ## v1.0.10 (2026-03-31)
 
 ### Fix
