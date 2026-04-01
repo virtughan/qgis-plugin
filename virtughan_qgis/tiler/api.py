@@ -112,20 +112,28 @@ def _patch_rasterio_parsed_path_compat() -> None:
         if (len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"')):
             s = s[1:-1].strip()
 
+        # Some call paths pass wrappers like:
+        # "invalid path '_ParsedPath(path=..., scheme=...)'"
+        # Extract the ParsedPath(...) payload if embedded in other text.
+        candidate = s
         if not (
-            (s.startswith("_ParsedPath(") or s.startswith("ParsedPath("))
-            and "path=" in s
-            and "scheme=" in s
+            (candidate.startswith("_ParsedPath(") or candidate.startswith("ParsedPath("))
+            and "path=" in candidate
+            and "scheme=" in candidate
         ):
-            return fp
+            embedded = re.search(r"(_?ParsedPath\([^\)]*\))", candidate)
+            if embedded:
+                candidate = embedded.group(1)
+            else:
+                return fp
 
         try:
             # Examples:
             # _ParsedPath(path='host/key.tif', archive=None, scheme='https')
             # ParsedPath(path="host/key.tif", archive=None, scheme="https")
-            path_m = re.search(r"path=(?:'([^']*)'|\"([^\"]*)\")", s)
-            scheme_m = re.search(r"scheme=(?:'([^']*)'|\"([^\"]*)\")", s)
-            archive_m = re.search(r"archive=(?:'([^']*)'|\"([^\"]*)\"|None)", s)
+            path_m = re.search(r"path=(?:'([^']*)'|\"([^\"]*)\")", candidate)
+            scheme_m = re.search(r"scheme=(?:'([^']*)'|\"([^\"]*)\")", candidate)
+            archive_m = re.search(r"archive=(?:'([^']*)'|\"([^\"]*)\"|None)", candidate)
             if not path_m or not scheme_m:
                 return fp
 

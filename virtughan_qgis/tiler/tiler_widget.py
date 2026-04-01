@@ -493,12 +493,12 @@ class TilerWidget(QWidget, FORM_CLASS):
         if settle and settle_delay_sec is not None:
             delay_q = f"&settle_delay_sec={float(settle_delay_sec):.3f}"
         try:
-            self._http_json_get(
+            return self._http_json_get(
                 self._diag_url(f"/diag/bump-generation?reason={reason}&settle={settle_q}{delay_q}"),
                 timeout=0.5,
             )
         except Exception:
-            pass
+            return None
 
     def _notify_view_generation_change(self):
         if not self._is_local_server_active():
@@ -525,13 +525,13 @@ class TilerWidget(QWidget, FORM_CLASS):
             if self._canvas is None:
                 return None
             ext = self._canvas.extent()
-            # Keep signature highly sensitive so intermediate pans always rotate generation.
+            # Avoid false view-generation churn from tiny floating-point jitter.
             return (
-                round(float(ext.xMinimum()), 7),
-                round(float(ext.yMinimum()), 7),
-                round(float(ext.xMaximum()), 7),
-                round(float(ext.yMaximum()), 7),
-                round(float(self._canvas.scale()), 6),
+                round(float(ext.xMinimum()), 4),
+                round(float(ext.yMinimum()), 4),
+                round(float(ext.xMaximum()), 4),
+                round(float(ext.yMaximum()), 4),
+                round(float(self._canvas.scale()), 3),
             )
         except Exception:
             return None
