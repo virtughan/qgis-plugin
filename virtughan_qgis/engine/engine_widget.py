@@ -1418,11 +1418,15 @@ class EngineDockWidget(QDockWidget):
             pass
         for w in (self.aoiStartDrawButton, self.aoiClearButton,
                   self.aoiModeCombo, self.outputBrowseButton,
-                  self.previewScenesButton, self.showSceneFootprintsCheck):
+                  self.showSceneFootprintsCheck):
             try:
                 w.setEnabled(not running)
             except Exception:
                 pass
+        try:
+            self.previewScenesButton.setEnabled(True)
+        except Exception:
+            pass
 
     def _on_show_scene_footprints_toggled(self, checked: bool):
         if not checked:

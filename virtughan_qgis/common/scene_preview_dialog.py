@@ -56,8 +56,8 @@ class ScenePreviewDialog(QDialog):
         root.addWidget(info)
 
         controls_row = QHBoxLayout()
-        self.selectAllButton = QPushButton("Select All", self)
-        self.deselectAllButton = QPushButton("Deselect All", self)
+        self.selectAllButton = QPushButton("View All", self)
+        self.deselectAllButton = QPushButton("Hide All", self)
         self.selectAllButton.clicked.connect(self._select_all_scenes)
         self.deselectAllButton.clicked.connect(self._deselect_all_scenes)
         controls_row.addWidget(self.selectAllButton)
