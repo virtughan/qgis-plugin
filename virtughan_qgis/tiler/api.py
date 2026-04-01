@@ -289,7 +289,7 @@ processor = TileProcessor(cache_time=60)
 logger = logging.getLogger(__name__)
 _TILER_CONCURRENCY = _resolve_tiler_concurrency()
 _TILE_REQUEST_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
-_QUEUE_WAIT_TIMEOUT_SEC = 4.0
+_QUEUE_WAIT_TIMEOUT_SEC = 12.0
 _TILE_COMPUTE_TIMEOUT_SEC = 16.0
 _LAST_TILE_ERROR: dict = {}
 _VIEW_GENERATION = 0
@@ -299,6 +299,8 @@ _TILER_LOG_SEQ = 0
 _URL_LOG_SAMPLE_LIMIT = 5
 _URL_LOGGED_COUNT = 0
 _STALE_CHECK_SLICE_SEC = 0.05
+_VIEW_SETTLE_DELAY_SEC = max(0.0, float(os.getenv("VIRTUGHAN_VIEW_SETTLE_DELAY_SEC", "0.35") or 0.35))
+_LAST_VIEW_CHANGE_MONOTONIC = 0.0
 _CPU_COUNT = max(1, int(os.cpu_count() or 1))
 _MAX_DYNAMIC_CONCURRENCY = 4
 _MIN_DYNAMIC_CONCURRENCY = 4
@@ -397,6 +399,36 @@ def _record_tile_failure(reason: str, status: int, req_tag: str, req_url: str, *
     _LAST_TILE_ERROR.clear()
     _LAST_TILE_ERROR.update(payload)
     _append_tiler_log("warning", "Tile response failed", **payload)
+
+
+def _is_stale_generation(request_generation: int) -> bool:
+    return int(request_generation) != int(_VIEW_GENERATION)
+
+
+def _is_view_settling() -> bool:
+    if _VIEW_SETTLE_DELAY_SEC <= 0.0:
+        return False
+    if _LAST_VIEW_CHANGE_MONOTONIC <= 0.0:
+        return False
+    return (time.monotonic() - _LAST_VIEW_CHANGE_MONOTONIC) < _VIEW_SETTLE_DELAY_SEC
+
+
+def _view_settle_remaining_sec() -> float:
+    if _VIEW_SETTLE_DELAY_SEC <= 0.0 or _LAST_VIEW_CHANGE_MONOTONIC <= 0.0:
+        return 0.0
+    elapsed = time.monotonic() - _LAST_VIEW_CHANGE_MONOTONIC
+    return max(0.0, _VIEW_SETTLE_DELAY_SEC - elapsed)
+
+
+def _stale_tile_response(reason: str, req_tag: str, req_url: str) -> Response:
+    _record_tile_failure(
+        reason=reason,
+        status=409,
+        req_tag=req_tag,
+        req_url=req_url,
+        response=reason,
+    )
+    return _retryable_tile_unavailable(reason, status_code=409)
 
 
 def _tile_tag_from_path(path: str) -> str:
@@ -523,8 +555,9 @@ async def diag_last_error():
 @app.post("/diag/bump-generation")
 @app.get("/diag/bump-generation")
 async def bump_generation(reason: str = Query("view_changed")):
-    global _VIEW_GENERATION
+    global _VIEW_GENERATION, _LAST_VIEW_CHANGE_MONOTONIC
     _VIEW_GENERATION += 1
+    _LAST_VIEW_CHANGE_MONOTONIC = time.monotonic()
     _append_tiler_log("info", "View generation bumped", reason=reason, generation=_VIEW_GENERATION)
     return {"generation": _VIEW_GENERATION, "reason": reason}
 
@@ -554,6 +587,7 @@ async def diag_runtime():
             "cpu_usage_percent": cpu_usage,
             "psutil_available": bool(psutil is not None),
         },
+        "view_settle_delay_sec": _VIEW_SETTLE_DELAY_SEC,
     }
 
 
@@ -587,6 +621,7 @@ async def get_tile(
         end_date = datetime.utcnow().strftime("%Y-%m-%d")
 
     req_tag = f"{z}/{x}/{y}"
+    request_generation = int(_VIEW_GENERATION)
     req_url = str(request.url)
     _append_tile_url_sample(tile=req_tag, full_url=req_url)
     global _ACTIVE_TILE_REQUESTS
@@ -595,48 +630,49 @@ async def get_tile(
     acquired = False
     counted_active = False
     try:
-        current_limit = _dynamic_concurrency_limit()
-        try:
-            if _ACTIVE_TILE_REQUESTS < current_limit:
-                await asyncio.wait_for(sem.acquire(), timeout=0.35)
-                acquired = True
-            else:
-                raise asyncio.TimeoutError()
-        except asyncio.TimeoutError:
-            _append_tile_event_log(
-                "info",
-                "Tile queued; waiting for worker",
-                tile=req_tag,
-                limit=current_limit,
-            )
-            waited = 0.0
-            while waited < _QUEUE_WAIT_TIMEOUT_SEC and not acquired:
-                slice_sec = min(_STALE_CHECK_SLICE_SEC, _QUEUE_WAIT_TIMEOUT_SEC - waited)
-                current_limit = _dynamic_concurrency_limit()
-                if _ACTIVE_TILE_REQUESTS >= current_limit:
-                    await asyncio.sleep(slice_sec)
-                    waited += slice_sec
-                    continue
-                try:
-                    await asyncio.wait_for(sem.acquire(), timeout=slice_sec)
-                    acquired = True
-                    break
-                except asyncio.TimeoutError:
-                    waited += slice_sec
+        if _is_view_settling():
+            wait_sec = min(0.6, _view_settle_remaining_sec())
+            if wait_sec > 0.0:
+                _append_tile_event_log("info", "Waiting for view settle", tile=req_tag, wait_sec=round(wait_sec, 3))
+                await asyncio.sleep(wait_sec)
 
-            if not acquired:
-                _append_tile_event_log("warning", "Dropped tile after queue wait timeout", tile=req_tag)
-                _record_tile_failure(
-                    reason="queue_wait_timeout",
-                    status=503,
-                    req_tag=req_tag,
-                    req_url=req_url,
-                    response="queue_wait_timeout",
-                )
-                return _retryable_tile_unavailable("queue_wait_timeout", status_code=503)
+        current_limit = _dynamic_concurrency_limit()
+        _append_tile_event_log(
+            "info",
+            "Tile queued; waiting for worker",
+            tile=req_tag,
+            limit=current_limit,
+        )
+        waited = 0.0
+        while waited < _QUEUE_WAIT_TIMEOUT_SEC and not acquired:
+            if _is_stale_generation(request_generation):
+                _append_tile_event_log("info", "Dropped stale queued tile", tile=req_tag)
+                return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
+            slice_sec = min(_STALE_CHECK_SLICE_SEC, _QUEUE_WAIT_TIMEOUT_SEC - waited)
+            try:
+                await asyncio.wait_for(sem.acquire(), timeout=slice_sec)
+                acquired = True
+                break
+            except asyncio.TimeoutError:
+                waited += slice_sec
+
+        if not acquired:
+            _append_tile_event_log("warning", "Dropped tile after queue wait timeout", tile=req_tag)
+            _record_tile_failure(
+                reason="queue_wait_timeout",
+                status=503,
+                req_tag=req_tag,
+                req_url=req_url,
+                response="queue_wait_timeout",
+            )
+            return _retryable_tile_unavailable("queue_wait_timeout", status_code=503)
 
         _ACTIVE_TILE_REQUESTS += 1
         counted_active = True
+
+        if _is_stale_generation(request_generation):
+            _append_tile_event_log("info", "Dropped stale tile before compute", tile=req_tag)
+            return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
 
         image_bytes, feature = await asyncio.wait_for(
             _generate_tile_with_cache_fallback(

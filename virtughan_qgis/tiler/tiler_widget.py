@@ -254,7 +254,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._last_tiler_log_id = 0
         self._view_change_timer = QTimer(self)
         self._view_change_timer.setSingleShot(True)
-        self._view_change_timer.setInterval(40)
+        self._view_change_timer.setInterval(300)
         self._view_change_timer.timeout.connect(self._notify_view_generation_change)
         self._tiler_log_timer = QTimer(self)
         self._tiler_log_timer.setInterval(1200)
@@ -429,8 +429,7 @@ class TilerWidget(QWidget, FORM_CLASS):
     def _on_canvas_view_changed(self):
         if not self._is_local_server_active():
             return
-        # Expire stale requests as quickly as possible when view/zoom changes.
-        self._notify_view_generation_change()
+        # Debounce rapid pan/zoom bursts before bumping view generation.
         self._view_change_timer.start()
 
     def _on_canvas_scale_changed(self, _scale):
