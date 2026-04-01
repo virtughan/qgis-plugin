@@ -466,7 +466,7 @@ class VirtughanHubDialog(QDialog):
         uninstall_with_plugin_check.toggled.connect(self._on_toggle_uninstall_with_plugin)
         layout.addWidget(uninstall_with_plugin_check)
 
-        cleanup_help = QLabel(
+        self._cleanup_help_label = QLabel(
             "Note: On some systems, uninstall can leave locked dependency files.\n"
             "For complete cleanup after uninstall and after closing QGIS, use one of these commands:\n\n"
             "Windows (PowerShell):\n"
@@ -477,14 +477,19 @@ class VirtughanHubDialog(QDialog):
             "rm -rf \"$HOME/.local/share/QGIS/QGIS3/profiles/default/virtughan_runtime\" \"$HOME/.local/share/QGIS/QGIS3/profiles/default/virtughan_runtime_fallback\"\n\n"
             "Safety: QGIS profile paths can differ across devices. Confirm your actual QGIS profile path before running delete commands."
         )
-        cleanup_help.setWordWrap(True)
-        layout.addWidget(cleanup_help)
+        self._cleanup_help_label.setWordWrap(True)
+        self._cleanup_help_label.setVisible(uninstall_with_plugin_check.isChecked())
+        layout.addWidget(self._cleanup_help_label)
 
         layout.addStretch(1)
         return page
 
     def _on_toggle_uninstall_with_plugin(self, checked: bool):
         set_uninstall_on_plugin_uninstall(bool(checked))
+        try:
+            self._cleanup_help_label.setVisible(bool(checked))
+        except Exception:
+            pass
 
     def _on_repair_dependencies(self):
         reply = QMessageBox.question(
