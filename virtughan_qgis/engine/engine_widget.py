@@ -8,6 +8,7 @@ import json
 import shutil
 import tempfile
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -536,7 +537,16 @@ if __name__ == "__main__":
             run_kwargs["startupinfo"] = startupinfo
             run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-        proc = subprocess.run(**run_kwargs)
+        try:
+            proc = subprocess.run(**run_kwargs, timeout=900)
+        except subprocess.TimeoutExpired as exc:
+            if logf:
+                logf.write("[subprocess_timeout]\n")
+                logf.write(f"Engine subprocess exceeded timeout (900s): {exc}\n")
+            raise RuntimeError(
+                "Compute backend timed out after 15 minutes while processing tiles. "
+                "Please retry with smaller AOI/date range or lower cloud threshold, and check runtime.log/gdal.log."
+            ) from exc
 
         if logf and proc.stdout:
             logf.write("[subprocess_stdout]\n")
@@ -1224,6 +1234,16 @@ class EngineDockWidget(QDockWidget):
 
         p = self._get_common_params()
 
+        # In Simple mode, the dropdown selection is authoritative at run time.
+        # This prevents stale advanced-field values from leaking into compute params.
+        if self.simpleModeRadio.isChecked():
+            preset = get_index_preset(self.indexCombo.currentText())
+            if not preset:
+                raise RuntimeError("Please select a valid index preset.")
+            p["band1"] = (preset.get("band1") or "").strip()
+            p["band2"] = (preset.get("band2") or "").strip() or None
+            p["formula"] = (preset.get("formula") or "").strip()
+
         sdt = QDate.fromString(p["start_date"], "yyyy-MM-dd")
         edt = QDate.fromString(p["end_date"], "yyyy-MM-dd")
         if not sdt.isValid() or not edt.isValid():
@@ -1284,6 +1304,18 @@ class EngineDockWidget(QDockWidget):
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
+
+        mode_label = "Simple" if self.simpleModeRadio.isChecked() else "Advanced"
+        preset_label = (self.indexCombo.currentText() or "").strip() if self.simpleModeRadio.isChecked() else "(custom)"
+        _log(
+            self,
+            "Index selection: "
+            f"mode={mode_label}, "
+            f"preset={preset_label}, "
+            f"formula={params.get('formula')}, "
+            f"band1={params.get('band1')}, "
+            f"band2={params.get('band2') or '-'}",
+        )
 
         out_dir = params["output_dir"]
         try:
@@ -1517,16 +1549,57 @@ class EngineDockWidget(QDockWidget):
             "cloud_cover": int(p.get("cloud_cover", 30)),
         }
 
-    def _validate_minimum_matching_scenes(self, min_count: int = 2):
+    def _search_scenes_with_timeout(
+        self,
+        bbox,
+        start_date,
+        end_date,
+        cloud_cover,
+        timeout_s: float = 30.0,
+    ):
         if engine_search_stac_api is None:
             raise RuntimeError("search_stac_api is not available in the compute backend.")
 
+        result = {"scenes": None, "error": None}
+
+        def _worker():
+            try:
+                result["scenes"] = engine_search_stac_api(
+                    bbox,
+                    start_date,
+                    end_date,
+                    cloud_cover,
+                )
+            except Exception as exc:
+                result["error"] = exc
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+        deadline = time.time() + max(1.0, float(timeout_s))
+        while t.is_alive() and time.time() < deadline:
+            try:
+                QgsApplication.processEvents()
+            except Exception:
+                pass
+            time.sleep(0.05)
+
+        if t.is_alive():
+            raise TimeoutError(
+                "Scene search timed out. Please check internet/VPN/proxy and try again."
+            )
+        if result["error"] is not None:
+            raise result["error"]
+        return list(result["scenes"] or [])
+
+    def _validate_minimum_matching_scenes(self, min_count: int = 2):
         params = self._collect_search_params()
-        scenes = engine_search_stac_api(
+        scenes = self._search_scenes_with_timeout(
             params["bbox"],
             params["start_date"],
             params["end_date"],
             params["cloud_cover"],
+            timeout_s=30.0,
         )
         count = len(scenes or [])
         if count < min_count:
@@ -1631,11 +1704,12 @@ class EngineDockWidget(QDockWidget):
         QgsApplication.processEvents()
         _log(self, "Searching matching scenes...")
         try:
-            scenes = engine_search_stac_api(
+            scenes = self._search_scenes_with_timeout(
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
                 params["cloud_cover"],
+                timeout_s=45.0,
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
 
