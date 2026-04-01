@@ -24,6 +24,7 @@ from qgis.PyQt.QtWidgets import (
     QSizePolicy,
 )
 from qgis.core import QgsMessageLog, Qgis, QgsProject
+from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform
 
 from .tiler_logic import TilerLogic
 from ..bootstrap import (
@@ -511,7 +512,12 @@ class TilerWidget(QWidget, FORM_CLASS):
             return
 
         # View appears stable; bump generation without extending settle delay.
-        self._bump_view_generation(reason="view_settled", settle=False)
+        settled = self._bump_view_generation(reason="view_settled", settle=False)
+        try:
+            if isinstance(settled, dict) and "generation" in settled:
+                self._publish_settled_viewport(int(settled.get("generation")))
+        except Exception:
+            pass
         self._pending_motion_kind = "pan"
 
     def _current_view_signature(self):
@@ -519,16 +525,56 @@ class TilerWidget(QWidget, FORM_CLASS):
             if self._canvas is None:
                 return None
             ext = self._canvas.extent()
-            # Keep signature sensitive enough so real view changes expire stale requests quickly.
+            # Keep signature highly sensitive so intermediate pans always rotate generation.
             return (
-                round(float(ext.xMinimum()), 3),
-                round(float(ext.yMinimum()), 3),
-                round(float(ext.xMaximum()), 3),
-                round(float(ext.yMaximum()), 3),
-                round(float(self._canvas.scale()), 2),
+                round(float(ext.xMinimum()), 7),
+                round(float(ext.yMinimum()), 7),
+                round(float(ext.xMaximum()), 7),
+                round(float(ext.yMaximum()), 7),
+                round(float(self._canvas.scale()), 6),
             )
         except Exception:
             return None
+
+    def _current_view_bbox_lonlat(self):
+        try:
+            if self._canvas is None:
+                return None
+            ext = self._canvas.extent()
+            src = self._canvas.mapSettings().destinationCrs()
+            dst = QgsCoordinateReferenceSystem("EPSG:4326")
+            tr = QgsCoordinateTransform(src, dst, QgsProject.instance())
+            ll = tr.transform(ext.xMinimum(), ext.yMinimum())
+            ur = tr.transform(ext.xMaximum(), ext.yMaximum())
+            min_lon = min(float(ll.x()), float(ur.x()))
+            max_lon = max(float(ll.x()), float(ur.x()))
+            min_lat = min(float(ll.y()), float(ur.y()))
+            max_lat = max(float(ll.y()), float(ur.y()))
+            return (min_lon, min_lat, max_lon, max_lat)
+        except Exception:
+            return None
+
+    def _publish_settled_viewport(self, generation: int):
+        bbox = self._current_view_bbox_lonlat()
+        if bbox is None:
+            return
+        min_lon, min_lat, max_lon, max_lat = bbox
+        try:
+            self._http_json_get(
+                self._diag_url(
+                    "/diag/set-viewport"
+                    f"?generation={int(generation)}"
+                    f"&min_lon={min_lon:.8f}"
+                    f"&min_lat={min_lat:.8f}"
+                    f"&max_lon={max_lon:.8f}"
+                    f"&max_lat={max_lat:.8f}"
+                    "&pad_deg=0.00"
+                    "&pad_tiles=0"
+                ),
+                timeout=0.7,
+            )
+        except Exception:
+            pass
 
     def _poll_tiler_logs(self):
         if not self._is_local_server_active():

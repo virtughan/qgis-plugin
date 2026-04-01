@@ -11,6 +11,7 @@ import logging
 import traceback
 import time
 import re
+import math
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -318,11 +319,12 @@ app = FastAPI(title="virtughan tiler (QGIS local)")
 processor = TileProcessor(cache_time=60)  
 logger = logging.getLogger(__name__)
 _TILER_CONCURRENCY = _resolve_tiler_concurrency()
-_TILE_REQUEST_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
+_TILE_REQUEST_SEMAPHORES: dict[tuple[int, int], asyncio.Semaphore] = {}
 _QUEUE_WAIT_TIMEOUT_SEC = 12.0
 _TILE_COMPUTE_TIMEOUT_SEC = 16.0
 _LAST_TILE_ERROR: dict = {}
 _VIEW_GENERATION = 0
+_SEMAPHORE_EPOCH = 0
 _ACTIVE_TILE_REQUESTS = 0
 _TILER_LOGS = deque(maxlen=500)
 _TILER_LOG_SEQ = 0
@@ -332,6 +334,8 @@ _STALE_CHECK_SLICE_SEC = 0.05
 _DEFAULT_VIEW_SETTLE_DELAY_SEC = max(0.0, float(os.getenv("VIRTUGHAN_VIEW_SETTLE_DELAY_SEC", "1.5") or 1.5))
 _VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
 _LAST_VIEW_CHANGE_MONOTONIC = 0.0
+_GENERATION_REQUEST_TASKS: dict[int, set[asyncio.Task]] = {}
+_SETTLED_VIEWPORT: dict = {}
 _CPU_COUNT = max(1, int(os.cpu_count() or 1))
 _MAX_DYNAMIC_CONCURRENCY = 4
 _MIN_DYNAMIC_CONCURRENCY = 4
@@ -352,14 +356,55 @@ def _dynamic_concurrency_limit() -> int:
 
 
 def _get_request_semaphore() -> asyncio.Semaphore:
-    """Return a semaphore bound to the currently running event loop."""
+    """Return a semaphore bound to current event loop and generation epoch."""
     loop = asyncio.get_running_loop()
-    key = id(loop)
+    key = (id(loop), int(_SEMAPHORE_EPOCH))
     sem = _TILE_REQUEST_SEMAPHORES.get(key)
     if sem is None:
         sem = asyncio.Semaphore(max(_TILER_CONCURRENCY, _MAX_DYNAMIC_CONCURRENCY))
         _TILE_REQUEST_SEMAPHORES[key] = sem
     return sem
+
+
+def _register_request_task(generation: int) -> Optional[asyncio.Task]:
+    try:
+        task = asyncio.current_task()
+    except Exception:
+        return None
+    if task is None:
+        return None
+    bucket = _GENERATION_REQUEST_TASKS.setdefault(int(generation), set())
+    bucket.add(task)
+    return task
+
+
+def _unregister_request_task(generation: int, task: Optional[asyncio.Task]) -> None:
+    if task is None:
+        return
+    bucket = _GENERATION_REQUEST_TASKS.get(int(generation))
+    if not bucket:
+        return
+    try:
+        bucket.discard(task)
+    except Exception:
+        pass
+    if not bucket:
+        _GENERATION_REQUEST_TASKS.pop(int(generation), None)
+
+
+def _cancel_stale_request_tasks(current_generation: int) -> int:
+    cancelled = 0
+    for gen, tasks in list(_GENERATION_REQUEST_TASKS.items()):
+        if int(gen) >= int(current_generation):
+            continue
+        for task in list(tasks):
+            try:
+                if not task.done():
+                    task.cancel()
+                    cancelled += 1
+            except Exception:
+                continue
+    return cancelled
 
 
 def _append_tiler_log(level: str, message: str, **extra):
@@ -414,6 +459,82 @@ def _retryable_tile_unavailable(reason: str, status_code: int = 503) -> Response
             "X-Tile-Reason": reason,
         },
     )
+
+
+def _defer_during_settle_response(reason: str = "view_settling") -> Response:
+    """Return a lightweight non-cacheable response while the view is still moving."""
+    return Response(
+        status_code=204,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Tile-Reason": reason,
+        },
+    )
+
+
+def _tile_bounds_lonlat(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+    n = 2 ** int(z)
+    lon_left = (float(x) / n) * 360.0 - 180.0
+    lon_right = ((float(x) + 1.0) / n) * 360.0 - 180.0
+    lat_top = math.degrees(math.atan(math.sinh(math.pi * (1.0 - (2.0 * float(y) / n)))))
+    lat_bottom = math.degrees(math.atan(math.sinh(math.pi * (1.0 - (2.0 * (float(y) + 1.0) / n)))))
+    min_lon = min(lon_left, lon_right)
+    max_lon = max(lon_left, lon_right)
+    min_lat = min(lat_bottom, lat_top)
+    max_lat = max(lat_bottom, lat_top)
+    return (min_lon, min_lat, max_lon, max_lat)
+
+
+def _lon_to_tile_x(lon: float, z: int) -> float:
+    n = 2.0 ** int(z)
+    return (float(lon) + 180.0) / 360.0 * n
+
+
+def _lat_to_tile_y(lat: float, z: int) -> float:
+    n = 2.0 ** int(z)
+    lat_clamped = max(-85.05112878, min(85.05112878, float(lat)))
+    lat_rad = math.radians(lat_clamped)
+    return (1.0 - math.log(math.tan(lat_rad) + (1.0 / math.cos(lat_rad))) / math.pi) / 2.0 * n
+
+
+def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -> bool:
+    vp = _SETTLED_VIEWPORT
+    if not vp:
+        return True
+    try:
+        vp_gen = int(vp.get("generation", -1))
+    except Exception:
+        vp_gen = -1
+    if vp_gen != int(generation):
+        return True
+
+    try:
+        min_lon = float(vp["min_lon"])
+        min_lat = float(vp["min_lat"])
+        max_lon = float(vp["max_lon"])
+        max_lat = float(vp["max_lat"])
+        pad_tiles = max(0, int(vp.get("pad_tiles", 0)))
+    except Exception:
+        return True
+
+    try:
+        x0 = int(math.floor(_lon_to_tile_x(min_lon, z))) - pad_tiles
+        x1 = int(math.floor(_lon_to_tile_x(max_lon, z))) + pad_tiles
+        y0 = int(math.floor(_lat_to_tile_y(max_lat, z))) - pad_tiles
+        y1 = int(math.floor(_lat_to_tile_y(min_lat, z))) + pad_tiles
+
+        n = (2 ** int(z)) - 1
+        x0 = max(0, min(n, x0))
+        x1 = max(0, min(n, x1))
+        y0 = max(0, min(n, y0))
+        y1 = max(0, min(n, y1))
+        if x0 > x1 or y0 > y1:
+            return False
+        return x0 <= int(x) <= x1 and y0 <= int(y) <= y1
+    except Exception:
+        return True
 
 
 def _record_tile_failure(reason: str, status: int, req_tag: str, req_url: str, **extra) -> None:
@@ -590,8 +711,12 @@ async def bump_generation(
     settle: bool = Query(True),
     settle_delay_sec: Optional[float] = Query(None),
 ):
-    global _VIEW_GENERATION, _LAST_VIEW_CHANGE_MONOTONIC, _VIEW_SETTLE_DELAY_SEC
+    global _VIEW_GENERATION, _SEMAPHORE_EPOCH, _LAST_VIEW_CHANGE_MONOTONIC, _VIEW_SETTLE_DELAY_SEC
     _VIEW_GENERATION += 1
+    _SEMAPHORE_EPOCH = int(_VIEW_GENERATION)
+    cancelled_tasks = _cancel_stale_request_tasks(_VIEW_GENERATION)
+    # Rotate semaphores so new viewport requests do not wait behind stale generations.
+    _TILE_REQUEST_SEMAPHORES.clear()
     if settle:
         if settle_delay_sec is not None:
             try:
@@ -605,12 +730,14 @@ async def bump_generation(
         reason=reason,
         generation=_VIEW_GENERATION,
         settle=bool(settle),
+        cancelled_stale_tasks=int(cancelled_tasks),
         settle_delay_sec=round(float(_VIEW_SETTLE_DELAY_SEC), 3),
     )
     return {
         "generation": _VIEW_GENERATION,
         "reason": reason,
         "settle": bool(settle),
+        "cancelled_stale_tasks": int(cancelled_tasks),
         "settle_delay_sec": float(_VIEW_SETTLE_DELAY_SEC),
     }
 
@@ -625,6 +752,36 @@ async def diag_logs(since_id: int = Query(0)):
         "active_requests": _ACTIVE_TILE_REQUESTS,
         "request_concurrency": _TILER_CONCURRENCY,
     }
+
+
+@app.post("/diag/set-viewport")
+@app.get("/diag/set-viewport")
+async def set_viewport(
+    generation: int = Query(...),
+    min_lon: float = Query(...),
+    min_lat: float = Query(...),
+    max_lon: float = Query(...),
+    max_lat: float = Query(...),
+    pad_deg: float = Query(0.02),
+    pad_tiles: int = Query(0),
+):
+    global _SETTLED_VIEWPORT
+    lo_lon = min(float(min_lon), float(max_lon))
+    hi_lon = max(float(min_lon), float(max_lon))
+    lo_lat = min(float(min_lat), float(max_lat))
+    hi_lat = max(float(min_lat), float(max_lat))
+    _SETTLED_VIEWPORT = {
+        "generation": int(generation),
+        "min_lon": lo_lon,
+        "min_lat": lo_lat,
+        "max_lon": hi_lon,
+        "max_lat": hi_lat,
+        "pad_deg": max(0.0, float(pad_deg)),
+        "pad_tiles": max(0, int(pad_tiles)),
+        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    }
+    _append_tiler_log("info", "Settled viewport updated", **_SETTLED_VIEWPORT)
+    return _SETTLED_VIEWPORT
 
 
 @app.get("/diag/runtime")
@@ -675,6 +832,7 @@ async def get_tile(
 
     req_tag = f"{z}/{x}/{y}"
     request_generation = int(_VIEW_GENERATION)
+    request_task = _register_request_task(request_generation)
     req_url = str(request.url)
     _append_tile_url_sample(tile=req_tag, full_url=req_url)
     global _ACTIVE_TILE_REQUESTS
@@ -682,12 +840,13 @@ async def get_tile(
 
     acquired = False
     counted_active = False
+    compute_task: Optional[asyncio.Task] = None
     try:
         if _is_view_settling():
             wait_sec = _view_settle_remaining_sec()
             if wait_sec > 0.0:
-                _append_tile_event_log("info", "Waiting for view settle", tile=req_tag, wait_sec=round(wait_sec, 3))
-                await asyncio.sleep(wait_sec)
+                _append_tile_event_log("info", "Deferred tile while view is settling", tile=req_tag, wait_sec=round(wait_sec, 3))
+                return _defer_during_settle_response("view_settling")
 
         current_limit = _dynamic_concurrency_limit()
         _append_tile_event_log(
@@ -726,6 +885,10 @@ async def get_tile(
         if _is_stale_generation(request_generation):
             _append_tile_event_log("info", "Dropped stale tile before compute", tile=req_tag)
             return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
+
+        if not _tile_intersects_settled_viewport(z=z, x=x, y=y, generation=request_generation):
+            _append_tile_event_log("info", "Deferred tile outside settled viewport", tile=req_tag)
+            return _defer_during_settle_response("outside_settled_viewport")
 
         compute_task = asyncio.create_task(
             _generate_tile_with_cache_fallback(
@@ -790,6 +953,11 @@ async def get_tile(
         )
         return _retryable_tile_unavailable("tile_compute_timeout", status_code=504)
     except asyncio.CancelledError:
+        try:
+            if compute_task is not None and not compute_task.done():
+                compute_task.cancel()
+        except Exception:
+            pass
         _append_tile_event_log("warning", "Tile generation cancelled", tile=req_tag)
         _record_tile_failure(
             reason="tile_compute_cancelled",
@@ -842,6 +1010,7 @@ async def get_tile(
         logger.exception("Tile request failed", exc_info=ex)
         return JSONResponse(content=err_payload, status_code=500)
     finally:
+        _unregister_request_task(request_generation, request_task)
         if acquired:
             try:
                 sem.release()
