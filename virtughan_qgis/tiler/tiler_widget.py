@@ -56,6 +56,8 @@ FORM_CLASS, _ = uic.loadUiType(os.path.join(os.path.dirname(__file__), "tiler_fo
 
 # Keep runtime log lines across Tiler panel close/reopen within the same QGIS session.
 _TILER_UI_SESSION_LOGS = deque(maxlen=2000)
+_PAN_SETTLE_MS = 1500
+_ZOOM_SETTLE_MS = 3000
 
 
 class _InProcessServerManager:
@@ -254,7 +256,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._last_tiler_log_id = 0
         self._view_change_timer = QTimer(self)
         self._view_change_timer.setSingleShot(True)
-        self._view_change_timer.setInterval(300)
+        self._view_change_timer.setInterval(1500)
         self._view_change_timer.timeout.connect(self._notify_view_generation_change)
         self._tiler_log_timer = QTimer(self)
         self._tiler_log_timer.setInterval(1200)
@@ -263,6 +265,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._last_view_signature = None
         self._last_active_worker_limit = None
         self._preferred_workers = None
+        self._pending_motion_kind = "pan"
 
         self._init_defaults()
         self._init_index_controls()
@@ -426,14 +429,37 @@ class TilerWidget(QWidget, FORM_CLASS):
             data = resp.read().decode("utf-8", errors="replace")
             return json.loads(data)
 
-    def _on_canvas_view_changed(self):
+    def _on_canvas_view_changed(self, motion_kind: str = "pan"):
         if not self._is_local_server_active():
             return
-        # Debounce rapid pan/zoom bursts before bumping view generation.
+        sig = self._current_view_signature()
+        if sig is None:
+            return
+        if self._last_view_signature == sig:
+            return
+
+        if motion_kind == "zoom":
+            self._pending_motion_kind = "zoom"
+        elif self._pending_motion_kind != "zoom":
+            self._pending_motion_kind = "pan"
+
+        settle_ms = _ZOOM_SETTLE_MS if self._pending_motion_kind == "zoom" else _PAN_SETTLE_MS
+        settle_sec = settle_ms / 1000.0
+
+        # Immediate generation bump cancels old-view requests quickly.
+        self._last_view_signature = sig
+        self._bump_view_generation(
+            reason=f"view_changed_immediate_{self._pending_motion_kind}",
+            settle=True,
+            settle_delay_sec=settle_sec,
+        )
+
+        # Debounced settled bump starts only after pan/zoom quiet period.
+        self._view_change_timer.setInterval(settle_ms)
         self._view_change_timer.start()
 
     def _on_canvas_scale_changed(self, _scale):
-        self._on_canvas_view_changed()
+        self._on_canvas_view_changed("zoom")
 
     def _disconnect_canvas_signals(self):
         try:
@@ -460,19 +486,33 @@ class TilerWidget(QWidget, FORM_CLASS):
         except Exception:
             return False
 
+    def _bump_view_generation(self, reason: str, settle: bool, settle_delay_sec: float | None = None):
+        settle_q = "1" if settle else "0"
+        delay_q = ""
+        if settle and settle_delay_sec is not None:
+            delay_q = f"&settle_delay_sec={float(settle_delay_sec):.3f}"
+        try:
+            self._http_json_get(
+                self._diag_url(f"/diag/bump-generation?reason={reason}&settle={settle_q}{delay_q}"),
+                timeout=0.5,
+            )
+        except Exception:
+            pass
+
     def _notify_view_generation_change(self):
         if not self._is_local_server_active():
             return
         sig = self._current_view_signature()
         if sig is None:
             return
-        if self._last_view_signature == sig:
+        if self._last_view_signature != sig:
+            # View moved again before settle timer fired; cancel stale work immediately.
+            self._on_canvas_view_changed(self._pending_motion_kind)
             return
-        self._last_view_signature = sig
-        try:
-            self._http_json_get(self._diag_url("/diag/bump-generation?reason=view_changed"), timeout=0.5)
-        except Exception:
-            pass
+
+        # View appears stable; bump generation without extending settle delay.
+        self._bump_view_generation(reason="view_settled", settle=False)
+        self._pending_motion_kind = "pan"
 
     def _current_view_signature(self):
         try:

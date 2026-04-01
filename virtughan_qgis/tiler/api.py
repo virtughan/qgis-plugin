@@ -107,24 +107,32 @@ def _patch_rasterio_parsed_path_compat() -> None:
         if not isinstance(fp, str):
             return fp
         s = fp.strip()
-        if not (s.startswith("_ParsedPath(") and "path='" in s and "scheme='" in s):
+        # Handle wrapped string repr forms like "'_ParsedPath(...)'" or "\"ParsedPath(...)\"".
+        if (len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"')):
+            s = s[1:-1].strip()
+
+        if not (
+            (s.startswith("_ParsedPath(") or s.startswith("ParsedPath("))
+            and "path=" in s
+            and "scheme=" in s
+        ):
             return fp
 
         try:
-            # Example:
+            # Examples:
             # _ParsedPath(path='host/key.tif', archive=None, scheme='https')
-            path_m = re.search(r"path='([^']*)'", s)
-            scheme_m = re.search(r"scheme='([^']*)'", s)
-            archive_m = re.search(r"archive='([^']*)'|archive=None", s)
+            # ParsedPath(path="host/key.tif", archive=None, scheme="https")
+            path_m = re.search(r"path=(?:'([^']*)'|\"([^\"]*)\")", s)
+            scheme_m = re.search(r"scheme=(?:'([^']*)'|\"([^\"]*)\")", s)
+            archive_m = re.search(r"archive=(?:'([^']*)'|\"([^\"]*)\"|None)", s)
             if not path_m or not scheme_m:
                 return fp
 
-            path_val = path_m.group(1)
-            scheme_val = scheme_m.group(1)
+            path_val = path_m.group(1) or path_m.group(2) or ""
+            scheme_val = scheme_m.group(1) or scheme_m.group(2) or ""
             archive_val = None
             if archive_m:
-                # group(1) exists only when archive='...'
-                archive_val = archive_m.group(1)
+                archive_val = archive_m.group(1) or archive_m.group(2)
 
             if not scheme_val:
                 return path_val
@@ -159,7 +167,18 @@ def _patch_rasterio_parsed_path_compat() -> None:
         _patched_open._virtughan_patched = True
         rasterio.open = _patched_open
 
-    # Some call paths fail before rasterio.open is reached, inside _parse_path.
+    def _wrap_parse_callable(parse_func):
+        if not parse_func or getattr(parse_func, "_virtughan_patched", False):
+            return parse_func
+
+        def _patched_parse(fp, *args, __orig=parse_func, **kwargs):
+            fp = _coerce_if_foreign_parsed_path(fp)
+            return __orig(fp, *args, **kwargs)
+
+        _patched_parse._virtughan_patched = True
+        return _patched_parse
+
+    # Some call paths fail before rasterio.open is reached, inside parse_path/_parse_path.
     # Patch all known rasterio parse modules to avoid mixed-identity gaps.
     parse_mod_names = {"rasterio._path", "rasterio.path"}
     parse_mod_names.update(
@@ -172,16 +191,27 @@ def _patch_rasterio_parsed_path_compat() -> None:
         except Exception:
             continue
 
-        original_parse_path = getattr(path_mod, "_parse_path", None)
-        if not original_parse_path or getattr(original_parse_path, "_virtughan_patched", False):
+        if hasattr(path_mod, "_parse_path"):
+            patched = _wrap_parse_callable(getattr(path_mod, "_parse_path", None))
+            if patched is not None:
+                path_mod._parse_path = patched
+        if hasattr(path_mod, "parse_path"):
+            patched = _wrap_parse_callable(getattr(path_mod, "parse_path", None))
+            if patched is not None:
+                path_mod.parse_path = patched
+
+    # rio-tiler can import parse_path into module scope; patch those aliases as well.
+    for mod_name, mod in list(sys.modules.items()):
+        if not mod_name.startswith("rio_tiler"):
             continue
-
-        def _patched_parse_path(fp, *args, __orig=original_parse_path, **kwargs):
-            fp = _coerce_if_foreign_parsed_path(fp)
-            return __orig(fp, *args, **kwargs)
-
-        _patched_parse_path._virtughan_patched = True
-        path_mod._parse_path = _patched_parse_path
+        try:
+            for attr_name in ("parse_path", "_parse_path"):
+                if hasattr(mod, attr_name):
+                    patched = _wrap_parse_callable(getattr(mod, attr_name, None))
+                    if patched is not None:
+                        setattr(mod, attr_name, patched)
+        except Exception:
+            continue
 
 
 _patch_rasterio_parsed_path_compat()
@@ -299,7 +329,8 @@ _TILER_LOG_SEQ = 0
 _URL_LOG_SAMPLE_LIMIT = 5
 _URL_LOGGED_COUNT = 0
 _STALE_CHECK_SLICE_SEC = 0.05
-_VIEW_SETTLE_DELAY_SEC = max(0.0, float(os.getenv("VIRTUGHAN_VIEW_SETTLE_DELAY_SEC", "0.35") or 0.35))
+_DEFAULT_VIEW_SETTLE_DELAY_SEC = max(0.0, float(os.getenv("VIRTUGHAN_VIEW_SETTLE_DELAY_SEC", "1.5") or 1.5))
+_VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
 _LAST_VIEW_CHANGE_MONOTONIC = 0.0
 _CPU_COUNT = max(1, int(os.cpu_count() or 1))
 _MAX_DYNAMIC_CONCURRENCY = 4
@@ -554,12 +585,34 @@ async def diag_last_error():
 
 @app.post("/diag/bump-generation")
 @app.get("/diag/bump-generation")
-async def bump_generation(reason: str = Query("view_changed")):
-    global _VIEW_GENERATION, _LAST_VIEW_CHANGE_MONOTONIC
+async def bump_generation(
+    reason: str = Query("view_changed"),
+    settle: bool = Query(True),
+    settle_delay_sec: Optional[float] = Query(None),
+):
+    global _VIEW_GENERATION, _LAST_VIEW_CHANGE_MONOTONIC, _VIEW_SETTLE_DELAY_SEC
     _VIEW_GENERATION += 1
-    _LAST_VIEW_CHANGE_MONOTONIC = time.monotonic()
-    _append_tiler_log("info", "View generation bumped", reason=reason, generation=_VIEW_GENERATION)
-    return {"generation": _VIEW_GENERATION, "reason": reason}
+    if settle:
+        if settle_delay_sec is not None:
+            try:
+                _VIEW_SETTLE_DELAY_SEC = max(0.0, float(settle_delay_sec))
+            except Exception:
+                _VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
+        _LAST_VIEW_CHANGE_MONOTONIC = time.monotonic()
+    _append_tiler_log(
+        "info",
+        "View generation bumped",
+        reason=reason,
+        generation=_VIEW_GENERATION,
+        settle=bool(settle),
+        settle_delay_sec=round(float(_VIEW_SETTLE_DELAY_SEC), 3),
+    )
+    return {
+        "generation": _VIEW_GENERATION,
+        "reason": reason,
+        "settle": bool(settle),
+        "settle_delay_sec": float(_VIEW_SETTLE_DELAY_SEC),
+    }
 
 
 @app.get("/diag/logs")
@@ -631,7 +684,7 @@ async def get_tile(
     counted_active = False
     try:
         if _is_view_settling():
-            wait_sec = min(0.6, _view_settle_remaining_sec())
+            wait_sec = _view_settle_remaining_sec()
             if wait_sec > 0.0:
                 _append_tile_event_log("info", "Waiting for view settle", tile=req_tag, wait_sec=round(wait_sec, 3))
                 await asyncio.sleep(wait_sec)
@@ -674,7 +727,7 @@ async def get_tile(
             _append_tile_event_log("info", "Dropped stale tile before compute", tile=req_tag)
             return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
 
-        image_bytes, feature = await asyncio.wait_for(
+        compute_task = asyncio.create_task(
             _generate_tile_with_cache_fallback(
                 x=x,
                 y=y,
@@ -688,9 +741,28 @@ async def get_tile(
                 colormap_str=colormap_str,
                 operation=operation,
                 latest=not timeseries,
-            ),
-            timeout=_TILE_COMPUTE_TIMEOUT_SEC,
+            )
         )
+        elapsed = 0.0
+        image_bytes = None
+        feature = None
+        while True:
+            if _is_stale_generation(request_generation):
+                compute_task.cancel()
+                _append_tile_event_log("info", "Cancelled stale tile during compute", tile=req_tag)
+                return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
+
+            remaining = _TILE_COMPUTE_TIMEOUT_SEC - elapsed
+            if remaining <= 0.0:
+                compute_task.cancel()
+                raise asyncio.TimeoutError()
+
+            slice_sec = min(_STALE_CHECK_SLICE_SEC, remaining)
+            try:
+                image_bytes, feature = await asyncio.wait_for(asyncio.shield(compute_task), timeout=slice_sec)
+                break
+            except asyncio.TimeoutError:
+                elapsed += slice_sec
         headers = {}
         try:
             props = feature.get("properties", {})
