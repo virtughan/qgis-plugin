@@ -926,6 +926,16 @@ class TilerWidget(QWidget, FORM_CLASS):
         band1 = self.band1Combo.currentText().strip()
         band2 = self.band2Combo.currentText().strip()
         formula = self.formulaLine.text().strip()
+
+        # In Simple mode, selected index preset is authoritative at run time.
+        if self.simpleModeRadio.isChecked():
+            preset = get_index_preset(self.indexCombo.currentText())
+            if not preset:
+                raise ValueError("Please select a valid index preset.")
+            band1 = (preset.get("band1") or "").strip()
+            band2 = (preset.get("band2") or "").strip()
+            formula = (preset.get("formula") or "").strip()
+
         timeseries = self.timeseriesCheck.isChecked()
         operation = self.operationCombo.currentText().strip() if timeseries else None
         return (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation)
@@ -981,6 +991,18 @@ class TilerWidget(QWidget, FORM_CLASS):
             backend_url = self.backendUrlLine.text().strip()
             layer_name = self.layerNameLine.text().strip()
             (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation) = self._collect_params()
+
+            mode_label = "Simple" if self.simpleModeRadio.isChecked() else "Advanced"
+            preset_label = (self.indexCombo.currentText() or "").strip() if self.simpleModeRadio.isChecked() else "(custom)"
+            self._log(
+                "Index selection: "
+                f"mode={mode_label}, "
+                f"preset={preset_label}, "
+                f"formula={formula}, "
+                f"band1={band1}, "
+                f"band2={band2 or '-'}"
+            )
+
             params = self.logic.default_params(
                 start_date=start_date,
                 end_date=end_date,
