@@ -5,6 +5,7 @@
 
 - **plugin-uninstall-repair**: improves uninstall/reinstall repair flow and runtime cleanup handling during plugin uninstall lifecycle
 - **tiler-viewport-priority**: hardens Tiler request controls with settle-delay pacing, stale-request cancellation, and strict settled-viewport tile gating
+- **index-selector-authority**: makes Simple-mode index dropdown authoritative in both Compute and Tiler (preset-driven band/formula at run time) and adds explicit resolved-parameter log lines for easier mismatch debugging
 
 ## v1.0.10 (2026-03-31)
 
