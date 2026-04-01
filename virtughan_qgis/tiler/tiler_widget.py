@@ -5,11 +5,24 @@ import socket
 import threading
 import importlib
 import logging
+import json
+import urllib.request
+from collections import deque
 
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import QDate, Qt
+from qgis.PyQt.QtCore import QDate, Qt, QTimer
 from qgis.PyQt.QtGui import QPixmap
-from qgis.PyQt.QtWidgets import QWidget, QMessageBox, QDockWidget, QLabel, QHBoxLayout
+from qgis.PyQt.QtWidgets import (
+    QWidget,
+    QMessageBox,
+    QDockWidget,
+    QLabel,
+    QHBoxLayout,
+    QVBoxLayout,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+)
 from qgis.core import QgsMessageLog, Qgis, QgsProject
 
 from .tiler_logic import TilerLogic
@@ -40,6 +53,9 @@ except Exception:
     match_index_preset = lambda _b1, _b2, _fx: None
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(os.path.dirname(__file__), "tiler_form.ui"))
+
+# Keep runtime log lines across Tiler panel close/reopen within the same QGIS session.
+_TILER_UI_SESSION_LOGS = deque(maxlen=2000)
 
 
 class _InProcessServerManager:
@@ -78,13 +94,29 @@ class _InProcessServerManager:
         from fastapi import FastAPI
         import uvicorn
 
-        # Prefer plugin-managed runtime dependencies over user site-packages.
-        for dep_path in (
-            RUNTIME_SITE_PACKAGES_DIR,
-            RUNTIME_ROOT,
-            RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
-            RUNTIME_FALLBACK_ROOT,
-        ):
+        # Use exactly one runtime dependency root to avoid class identity mismatches
+        # (e.g., rasterio _ParsedPath loaded from different runtime folders).
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
+
+        chosen_paths = []
+        for site_pkgs, root in runtime_pairs:
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            virtughan_pkg = os.path.join(site_pkgs, "virtughan")
+            if os.path.isdir(virtughan_pkg):
+                chosen_paths = [site_pkgs, root]
+                break
+
+        if not chosen_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    chosen_paths = [site_pkgs, root]
+                    break
+
+        for dep_path in chosen_paths:
             if dep_path and os.path.isdir(dep_path) and dep_path not in sys.path:
                 sys.path.insert(0, dep_path)
 
@@ -219,13 +251,33 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.server = _InProcessServerManager()
         self._tiler_layer_id = None  # track last added tiler layer id
         self._index_updating = False
+        self._last_tiler_log_id = 0
+        self._view_change_timer = QTimer(self)
+        self._view_change_timer.setSingleShot(True)
+        self._view_change_timer.setInterval(40)
+        self._view_change_timer.timeout.connect(self._notify_view_generation_change)
+        self._tiler_log_timer = QTimer(self)
+        self._tiler_log_timer.setInterval(1200)
+        self._tiler_log_timer.timeout.connect(self._poll_tiler_logs)
+        self._canvas = None
+        self._last_view_signature = None
+        self._last_active_worker_limit = None
+        self._preferred_workers = None
 
         self._init_defaults()
         self._init_index_controls()
+        self._init_log_panel()
         self._wire_signals()
         self._apply_timeseries_visibility()
         self._apply_localserver_visibility()
         QgsProject.instance().layersRemoved.connect(self._on_layers_removed)
+        try:
+            self._canvas = self.iface.mapCanvas()
+            self._canvas.extentsChanged.connect(self._on_canvas_view_changed)
+            self._canvas.scaleChanged.connect(self._on_canvas_scale_changed)
+            self.destroyed.connect(lambda *_: self._disconnect_canvas_signals())
+        except Exception:
+            pass
 
         try:
             self.setMinimumSize(self.sizeHint())
@@ -264,6 +316,238 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _log(self, msg: str):
         QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
+        try:
+            _TILER_UI_SESSION_LOGS.append(str(msg))
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "_tilerLogText") and self._tilerLogText is not None:
+                self._tilerLogText.appendPlainText(msg)
+        except Exception:
+            pass
+
+    def _init_log_panel(self):
+        root_layout = self.findChild(QVBoxLayout, "verticalLayout_root")
+        if root_layout is None:
+            return
+
+        log_title = QLabel("Tiler Runtime Log")
+        log_title.setStyleSheet("font-weight: 600;")
+        self._tilerLogTitle = log_title
+        self._tilerLogText = QPlainTextEdit(self)
+        self._tilerLogText.setReadOnly(True)
+        self._tilerLogText.setMinimumHeight(72)
+        self._tilerLogText.setMaximumHeight(120)
+        self._tilerLogText.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        clear_btn = QPushButton("Clear Log")
+        clear_btn.clicked.connect(self._clear_tiler_log)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_row.addWidget(clear_btn)
+        self._tilerLogButtons = btn_row
+
+        insert_idx = max(0, root_layout.count() - 1)
+        root_layout.insertWidget(insert_idx, log_title)
+        root_layout.insertWidget(insert_idx + 1, self._tilerLogText)
+        root_layout.insertLayout(insert_idx + 2, btn_row)
+
+        # Restore buffered session logs so closing/reopening the panel keeps history.
+        try:
+            if _TILER_UI_SESSION_LOGS:
+                self._tilerLogText.setPlainText("\n".join(_TILER_UI_SESSION_LOGS))
+        except Exception:
+            pass
+
+        try:
+            self.groupBoxLocal.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        except Exception:
+            pass
+        self._rebalance_vertical_layout()
+
+    def _rebalance_vertical_layout(self):
+        """Keep advanced controls readable by compacting log panel when needed."""
+        try:
+            advanced_open = bool(self.groupBoxLocal.isVisible())
+        except Exception:
+            advanced_open = False
+
+        try:
+            if advanced_open:
+                self.groupBoxLocal.setMinimumHeight(160)
+                self.groupBoxLocal.setMaximumHeight(260)
+            else:
+                self.groupBoxLocal.setMinimumHeight(0)
+                self.groupBoxLocal.setMaximumHeight(200)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "_tilerLogText") and self._tilerLogText is not None:
+                if advanced_open:
+                    self._tilerLogText.setMinimumHeight(48)
+                    self._tilerLogText.setMaximumHeight(80)
+                else:
+                    self._tilerLogText.setMinimumHeight(72)
+                    self._tilerLogText.setMaximumHeight(120)
+        except Exception:
+            pass
+
+        try:
+            self.adjustSize()
+        except Exception:
+            pass
+
+        try:
+            needed_h = int(self.sizeHint().height())
+            if advanced_open:
+                self.setMinimumHeight(max(self.minimumHeight(), needed_h))
+            else:
+                self.setMinimumHeight(0)
+        except Exception:
+            pass
+
+    def _clear_tiler_log(self):
+        try:
+            self._tilerLogText.clear()
+            self._last_tiler_log_id = 0
+            _TILER_UI_SESSION_LOGS.clear()
+        except Exception:
+            pass
+
+    def _diag_url(self, path: str) -> str:
+        base = (self.backendUrlLine.text().strip() or "http://127.0.0.1:8002").rstrip("/")
+        return f"{base}{path}"
+
+    def _http_json_get(self, url: str, timeout: float = 0.6):
+        req = urllib.request.Request(url=url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read().decode("utf-8", errors="replace")
+            return json.loads(data)
+
+    def _on_canvas_view_changed(self):
+        if not self._is_local_server_active():
+            return
+        # Expire stale requests as quickly as possible when view/zoom changes.
+        self._notify_view_generation_change()
+        self._view_change_timer.start()
+
+    def _on_canvas_scale_changed(self, _scale):
+        self._on_canvas_view_changed()
+
+    def _disconnect_canvas_signals(self):
+        try:
+            if self._canvas is None:
+                return
+            try:
+                self._canvas.extentsChanged.disconnect(self._on_canvas_view_changed)
+            except Exception:
+                pass
+            try:
+                self._canvas.scaleChanged.disconnect(self._on_canvas_scale_changed)
+            except Exception:
+                pass
+            self._canvas = None
+        except Exception:
+            pass
+
+    def _is_local_server_active(self) -> bool:
+        try:
+            return bool(self.runLocalCheck.isChecked() and self.server.is_running())
+        except RuntimeError:
+            # Can happen if Qt has already deleted child widgets during teardown.
+            return False
+        except Exception:
+            return False
+
+    def _notify_view_generation_change(self):
+        if not self._is_local_server_active():
+            return
+        sig = self._current_view_signature()
+        if sig is None:
+            return
+        if self._last_view_signature == sig:
+            return
+        self._last_view_signature = sig
+        try:
+            self._http_json_get(self._diag_url("/diag/bump-generation?reason=view_changed"), timeout=0.5)
+        except Exception:
+            pass
+
+    def _current_view_signature(self):
+        try:
+            if self._canvas is None:
+                return None
+            ext = self._canvas.extent()
+            # Keep signature sensitive enough so real view changes expire stale requests quickly.
+            return (
+                round(float(ext.xMinimum()), 3),
+                round(float(ext.yMinimum()), 3),
+                round(float(ext.xMaximum()), 3),
+                round(float(ext.yMaximum()), 3),
+                round(float(self._canvas.scale()), 2),
+            )
+        except Exception:
+            return None
+
+    def _poll_tiler_logs(self):
+        if not self._is_local_server_active():
+            self._update_worker_status_ui(None)
+            return
+        try:
+            payload = self._http_json_get(
+                self._diag_url(f"/diag/logs?since_id={int(self._last_tiler_log_id)}"),
+                timeout=0.7,
+            )
+        except Exception:
+            self._update_worker_status_ui(None)
+            return
+
+        # Keep fixed worker display stable; no runtime auto-change.
+        self._update_worker_status_ui(4)
+
+        rows = payload.get("rows", []) if isinstance(payload, dict) else []
+        if not rows:
+            return
+        for row in rows:
+            ts = row.get("ts", "")
+            lvl = str(row.get("level", "info")).upper()
+            msg = row.get("message", "")
+            tile = row.get("tile")
+            url = row.get("url")
+            err = row.get("error")
+            detail = row.get("detail")
+            status = row.get("status")
+            response = row.get("response")
+            reason = row.get("reason")
+            suffix = f" [{tile}]" if tile else ""
+            if url:
+                suffix += f" {url}"
+            if status is not None:
+                suffix += f" (status={status})"
+            if reason:
+                suffix += f" reason={reason}"
+            if response:
+                suffix += f" response={response}"
+            if err:
+                suffix += f" ({err})"
+            if detail:
+                suffix += f" - {detail}"
+            self._log(f"{ts} [{lvl}] {msg}{suffix}")
+        self._last_tiler_log_id = int(payload.get("last_id", self._last_tiler_log_id))
+
+    def _update_worker_status_ui(self, active_limit):
+        """Keep worker UI fixed at 4 for stable behavior."""
+        try:
+            self.labelWorkers.setText("Workers")
+            self.workersSpin.setSuffix("")
+            self.workersSpin.setEnabled(False)
+            self.workersSpin.setValue(4)
+            self.workersSpin.setToolTip("Fixed worker count (4).")
+            self._last_active_worker_limit = 4
+        except Exception:
+            pass
 
     # Reuse defaults from common (if available), else fallback
     def _load_common_defaults(self):
@@ -349,7 +633,8 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.portSpin.setRange(1, 65535)
             self.portSpin.setValue(8002)
         self.workersSpin.setRange(1, 64)
-        self.workersSpin.setValue(self._recommended_default_workers())
+        self.workersSpin.setValue(4)
+        self.workersSpin.setEnabled(False)
 
     def _wire_signals(self):
         self.addLayerBtn.clicked.connect(self._on_add_layer)
@@ -469,6 +754,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         # Update button text to indicate expanded/collapsed state
         new_text = "Advanced Options ▲" if not is_visible else "Advanced Options ▼"
         self.advancedToggleBtn.setText(new_text)
+        self._rebalance_vertical_layout()
 
     def _apply_localserver_visibility(self):
         enabled = self.runLocalCheck.isChecked()
@@ -564,7 +850,8 @@ class TilerWidget(QWidget, FORM_CLASS):
             app_path = self.appPathLine.text().strip()
             host = self.hostLine.text().strip() or "127.0.0.1"
             requested_port = int(self.portSpin.value() or 8002)
-            workers = max(1, int(self.workersSpin.value() or 1))
+            workers = 4
+            self._preferred_workers = workers
 
             if not self.server.is_running():
                 self.server.start(app_path=app_path, host=host, port=requested_port, workers=workers)
@@ -579,6 +866,10 @@ class TilerWidget(QWidget, FORM_CLASS):
                     f"Local uvicorn (in-process) listening at http://{host}:{bound_port} "
                     f"(request concurrency={effective_workers})"
                 )
+                self._log(f"Debug links: http://{host}:{bound_port}/health, http://{host}:{bound_port}/diag/logs?since_id=0, http://{host}:{bound_port}/diag/last-error")
+                self._log("Tile logs use compact [z/x/y] format; only first few requests include full URL samples.")
+                self._last_tiler_log_id = 0
+                self._tiler_log_timer.start()
                 self._apply_localserver_visibility()
             else:
                 self._log("Local server already running.")
@@ -588,6 +879,8 @@ class TilerWidget(QWidget, FORM_CLASS):
     def _on_stop_server(self):
         try:
             self.server.stop()
+            self._tiler_log_timer.stop()
+            self._update_worker_status_ui(None)
             self._log("Local server stopped.")
             self._apply_localserver_visibility()
         except Exception as e:
@@ -630,10 +923,20 @@ class TilerWidget(QWidget, FORM_CLASS):
             )
             if not still_has_tiler and self.server.is_running():
                 self.server.stop()
+                self._tiler_log_timer.stop()
                 self._log("Local server stopped (no more Tiler layers).")
                 self._apply_localserver_visibility()
         except Exception:
             pass
+
+    def closeEvent(self, event):
+        self._disconnect_canvas_signals()
+        try:
+            self._view_change_timer.stop()
+            self._tiler_log_timer.stop()
+        except Exception:
+            pass
+        super().closeEvent(event)
 
 
 class TilerDockWidget(QDockWidget):

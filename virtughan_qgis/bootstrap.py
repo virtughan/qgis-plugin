@@ -180,6 +180,16 @@ def _is_module_loaded_from_runtime(module) -> bool:
     return any(mod_file.startswith(runtime_site) for runtime_site in runtime_sites)
 
 
+def _is_path_loaded_from_runtime(path: str) -> bool:
+    mod_file = os.path.normpath(path or "")
+    if not mod_file:
+        return False
+    runtime_sites = [
+        os.path.normpath(path) for path in _runtime_site_packages_candidates()
+    ]
+    return any(mod_file.startswith(runtime_site) for runtime_site in runtime_sites)
+
+
 def _is_runtime_lock_failure(message: str) -> bool:
     text = (message or "").lower()
     markers = [
@@ -350,21 +360,22 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
     _activate_vendor_paths(preferred_site_packages)
     importlib.invalidate_caches()
     try:
-        import virtughan
-    except ImportError:
-        _set_last_error("VirtuGhan package not found")
-        _log("VirtuGhan package not found", Qgis.Warning)
-        return False
+        virtughan_spec = importlib.util.find_spec("virtughan")
+        if virtughan_spec is None:
+            _set_last_error("VirtuGhan package not found")
+            _log("VirtuGhan package not found", Qgis.Warning)
+            return False
     except Exception as exc:
-        _set_last_error(f"VirtuGhan import failed: {exc}")
-        _log(f"VirtuGhan import failed: {exc}", Qgis.Warning)
+        _set_last_error(f"VirtuGhan discovery failed: {exc}")
+        _log(f"VirtuGhan discovery failed: {exc}", Qgis.Warning)
         return False
 
-    installed = _get_installed_virtughan_version(virtughan)
-    if not _is_module_loaded_from_runtime(virtughan):
+    installed = _get_installed_distribution_version("virtughan")
+    virtughan_origin = getattr(virtughan_spec, "origin", "") or ""
+    if not _is_path_loaded_from_runtime(virtughan_origin):
         details = (
-            "VirtuGhan was loaded from a non-runtime path: "
-            f"{getattr(virtughan, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+            "VirtuGhan was discovered from a non-runtime path: "
+            f"{virtughan_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
         _log(details, Qgis.Warning)
@@ -465,11 +476,10 @@ def check_runtime_tls_bundle() -> tuple[bool, str | None]:
 
 
 def _check_plugin_import_health() -> tuple[bool, str | None]:
-    """Verify core plugin modules are discoverable without importing them."""
+    """Verify non-Tiler plugin modules are discoverable without importing them."""
     module_names = [
         "virtughan_qgis.engine.engine_widget",
         "virtughan_qgis.extractor.extractor_widget",
-        "virtughan_qgis.tiler.tiler_widget",
         "virtughan_qgis.processing_provider",
         "virtughan_qgis.common.hub_dialog",
     ]

@@ -11,6 +11,15 @@ from typing import Callable
 
 _LAST_INSTALL_ERROR: str | None = None
 
+_INSTALL_LOG_SUPPRESS_MARKERS = (
+    "earth-search.aws.element84.com/v1/search",
+    "falling back to a dummysession",
+    "cached path failed",
+    "retrying uncached tile generation",
+    "http request: post https://earth-search.aws.element84.com/v1/search",
+    "ttp request: post https://earth-search.aws.element84.com/v1/search",
+)
+
 
 def _set_last_install_error(message: str | None):
     global _LAST_INSTALL_ERROR
@@ -19,6 +28,13 @@ def _set_last_install_error(message: str | None):
 
 def get_last_install_error() -> str | None:
     return _LAST_INSTALL_ERROR
+
+
+def _is_unrelated_runtime_noise(line: str) -> bool:
+    lower = (line or "").strip().lower()
+    if not lower:
+        return False
+    return any(marker in lower for marker in _INSTALL_LOG_SUPPRESS_MARKERS)
 
 
 def _detect_lock_related_error(lines: list[str]) -> str | None:
@@ -186,7 +202,7 @@ def _run_pip_inprocess(
 
     def _emit(line: str):
         captured_lines.append(line)
-        if progress_callback:
+        if progress_callback and not _is_unrelated_runtime_noise(line):
             progress_callback(line)
 
     stream = _CallbackStream(_emit)
