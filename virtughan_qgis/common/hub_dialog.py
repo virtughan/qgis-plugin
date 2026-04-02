@@ -698,6 +698,48 @@ class VirtughanHubDialog(QDialog):
         self._set_expandable_mode()
         help_w = self._help_minimized_width if self._help_is_minimized else self._help_expanded_width
         self.resize(self._base_width + help_w + self._help_padding, self.height())
+        self._ensure_window_visible_on_screen()
+
+    def _ensure_window_visible_on_screen(self):
+        """Keep the hub dialog fully visible within the available screen area."""
+        try:
+            target_rect = None
+            main_window = self.iface.mainWindow() if self.iface else None
+            if main_window is not None:
+                target_rect = main_window.frameGeometry()
+
+            if target_rect is None:
+                screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+                if screen is not None:
+                    target_rect = screen.availableGeometry()
+
+            if target_rect is None:
+                return
+
+            margin = 12
+            frame = self.frameGeometry()
+
+            new_x = frame.x()
+            new_y = frame.y()
+
+            max_right = int(target_rect.right() - margin)
+            min_left = int(target_rect.left() + margin)
+            max_bottom = int(target_rect.bottom() - margin)
+            min_top = int(target_rect.top() + margin)
+
+            if frame.right() > max_right:
+                new_x -= (frame.right() - max_right)
+            if frame.left() < min_left:
+                new_x += (min_left - frame.left())
+
+            if frame.bottom() > max_bottom:
+                new_y -= (frame.bottom() - max_bottom)
+            if frame.top() < min_top:
+                new_y += (min_top - frame.top())
+
+            self.move(int(new_x), int(new_y))
+        except Exception:
+            pass
 
     def showEvent(self, event):
         super().showEvent(event)
