@@ -1057,6 +1057,10 @@ class TilerWidget(QWidget, FORM_CLASS):
         QMessageBox.information(
             self,
             "VirtuGhan Tiles Help",
+            "Tiles creates a fast layer for visual exploration and can be used as a basemap in QGIS. "
+            "Choose your formula or index first, then create the tile layer. "
+            "You can create multiple tile layers with different indices and blend them later using layer opacity in QGIS. "
+            "Tiles uses the best available imagery in your selected date range and applies your selected formula while keeping pan and zoom responsive.\n\n"
             "Tiles (Tiler) creates and adds map tiles for quick visual exploration as a basemap in QGIS.\n\n"
             "Main fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n"
             "Band 2 is optional.\n\n"

@@ -136,6 +136,7 @@ class VirtughanHubDialog(QDialog):
         self._help_by_key = {
             "engine": """
 <h3>Compute</h3>
+<p>Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. You can combine values over time using methods like mean, max, min, or median. This is useful when you want one summary output, such as NDVI aggregated over time.</p>
 <p><b>Purpose:</b> Create layers after computing on the satellite images eg. create and download NDVI layer in a map.</p>
 <p><b>Use Compute when:</b> you want derived outputs, not only raw band/image downloads.</p>
 <p><b>Data source:</b> Registry of Open Data on AWS.</p>
@@ -162,6 +163,7 @@ class VirtughanHubDialog(QDialog):
 """,
             "extractor": """
 <h3>Download (Extractor)</h3>
+<p>Download saves source imagery for your AOI using the bands you choose. Each downloaded image includes all selected bands in one multi-band file. If multiple scenes match the selected date range, multiple files are downloaded.</p>
 <p><b>Purpose:</b> Download satellite image bands as raster layers to your local machine.</p>
 <p><b>Use Download when:</b> you want original band/image downloads instead of computed outputs.</p>
 <p><b>Data source:</b> Registry of Open Data on AWS.</p>
@@ -188,6 +190,7 @@ class VirtughanHubDialog(QDialog):
 """,
             "tiler": """
 <h3>Tiles (Tiler)</h3>
+<p>Tiles creates a fast layer for visual exploration and can be used as a basemap in QGIS. Choose your formula or index first, then create the tile layer. You can create multiple tile layers with different indices and blend them later using layer opacity in QGIS. Tiles uses the best available imagery in your selected date range and applies your selected formula while keeping pan and zoom responsive.</p>
 <p><b>Purpose:</b> Create and add map tiles for quick visual exploration of satellite imagery in QGIS.</p>
 <p><b>Use Tiles when:</b> you want a fast basemap-like layer to inspect coverage and patterns before Download or Compute.</p>
 <p><b>Data source:</b> Registry of Open Data on AWS rendered through the VirtuGhan tile backend.</p>

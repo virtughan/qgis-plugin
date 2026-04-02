@@ -1156,6 +1156,9 @@ class EngineDockWidget(QDockWidget):
         QMessageBox.information(
             self,
             "VirtuGhan Compute Help",
+            "Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. "
+            "You can combine values over time using methods like mean, max, min, or median. "
+            "This is useful when you want one summary output, such as NDVI aggregated over time.\n\n"
             "Compute creates analysis rasters from Sentinel-2 imagery.\n\n"
             "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
             "Band 2 is optional.\n\n"

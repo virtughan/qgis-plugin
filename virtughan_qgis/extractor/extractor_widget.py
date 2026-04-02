@@ -835,6 +835,9 @@ class ExtractorDockWidget(QDockWidget):
         QMessageBox.information(
             self,
             "VirtuGhan Download Help",
+            "Download saves source imagery for your AOI using the bands you choose. "
+            "Each downloaded image includes all selected bands in one multi-band file. "
+            "If multiple scenes match the selected date range, multiple files are downloaded.\n\n"
             "Download (Extractor) downloads satellite image bands to local raster files.\n\n"
             "Main fields: Start date, End date, Max cloud (%), Bands to download, and AOI.\n\n"
             "You can also use smart filter, workers, output folder, and scene preview options before downloading.\n\n"
