@@ -1054,22 +1054,6 @@ class TilerWidget(QWidget, FORM_CLASS):
             host.show_help_for("tiler")
             return
 
-        QMessageBox.information(
-            self,
-            "VirtuGhan Tiles Help",
-            "Tiles creates a fast layer for visual exploration and can be used as a basemap in QGIS. "
-            "Choose your formula or index first, then create the tile layer. "
-            "You can create multiple tile layers with different indices and blend them later using layer opacity in QGIS. "
-            "Tiles uses the best available imagery in your selected date range and applies your selected formula while keeping pan and zoom responsive.\n\n"
-            "Tiles (Tiler) creates and adds map tiles for quick visual exploration as a basemap in QGIS.\n\n"
-            "Main fields: Backend URL, Layer Name, Start Date, End Date, Cloud cover (%), Band 1, and Formula.\n"
-            "Band 2 is optional.\n\n"
-            "Use Time series (aggregate) + Aggregation for temporal summaries, and Advanced Options for local server controls.\n\n"
-            "Workers tip: In Tiler, Workers controls request concurrency. Increasing Workers can speed up tile responses on capable machines. "
-            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
-            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
-        )
-
     def _remove_tiler_layers(self):
         """Remove the tiler layer(s) from the project."""
         prj = QgsProject.instance()

@@ -832,20 +832,6 @@ class ExtractorDockWidget(QDockWidget):
             host.show_help_for("extractor")
             return
 
-        QMessageBox.information(
-            self,
-            "VirtuGhan Download Help",
-            "Download saves source imagery for your AOI using the bands you choose. "
-            "Each downloaded image includes all selected bands in one multi-band file. "
-            "If multiple scenes match the selected date range, multiple files are downloaded.\n\n"
-            "Download (Extractor) downloads satellite image bands to local raster files.\n\n"
-            "Main fields: Start date, End date, Max cloud (%), Bands to download, and AOI.\n\n"
-            "You can also use smart filter, workers, output folder, and scene preview options before downloading.\n\n"
-            "Workers tip: Increasing Workers can speed up downloads on capable machines. "
-            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
-            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
-        )
-
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:

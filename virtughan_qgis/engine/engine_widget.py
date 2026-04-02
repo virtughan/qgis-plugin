@@ -1153,21 +1153,6 @@ class EngineDockWidget(QDockWidget):
             host.show_help_for("engine")
             return
 
-        QMessageBox.information(
-            self,
-            "VirtuGhan Compute Help",
-            "Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. "
-            "You can combine values over time using methods like mean, max, min, or median. "
-            "This is useful when you want one summary output, such as NDVI aggregated over time.\n\n"
-            "Compute creates analysis rasters from Sentinel-2 imagery.\n\n"
-            "Required fields: Start date, End date, Max cloud (%), Band 1, Formula, and AOI.\n"
-            "Band 2 is optional.\n\n"
-            "You can also use Aggregation, Generate timeseries, smart filter, workers, output, and scene preview options before running.\n\n"
-            "Workers tip: Increasing Workers can speed up processing on capable machines. "
-            "Start with the recommended default shown in the UI (2 on low-core devices, otherwise 4), "
-            "then increase gradually if your system remains stable. If your machine slows down or becomes unstable, reduce Workers.",
-        )
-
     def _browse_output(self):
         path = QFileDialog.getExistingDirectory(self, "Select output folder")
         if path:
