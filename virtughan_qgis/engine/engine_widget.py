@@ -91,6 +91,10 @@ UI_PATH = os.path.join(os.path.dirname(__file__), "engine_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
 
 
+class _TaskCancelledError(RuntimeError):
+    pass
+
+
 def _log(widget, msg, level=Qgis.Info):
     QgsMessageLog.logMessage(str(msg), "VirtuGhan", level)
     try:
@@ -344,7 +348,7 @@ def _with_embedded_python_executable(logf=None):
         sys.executable = original_executable
 
 
-def _run_engine_in_subprocess(params: dict, log_path: str, logf=None):
+def _run_engine_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
     python_exe = _resolve_embedded_python_executable() or sys.executable
     work_dir = tempfile.mkdtemp(prefix="virtughan-engine-")
     payload_path = os.path.join(work_dir, "payload.json")
@@ -504,9 +508,9 @@ if __name__ == "__main__":
 
         run_kwargs = {
             "args": [python_exe, runner_path, payload_path],
-            "capture_output": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
             "text": True,
-            "check": False,
         }
 
         env = os.environ.copy()
@@ -539,23 +543,62 @@ if __name__ == "__main__":
             run_kwargs["startupinfo"] = startupinfo
             run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+        proc = subprocess.Popen(**run_kwargs)
+        stdout_data = ""
+        stderr_data = ""
         try:
-            proc = subprocess.run(**run_kwargs, timeout=900)
-        except subprocess.TimeoutExpired as exc:
-            if logf:
-                logf.write("[subprocess_timeout]\n")
-                logf.write(f"Engine subprocess exceeded timeout (900s): {exc}\n")
-            raise RuntimeError(
-                "Compute backend timed out after 15 minutes while processing tiles. "
-                "Please retry with smaller AOI/date range or lower cloud threshold, and check runtime.log/gdal.log."
-            ) from exc
+            deadline = time.monotonic() + 900.0
+            while True:
+                if callable(should_cancel) and should_cancel():
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    raise _TaskCancelledError("Compute cancelled by user.")
 
-        if logf and proc.stdout:
+                if proc.poll() is not None:
+                    break
+
+                if time.monotonic() > deadline:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    raise RuntimeError(
+                        "Compute backend timed out after 15 minutes while processing tiles. "
+                        "Please retry with smaller AOI/date range or lower cloud threshold, and check runtime.log/gdal.log."
+                    )
+
+                time.sleep(0.2)
+
+            stdout_data, stderr_data = proc.communicate(timeout=5)
+        finally:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        if logf and stdout_data:
             logf.write("[subprocess_stdout]\n")
-            logf.write(proc.stdout.strip() + "\n")
-        if logf and proc.stderr:
+            logf.write(stdout_data.strip() + "\n")
+        if logf and stderr_data:
             logf.write("[subprocess_stderr]\n")
-            logf.write(proc.stderr.strip() + "\n")
+            logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
             raise RuntimeError(f"Engine subprocess failed (exit code {proc.returncode}).")
@@ -574,6 +617,14 @@ class _VirtughanTask(QgsTask):
         self.log_path = log_path
         self.on_done = on_done
         self.exc = None
+
+    def cancel(self):
+        try:
+            with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
+                logf.write("[cancel] Compute cancellation requested by user.\n")
+        except Exception:
+            pass
+        return super().cancel()
 
     def run(self):
         managed_env_keys = (
@@ -597,8 +648,16 @@ class _VirtughanTask(QgsTask):
             os.environ["CPL_LOG"] = os.path.join(self.params["output_dir"], "gdal.log")
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
-                _run_engine_in_subprocess(self.params, self.log_path, logf=logf)
+                _run_engine_in_subprocess(
+                    self.params,
+                    self.log_path,
+                    logf=logf,
+                    should_cancel=self.isCanceled,
+                )
             return True
+        except _TaskCancelledError as e:
+            self.exc = e
+            return False
         except Exception as e:
             self.exc = e
             try:
@@ -625,10 +684,21 @@ class _VirtughanTask(QgsTask):
 
 class _UiLogTailer:
     """Polls a text file and appends new content to a QPlainTextEdit without blocking UI."""
-    def __init__(self, log_path: str, log_widget: QPlainTextEdit, interval_ms: int = 400):
+    def __init__(
+        self,
+        log_path: str,
+        log_widget: QPlainTextEdit,
+        interval_ms: int = 400,
+        on_stall=None,
+        stall_timeout_sec: float = 180.0,
+    ):
         self._path = log_path
         self._widget = log_widget
         self._pos = 0
+        self._on_stall = on_stall
+        self._stall_timeout_sec = max(30.0, float(stall_timeout_sec))
+        self._last_growth_monotonic = 0.0
+        self._stalled_notified = False
         self._timer = QTimer()
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._poll_once)
@@ -640,6 +710,8 @@ class _UiLogTailer:
         except Exception:
             pass
         self._pos = 0
+        self._last_growth_monotonic = time.monotonic()
+        self._stalled_notified = False
         self._timer.start()
 
     def stop(self):
@@ -657,6 +729,17 @@ class _UiLogTailer:
                     normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
                     self._widget.appendPlainText(normalized.rstrip("\n"))
                     self._pos = f.tell()
+                    self._last_growth_monotonic = time.monotonic()
+                    self._stalled_notified = False
+                else:
+                    idle_sec = time.monotonic() - self._last_growth_monotonic
+                    if (not self._stalled_notified) and idle_sec >= self._stall_timeout_sec:
+                        self._stalled_notified = True
+                        if callable(self._on_stall):
+                            try:
+                                self._on_stall(idle_sec)
+                            except Exception:
+                                pass
         except Exception:
             pass
 
@@ -775,6 +858,7 @@ class EngineDockWidget(QDockWidget):
         self._tailer = None
         self._current_task = None
         self._current_log_path = None
+        self._default_run_button_text = self.runButton.text() or "Compute"
         self._scene_footprints_layer = None
         self._selected_preview_scenes = []
         self._has_successful_run = False
@@ -1274,7 +1358,11 @@ class EngineDockWidget(QDockWidget):
 
     def _start_tailing(self, log_path: str):
         self._current_log_path = log_path
-        self._tailer = _UiLogTailer(log_path, self.logText, interval_ms=400)
+        self._tailer = _UiLogTailer(
+            log_path,
+            self.logText,
+            interval_ms=400,
+        )
         self._tailer.start()
 
     def _stop_tailing(self):
@@ -1288,11 +1376,7 @@ class EngineDockWidget(QDockWidget):
             if self._current_task is not None:
                 status = self._current_task.status()
                 if status in (QgsTask.Queued, QgsTask.Running):
-                    QMessageBox.information(
-                        self,
-                        "VirtuGhan",
-                        "Compute is already running. Please wait for it to finish.",
-                    )
+                    self._cancel_current_run()
                     return
         except Exception:
             pass
@@ -1302,21 +1386,19 @@ class EngineDockWidget(QDockWidget):
             return
 
         try:
-            _log(self, "Please wait: checking matching scenes before compute...")
-            self._validate_minimum_matching_scenes(min_count=2, timeout_s=12.0)
+            _log(self, "Pre-download stage started: checking matching scenes before compute...")
+            self._validate_minimum_matching_scenes(min_count=2, timeout_s=420.0)
+            _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
         except TimeoutError:
-            # Do not block the run when pre-check hangs on network; compute path has its own retries.
-            _log(
+            _log(self, "Pre-compute scene check timed out after 7 minutes.", Qgis.Warning)
+            QMessageBox.warning(
                 self,
-                "Scene pre-check timed out; continuing compute. This can take seconds to a few minutes.",
-                Qgis.Warning,
+                "VirtuGhan",
+                "Pre-download stage timed out after 7 minutes before compute started.\n\n"
+                "Please try again later.",
             )
-            try:
-                params = self._collect_params()
-            except Exception as e:
-                QMessageBox.warning(self, "VirtuGhan", str(e))
-                return
+            return
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -1358,6 +1440,16 @@ class EngineDockWidget(QDockWidget):
         def _on_done(ok, exc):
             self._stop_tailing()
             self._set_running(False)
+            task_was_cancelled = False
+            try:
+                task_was_cancelled = bool(self._current_task and self._current_task.isCanceled())
+            except Exception:
+                task_was_cancelled = False
+            self._current_task = None
+            if isinstance(exc, _TaskCancelledError) or task_was_cancelled:
+                _log(self, "Compute cancelled by user.", Qgis.Warning)
+                QMessageBox.information(self, "VirtuGhan", "Compute cancelled.")
+                return
             if not ok or exc:
                 _log(self, f"Compute failed: {exc}", Qgis.Critical)
                 user_msg = _build_engine_failure_message(exc, log_path=log_path)
@@ -1456,7 +1548,8 @@ class EngineDockWidget(QDockWidget):
     def _set_running(self, running: bool):
         self.progressBar.setVisible(running)
         self.progressBar.setRange(0, 0 if running else 1)
-        self.runButton.setEnabled(not running)
+        self.runButton.setEnabled(True)
+        self.runButton.setText("Cancel" if running else self._default_run_button_text)
         self.resetButton.setEnabled(not running)
         try:
             host = self.window()
@@ -1475,6 +1568,18 @@ class EngineDockWidget(QDockWidget):
             self.previewScenesButton.setEnabled(True)
         except Exception:
             pass
+
+    def _cancel_current_run(self):
+        task = self._current_task
+        if task is None:
+            return
+        try:
+            status = task.status()
+            if status in (QgsTask.Queued, QgsTask.Running):
+                task.cancel()
+                _log(self, "Cancellation requested...", Qgis.Warning)
+        except Exception as e:
+            _log(self, f"Failed to cancel compute task: {e}", Qgis.Warning)
 
     def _on_show_scene_footprints_toggled(self, checked: bool):
         if not checked:

@@ -1,12 +1,14 @@
 # virtughan_qgis/extractor/extractor_widget.py
 import os
 import sys
+import time
 import traceback
 import uuid
 import json
 import shutil
 import tempfile
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -92,6 +94,10 @@ FORM_CLASS, _ = uic.loadUiType(UI_PATH)
 _PYPROJ_GUARD_APPLIED = False
 
 
+class _TaskCancelledError(RuntimeError):
+    pass
+
+
 def _apply_pyproj_windows_guard(logger=None):
     global _PYPROJ_GUARD_APPLIED
     if _PYPROJ_GUARD_APPLIED or os.name != "nt":
@@ -137,7 +143,7 @@ def _reload_pyproj_modules(logger=None):
         logger("Skipped pyproj module reload for run-to-run stability")
 
 
-def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
+def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
     python_exe = _resolve_embedded_python_executable() or sys.executable
     work_dir = tempfile.mkdtemp(prefix="virtughan-extractor-")
     payload_path = os.path.join(work_dir, "payload.json")
@@ -226,9 +232,9 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
 
         run_kwargs = {
             "args": [python_exe, runner_path],
-            "capture_output": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
             "text": True,
-            "check": False,
         }
 
         env = os.environ.copy()
@@ -263,14 +269,43 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
             run_kwargs["startupinfo"] = startupinfo
             run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-        proc = subprocess.run(**run_kwargs)
+        proc = subprocess.Popen(**run_kwargs)
+        stdout_data = ""
+        stderr_data = ""
+        try:
+            while True:
+                if callable(should_cancel) and should_cancel():
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    raise _TaskCancelledError("Download cancelled by user.")
 
-        if logf and proc.stdout:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.2)
+
+            stdout_data, stderr_data = proc.communicate(timeout=5)
+        finally:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        if logf and stdout_data:
             logf.write("[subprocess_stdout]\n")
-            logf.write(proc.stdout.strip() + "\n")
-        if logf and proc.stderr:
+            logf.write(stdout_data.strip() + "\n")
+        if logf and stderr_data:
             logf.write("[subprocess_stderr]\n")
-            logf.write(proc.stderr.strip() + "\n")
+            logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
             raise RuntimeError(f"Extractor subprocess failed (exit code {proc.returncode}).")
@@ -381,6 +416,14 @@ class _ExtractorTask(QgsTask):
         self.on_done = on_done
         self.exc = None
 
+    def cancel(self):
+        try:
+            with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
+                logf.write("[cancel] Download cancellation requested by user.\n")
+        except Exception:
+            pass
+        return super().cancel()
+
     def run(self):
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
@@ -398,8 +441,16 @@ class _ExtractorTask(QgsTask):
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
                 logf.write(f"Params: {self.params}\n")
-                _run_extractor_in_subprocess(self.params, self.log_path, logf=logf)
+                _run_extractor_in_subprocess(
+                    self.params,
+                    self.log_path,
+                    logf=logf,
+                    should_cancel=self.isCanceled,
+                )
             return True
+        except _TaskCancelledError as e:
+            self.exc = e
+            return False
         except Exception as e:
             self.exc = e
             try:
@@ -419,10 +470,21 @@ class _ExtractorTask(QgsTask):
 
 class _UiLogTailer:
     """Poll a text file and append new content to a QPlainTextEdit without blocking UI."""
-    def __init__(self, log_path: str, log_widget: QPlainTextEdit, interval_ms: int = 400):
+    def __init__(
+        self,
+        log_path: str,
+        log_widget: QPlainTextEdit,
+        interval_ms: int = 400,
+        on_stall=None,
+        stall_timeout_sec: float = 180.0,
+    ):
         self._path = log_path
         self._widget = log_widget
         self._pos = 0
+        self._on_stall = on_stall
+        self._stall_timeout_sec = max(30.0, float(stall_timeout_sec))
+        self._last_growth_monotonic = 0.0
+        self._stalled_notified = False
         self._timer = QTimer()
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._poll_once)
@@ -434,6 +496,8 @@ class _UiLogTailer:
         except Exception:
             pass
         self._pos = 0
+        self._last_growth_monotonic = time.monotonic()
+        self._stalled_notified = False
         self._timer.start()
 
     def stop(self):
@@ -451,6 +515,17 @@ class _UiLogTailer:
                     normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
                     self._widget.appendPlainText(normalized.rstrip("\n"))
                     self._pos = f.tell()
+                    self._last_growth_monotonic = time.monotonic()
+                    self._stalled_notified = False
+                else:
+                    idle_sec = time.monotonic() - self._last_growth_monotonic
+                    if (not self._stalled_notified) and idle_sec >= self._stall_timeout_sec:
+                        self._stalled_notified = True
+                        if callable(self._on_stall):
+                            try:
+                                self._on_stall(idle_sec)
+                            except Exception:
+                                pass
         except Exception:
             pass
 from qgis.PyQt.QtCore import Qt, QTimer
@@ -533,6 +608,7 @@ class ExtractorDockWidget(QDockWidget):
         self._current_task = None
         self._current_log_path = None
         self._tailer = None
+        self._default_run_button_text = self.runButton.text() or "Download"
         self._scene_footprints_layer = None
         self._selected_preview_scenes = []
         self._has_successful_run = False
@@ -916,13 +992,33 @@ class ExtractorDockWidget(QDockWidget):
         return params
 
     def _run_clicked(self):
+        try:
+            if self._current_task is not None:
+                status = self._current_task.status()
+                if status in (QgsTask.Queued, QgsTask.Running):
+                    self._cancel_current_run()
+                    return
+        except Exception:
+            pass
+
         if not ensure_runtime_network_ready(self):
             _log(self, "Runtime network preflight failed; run cancelled.", Qgis.Warning)
             return
 
         try:
-            self._validate_minimum_matching_scenes(min_count=1)
+            _log(self, "Pre-download stage started: checking matching scenes before download...")
+            self._validate_minimum_matching_scenes(min_count=1, timeout_s=420.0)
+            _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
+        except TimeoutError:
+            _log(self, "Pre-download scene check timed out after 7 minutes.", Qgis.Warning)
+            QMessageBox.warning(
+                self,
+                "VirtuGhan",
+                "Pre-download stage timed out after 7 minutes before download started.\n\n"
+                "Please try again later.",
+            )
+            return
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -953,6 +1049,16 @@ class ExtractorDockWidget(QDockWidget):
         def _on_done(ok, exc):
             self._stop_tailing()
             self._set_running(False)
+            task_was_cancelled = False
+            try:
+                task_was_cancelled = bool(self._current_task and self._current_task.isCanceled())
+            except Exception:
+                task_was_cancelled = False
+            self._current_task = None
+            if isinstance(exc, _TaskCancelledError) or task_was_cancelled:
+                _log(self, "Download cancelled by user.", Qgis.Warning)
+                QMessageBox.information(self, "VirtuGhan", "Download cancelled.")
+                return
             if not ok or exc:
                 _log(self, f"Extractor failed: {exc}", Qgis.Critical)
                 QMessageBox.critical(
@@ -1001,7 +1107,11 @@ class ExtractorDockWidget(QDockWidget):
 
     def _start_tailing(self, log_path: str):
         self._current_log_path = log_path
-        self._tailer = _UiLogTailer(log_path, self.logText, interval_ms=400)
+        self._tailer = _UiLogTailer(
+            log_path,
+            self.logText,
+            interval_ms=400,
+        )
         self._tailer.start()
 
     def _focus_log_section(self):
@@ -1031,7 +1141,8 @@ class ExtractorDockWidget(QDockWidget):
     def _set_running(self, running: bool):
         self.progressBar.setVisible(running)
         self.progressBar.setRange(0, 0 if running else 1)
-        self.runButton.setEnabled(not running)
+        self.runButton.setEnabled(True)
+        self.runButton.setText("Cancel" if running else self._default_run_button_text)
         self.resetButton.setEnabled(not running)
         try:
             host = self.window()
@@ -1050,6 +1161,18 @@ class ExtractorDockWidget(QDockWidget):
             self.previewScenesButton.setEnabled(True)
         except Exception:
             pass
+
+    def _cancel_current_run(self):
+        task = self._current_task
+        if task is None:
+            return
+        try:
+            status = task.status()
+            if status in (QgsTask.Queued, QgsTask.Running):
+                task.cancel()
+                _log(self, "Cancellation requested...", Qgis.Warning)
+        except Exception as e:
+            _log(self, f"Failed to cancel extractor task: {e}", Qgis.Warning)
 
     def _on_show_scene_footprints_toggled(self, checked: bool):
         if not checked:
@@ -1140,16 +1263,60 @@ class ExtractorDockWidget(QDockWidget):
             "cloud_cover": int(p.get("cloud_cover", 30)),
         }
 
-    def _validate_minimum_matching_scenes(self, min_count: int = 1):
+    def _search_scenes_with_timeout(
+        self,
+        bbox,
+        start_date,
+        end_date,
+        cloud_cover,
+        timeout_s: float = 30.0,
+    ):
+        if extractor_search_stac_api is None:
+            raise RuntimeError("search_stac_api is not available in virtughan.extract.")
+
+        result = {"scenes": None, "error": None}
+
+        def _worker():
+            try:
+                result["scenes"] = extractor_search_stac_api(
+                    bbox,
+                    start_date,
+                    end_date,
+                    cloud_cover,
+                )
+            except Exception as exc:
+                result["error"] = exc
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+        deadline = time.time() + max(1.0, float(timeout_s))
+        while t.is_alive() and time.time() < deadline:
+            try:
+                QgsApplication.processEvents()
+            except Exception:
+                pass
+            time.sleep(0.05)
+
+        if t.is_alive():
+            raise TimeoutError(
+                "Scene search timed out. Please check internet/VPN/proxy and try again."
+            )
+        if result["error"] is not None:
+            raise result["error"]
+        return list(result["scenes"] or [])
+
+    def _validate_minimum_matching_scenes(self, min_count: int = 1, timeout_s: float = 30.0):
         if extractor_search_stac_api is None:
             raise RuntimeError("search_stac_api is not available in virtughan.extract.")
 
         params = self._collect_search_params()
-        scenes = extractor_search_stac_api(
+        scenes = self._search_scenes_with_timeout(
             params["bbox"],
             params["start_date"],
             params["end_date"],
             params["cloud_cover"],
+            timeout_s=timeout_s,
         )
         count = len(scenes or [])
         if count < min_count:
