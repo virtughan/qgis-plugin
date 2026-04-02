@@ -427,8 +427,8 @@ async def _on_startup_log_fingerprint():
 
 _TILER_CONCURRENCY = _resolve_tiler_concurrency()
 _TILE_REQUEST_SEMAPHORES: dict[tuple[int, int], asyncio.Semaphore] = {}
-_QUEUE_WAIT_TIMEOUT_SEC = 12.0
-_TILE_COMPUTE_TIMEOUT_SEC = 16.0
+_QUEUE_WAIT_TIMEOUT_SEC = 20.0
+_TILE_COMPUTE_TIMEOUT_SEC = 30.0
 _LAST_TILE_ERROR: dict = {}
 _VIEW_GENERATION = 0
 _SEMAPHORE_EPOCH = 0
@@ -449,6 +449,39 @@ _PARSEDPATH_RECOVERY_IN_PROGRESS = False
 _LAST_PARSEDPATH_RECOVERY_MONOTONIC = 0.0
 _PARSEDPATH_RECOVERY_COOLDOWN_SEC = 2.0
 _STARTUP_STATE_FILE = os.path.join(tempfile.gettempdir(), "virtughan_tiler_startup_state.json")
+_INFLIGHT_TILE_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _tile_compute_key(
+    z: int,
+    x: int,
+    y: int,
+    start_date: str,
+    end_date: str,
+    cloud_cover: int,
+    band1: str,
+    band2: str,
+    formula: str,
+    colormap_str: str,
+    operation: str,
+    timeseries: bool,
+) -> str:
+    return "|".join(
+        [
+            str(z),
+            str(x),
+            str(y),
+            str(start_date or ""),
+            str(end_date or ""),
+            str(int(cloud_cover)),
+            str(band1 or ""),
+            str(band2 or ""),
+            str(formula or ""),
+            str(colormap_str or ""),
+            str(operation or ""),
+            "1" if bool(timeseries) else "0",
+        ]
+    )
 
 
 def _module_file(name: str) -> str:
@@ -1303,6 +1336,8 @@ async def get_tile(
     acquired = False
     counted_active = False
     compute_task: Optional[asyncio.Task] = None
+    task_owner = False
+    compute_key = ""
     try:
         if _is_view_settling():
             wait_sec = _view_settle_remaining_sec()
@@ -1360,29 +1395,52 @@ async def get_tile(
         _ACTIVE_TILE_REQUESTS += 1
         counted_active = True
 
-        compute_task = asyncio.create_task(
-            _generate_tile_with_cache_fallback(
-                x=x,
-                y=y,
-                z=z,
-                start_date=start_date,
-                end_date=end_date,
-                cloud_cover=cloud_cover,
-                band1=band1,
-                band2=(band2 or ""),
-                formula=formula,
-                colormap_str=colormap_str,
-                operation=operation,
-                latest=not timeseries,
-            )
+        compute_key = _tile_compute_key(
+            z=z,
+            x=x,
+            y=y,
+            start_date=start_date,
+            end_date=end_date,
+            cloud_cover=cloud_cover,
+            band1=band1,
+            band2=(band2 or ""),
+            formula=formula,
+            colormap_str=colormap_str,
+            operation=operation,
+            timeseries=timeseries,
         )
+        existing_task = _INFLIGHT_TILE_TASKS.get(compute_key)
+        if existing_task is not None and not existing_task.done():
+            compute_task = existing_task
+            task_owner = False
+            _append_tile_event_log("info", "Joined in-flight tile compute", tile=req_tag)
+        else:
+            compute_task = asyncio.create_task(
+                _generate_tile_with_cache_fallback(
+                    x=x,
+                    y=y,
+                    z=z,
+                    start_date=start_date,
+                    end_date=end_date,
+                    cloud_cover=cloud_cover,
+                    band1=band1,
+                    band2=(band2 or ""),
+                    formula=formula,
+                    colormap_str=colormap_str,
+                    operation=operation,
+                    latest=not timeseries,
+                )
+            )
+            _INFLIGHT_TILE_TASKS[compute_key] = compute_task
+            task_owner = True
         elapsed = 0.0
         image_bytes = None
         feature = None
         while True:
             remaining = _TILE_COMPUTE_TIMEOUT_SEC - elapsed
             if remaining <= 0.0:
-                compute_task.cancel()
+                if task_owner and compute_task is not None and not compute_task.done():
+                    compute_task.cancel()
                 raise asyncio.TimeoutError()
 
             slice_sec = min(_STALE_CHECK_SLICE_SEC, remaining)
@@ -1459,7 +1517,7 @@ async def get_tile(
         return _retryable_tile_unavailable("tile_compute_timeout", status_code=504)
     except asyncio.CancelledError:
         try:
-            if compute_task is not None and not compute_task.done():
+            if task_owner and compute_task is not None and not compute_task.done():
                 compute_task.cancel()
         except Exception:
             pass
@@ -1556,6 +1614,13 @@ async def get_tile(
         logger.exception("Tile request failed", exc_info=ex)
         return JSONResponse(content=err_payload, status_code=500)
     finally:
+        if task_owner and compute_key:
+            try:
+                task_ref = _INFLIGHT_TILE_TASKS.get(compute_key)
+                if task_ref is compute_task:
+                    _INFLIGHT_TILE_TASKS.pop(compute_key, None)
+            except Exception:
+                pass
         _unregister_request_task(request_generation, request_task)
         if acquired:
             try:

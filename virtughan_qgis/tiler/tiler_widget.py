@@ -259,6 +259,9 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._view_change_timer.setSingleShot(True)
         self._view_change_timer.setInterval(1500)
         self._view_change_timer.timeout.connect(self._notify_view_generation_change)
+        self._motion_gate_failsafe_timer = QTimer(self)
+        self._motion_gate_failsafe_timer.setSingleShot(True)
+        self._motion_gate_failsafe_timer.timeout.connect(self._on_motion_gate_failsafe)
         self._tiler_log_timer = QTimer(self)
         self._tiler_log_timer.setInterval(1200)
         self._tiler_log_timer.timeout.connect(self._poll_tiler_logs)
@@ -268,6 +271,8 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._preferred_workers = None
         self._pending_motion_kind = "pan"
         self._view_motion_active = False
+        self._tiler_layer_temporarily_hidden = False
+        self._tiler_layer_prev_visibility = None
 
         self._init_defaults()
         self._init_index_controls()
@@ -452,6 +457,9 @@ class TilerWidget(QWidget, FORM_CLASS):
         # generation on every tiny extent jitter (which can starve tile draws).
         self._last_view_signature = sig
         if not self._view_motion_active:
+            # Gate requests client-side by hiding the XYZ layer during motion.
+            self._set_tiler_layer_motion_gate(enabled=True)
+            self._motion_gate_failsafe_timer.start(max(settle_ms + 2500, 4000))
             self._bump_view_generation(
                 reason=f"view_changed_immediate_{self._pending_motion_kind}",
                 settle=True,
@@ -526,8 +534,63 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._publish_settled_viewport(int(settled.get("generation")))
         except Exception:
             pass
+        try:
+            self._motion_gate_failsafe_timer.stop()
+        except Exception:
+            pass
+        self._set_tiler_layer_motion_gate(enabled=False)
         self._pending_motion_kind = "pan"
         self._view_motion_active = False
+
+    def _on_motion_gate_failsafe(self):
+        """Ensure layer visibility is restored even if settle detection gets stuck."""
+        try:
+            if self._tiler_layer_temporarily_hidden:
+                self._log("[WARN] Motion gate failsafe restore triggered.")
+                self._set_tiler_layer_motion_gate(enabled=False)
+                self._view_motion_active = False
+                self._pending_motion_kind = "pan"
+        except Exception:
+            pass
+
+    def _set_tiler_layer_motion_gate(self, enabled: bool):
+        """Hide tiler layer during motion; restore original visibility when settled."""
+        try:
+            if not self._tiler_layer_id:
+                return
+            root = QgsProject.instance().layerTreeRoot()
+            node = root.findLayer(self._tiler_layer_id) if root is not None else None
+            if node is None:
+                return
+
+            if enabled:
+                if self._tiler_layer_temporarily_hidden:
+                    return
+                self._tiler_layer_prev_visibility = bool(node.isVisible())
+                if self._tiler_layer_prev_visibility:
+                    node.setItemVisibilityChecked(False)
+                    self._log("[INFO] Motion gate ON: tiler layer hidden during map movement.")
+                self._tiler_layer_temporarily_hidden = True
+                return
+
+            if not self._tiler_layer_temporarily_hidden:
+                return
+            restore_visible = True if self._tiler_layer_prev_visibility is None else bool(self._tiler_layer_prev_visibility)
+            node.setItemVisibilityChecked(restore_visible)
+            if restore_visible:
+                self._log("[INFO] Motion gate OFF: tiler layer restored after settle.")
+            self._tiler_layer_temporarily_hidden = False
+            self._tiler_layer_prev_visibility = None
+            try:
+                layer = QgsProject.instance().mapLayer(self._tiler_layer_id)
+                if layer is not None:
+                    layer.triggerRepaint()
+                if self._canvas is not None:
+                    self._canvas.refresh()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _current_view_signature(self):
         try:
@@ -585,7 +648,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         if bbox is None:
             return
         min_lon, min_lat, max_lon, max_lat = bbox
-        self._append_log(
+        self._log(
             "[INFO] Publishing settled viewport "
             f"gen={int(generation)} "
             f"bbox=({min_lon:.6f},{min_lat:.6f},{max_lon:.6f},{max_lat:.6f})"
@@ -607,7 +670,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 return
             except Exception as e:
                 last_err = e
-        self._append_log(f"[WARN] Failed to publish settled viewport: {last_err}")
+        self._log(f"[WARN] Failed to publish settled viewport: {last_err}")
 
     def _poll_tiler_logs(self):
         if not self._is_local_server_active():
@@ -1033,6 +1096,11 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _on_stop_server(self):
         try:
+            try:
+                self._motion_gate_failsafe_timer.stop()
+            except Exception:
+                pass
+            self._set_tiler_layer_motion_gate(enabled=False)
             self.server.stop()
             self._tiler_log_timer.stop()
             self._update_worker_status_ui(None)
@@ -1075,6 +1143,8 @@ class TilerWidget(QWidget, FORM_CLASS):
             )
             layer = self.logic.add_xyz_layer(backend_url, layer_name, params)
             self._tiler_layer_id = layer.id()   # remember the exact layer we just added
+            self._tiler_layer_temporarily_hidden = False
+            self._tiler_layer_prev_visibility = None
             self._log(f"Added layer '{layer_name}' with source: {layer.source()}")
             QMessageBox.information(self, "Layer Added", f"'{layer_name}' added successfully.")
         except Exception as e:
@@ -1082,6 +1152,10 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _on_layers_removed(self, layer_ids):
         try:
+            if self._tiler_layer_id and self._tiler_layer_id in set(layer_ids or []):
+                self._tiler_layer_id = None
+                self._tiler_layer_temporarily_hidden = False
+                self._tiler_layer_prev_visibility = None
             if not self.runLocalCheck.isChecked():
                 return
             still_has_tiler = any(
@@ -1100,6 +1174,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._disconnect_canvas_signals()
         try:
             self._view_change_timer.stop()
+            self._motion_gate_failsafe_timer.stop()
             self._tiler_log_timer.stop()
         except Exception:
             pass
