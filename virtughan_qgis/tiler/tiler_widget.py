@@ -275,6 +275,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._tiler_layer_prev_visibility = None
         self._poll_fail_count = 0
         self._poll_failure_logged = False
+        self._view_event_seq = 0
 
         self._init_defaults()
         self._init_index_controls()
@@ -439,14 +440,22 @@ class TilerWidget(QWidget, FORM_CLASS):
             return json.loads(data)
 
     def _on_canvas_view_changed(self, motion_kind: str = "pan"):
+        if not self._has_active_tiler_layer():
+            return
         if not self._is_local_server_active():
-            self._try_recover_local_server("view-change")
+            self._log(f"[DEBUG] View change ignored ({motion_kind}): local server inactive.")
+            if self._has_active_tiler_layer():
+                self._try_recover_local_server("view-change")
             return
         sig = self._current_view_signature()
         if sig is None:
+            self._log(f"[DEBUG] View change ignored ({motion_kind}): no view signature.")
             return
         if self._last_view_signature == sig:
+            self._log(f"[DEBUG] View change ignored ({motion_kind}): signature unchanged.")
             return
+
+        self._view_event_seq += 1
 
         if motion_kind == "zoom":
             self._pending_motion_kind = "zoom"
@@ -455,6 +464,11 @@ class TilerWidget(QWidget, FORM_CLASS):
 
         settle_ms = _ZOOM_SETTLE_MS if self._pending_motion_kind == "zoom" else _PAN_SETTLE_MS
         settle_sec = settle_ms / 1000.0
+        self._log(
+            "[DEBUG] View change event "
+            f"seq={self._view_event_seq} kind={motion_kind} "
+            f"pending={self._pending_motion_kind} settle_ms={settle_ms}"
+        )
 
         # During an active motion burst, only debounce settle; avoid bumping
         # generation on every tiny extent jitter (which can starve tile draws).
@@ -463,18 +477,32 @@ class TilerWidget(QWidget, FORM_CLASS):
             # Gate requests client-side by hiding the XYZ layer during motion.
             self._set_tiler_layer_motion_gate(enabled=True)
             self._motion_gate_failsafe_timer.start(max(settle_ms + 2500, 4000))
-            self._bump_view_generation(
+            bumped = self._bump_view_generation(
                 reason=f"view_changed_immediate_{self._pending_motion_kind}",
                 settle=True,
                 settle_delay_sec=settle_sec,
             )
+            if isinstance(bumped, dict):
+                self._log(
+                    "[DEBUG] Immediate generation bump "
+                    f"seq={self._view_event_seq} gen={bumped.get('generation')} "
+                    f"reason={bumped.get('reason', f'view_changed_immediate_{self._pending_motion_kind}')}"
+                )
+            else:
+                self._log(f"[WARN] Immediate generation bump failed seq={self._view_event_seq}")
             self._view_motion_active = True
+        else:
+            self._log(f"[DEBUG] Motion already active; debounce only seq={self._view_event_seq}")
 
         # Debounced settled bump starts only after pan/zoom quiet period.
         self._view_change_timer.setInterval(settle_ms)
         self._view_change_timer.start()
+        self._log(f"[DEBUG] Debounce timer started seq={self._view_event_seq} interval_ms={settle_ms}")
 
     def _on_canvas_scale_changed(self, _scale):
+        if not self._has_active_tiler_layer():
+            return
+        self._log(f"[DEBUG] scaleChanged event scale={_scale}")
         self._on_canvas_view_changed("zoom")
 
     def _disconnect_canvas_signals(self):
@@ -502,6 +530,24 @@ class TilerWidget(QWidget, FORM_CLASS):
         except Exception:
             return False
 
+    def _has_active_tiler_layer(self) -> bool:
+        """Return True when a tiler XYZ layer is present in the project."""
+        try:
+            if self._tiler_layer_id:
+                layer = QgsProject.instance().mapLayer(self._tiler_layer_id)
+                if layer is not None:
+                    return True
+            for lyr in QgsProject.instance().mapLayers().values():
+                try:
+                    src = getattr(lyr, "source", lambda: "")() or ""
+                    if "/tile/{z}/{x}/{y}" in src:
+                        return True
+                except Exception:
+                    pass
+            return False
+        except Exception:
+            return False
+
     def _bump_view_generation(self, reason: str, settle: bool, settle_delay_sec: float | None = None):
         settle_q = "1" if settle else "0"
         delay_q = ""
@@ -517,9 +563,11 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _notify_view_generation_change(self):
         if not self._is_local_server_active():
+            self._log("[DEBUG] Debounce timeout ignored: local server inactive.")
             return
         sig = self._current_view_signature()
         if sig is None:
+            self._log("[DEBUG] Debounce timeout ignored: no view signature.")
             return
         if self._last_view_signature != sig:
             # View moved again before settle timer fired; keep debouncing without
@@ -528,13 +576,18 @@ class TilerWidget(QWidget, FORM_CLASS):
             settle_ms = _ZOOM_SETTLE_MS if self._pending_motion_kind == "zoom" else _PAN_SETTLE_MS
             self._view_change_timer.setInterval(settle_ms)
             self._view_change_timer.start()
+            self._log(f"[DEBUG] Debounce timeout: view still moving, restarting timer interval_ms={settle_ms}")
             return
 
         # View appears stable; bump generation without extending settle delay.
+        self._log(f"[DEBUG] Debounce timeout: view settled, pending_kind={self._pending_motion_kind}")
         settled = self._bump_view_generation(reason="view_settled", settle=False)
         try:
             if isinstance(settled, dict) and "generation" in settled:
+                self._log(f"[DEBUG] Settled generation bump ok gen={settled.get('generation')}")
                 self._publish_settled_viewport(int(settled.get("generation")))
+            else:
+                self._log("[WARN] Settled generation bump failed (no response).")
         except Exception:
             pass
         try:
@@ -649,6 +702,7 @@ class TilerWidget(QWidget, FORM_CLASS):
     def _publish_settled_viewport(self, generation: int):
         bbox = self._current_view_bbox_lonlat()
         if bbox is None:
+            self._log(f"[WARN] Settled viewport publish skipped: bbox unavailable for gen={int(generation)}")
             return
         min_lon, min_lat, max_lon, max_lat = bbox
         self._log(
@@ -670,6 +724,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         for timeout_s in (0.9, 1.2, 1.6):
             try:
                 self._http_json_get(url, timeout=timeout_s)
+                self._log(f"[DEBUG] Settled viewport publish success gen={int(generation)} timeout={timeout_s}")
                 return
             except Exception as e:
                 last_err = e
@@ -678,7 +733,7 @@ class TilerWidget(QWidget, FORM_CLASS):
     def _poll_tiler_logs(self):
         if not self._is_local_server_active():
             self._poll_fail_count += 1
-            if self._poll_fail_count >= 3:
+            if self._poll_fail_count >= 3 and self._has_active_tiler_layer():
                 self._try_recover_local_server("log-poll")
             self._update_worker_status_ui(None)
             return
@@ -692,7 +747,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             if self._poll_fail_count >= 3 and not self._poll_failure_logged:
                 self._log(f"[WARN] Tiler log polling failed repeatedly: {e}")
                 self._poll_failure_logged = True
-            if self._poll_fail_count >= 5:
+            if self._poll_fail_count >= 5 and self._has_active_tiler_layer():
                 self._try_recover_local_server("log-poll-timeout")
             self._update_worker_status_ui(None)
             return

@@ -449,6 +449,9 @@ _LAST_PARSEDPATH_RECOVERY_MONOTONIC = 0.0
 _PARSEDPATH_RECOVERY_COOLDOWN_SEC = 2.0
 _STARTUP_STATE_FILE = os.path.join(tempfile.gettempdir(), "virtughan_tiler_startup_state.json")
 _INFLIGHT_TILE_TASKS: dict[str, asyncio.Task] = {}
+_LAST_OUTSIDE_VIEWPORT_LOG_MONOTONIC = 0.0
+_OUTSIDE_VIEWPORT_LOG_EVERY_SEC = 1.0
+_OUTSIDE_VIEWPORT_SUPPRESSED = 0
 
 
 def _tile_compute_key(
@@ -860,15 +863,39 @@ def _lat_to_tile_y(lat: float, z: int) -> float:
 
 
 def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -> bool:
+    ok, _details = _tile_intersects_settled_viewport_debug(z=z, x=x, y=y, generation=generation)
+    return ok
+
+
+def _viewport_age_seconds() -> Optional[float]:
+    vp = _SETTLED_VIEWPORT or {}
+    updated_at = vp.get("updated_at")
+    if not updated_at:
+        return None
+    try:
+        ts = str(updated_at).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        now = datetime.utcnow()
+        return max(0.0, (now - dt.replace(tzinfo=None)).total_seconds())
+    except Exception:
+        return None
+
+
+def _tile_intersects_settled_viewport_debug(z: int, x: int, y: int, generation: int) -> tuple[bool, dict]:
     vp = _SETTLED_VIEWPORT
     if not vp:
-        return True
+        return True, {"decision": "allow", "reason": "no_settled_viewport"}
     try:
         vp_gen = int(vp.get("generation", -1))
     except Exception:
         vp_gen = -1
     if vp_gen != int(generation):
-        return True
+        return True, {
+            "decision": "allow",
+            "reason": "generation_mismatch",
+            "request_generation": int(generation),
+            "settled_generation": int(vp_gen),
+        }
 
     try:
         min_lon = float(vp["min_lon"])
@@ -878,7 +905,7 @@ def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -
         pad_deg = max(0.0, float(vp.get("pad_deg", 0.0)))
         pad_tiles = max(0, int(vp.get("pad_tiles", 0)))
     except Exception:
-        return True
+        return True, {"decision": "allow", "reason": "viewport_parse_error"}
 
     try:
         tile_x = int(x)
@@ -894,7 +921,18 @@ def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -
         y0 = max(0, min(n, y0))
         y1 = max(0, min(n, y1))
         if x0 <= x1 and y0 <= y1 and x0 <= tile_x <= x1 and y0 <= tile_y <= y1:
-            return True
+            return True, {
+                "decision": "allow",
+                "reason": "tile_range_hit",
+                "request_generation": int(generation),
+                "settled_generation": int(vp_gen),
+                "tile_x": int(tile_x),
+                "tile_y": int(tile_y),
+                "range_x0": int(x0),
+                "range_x1": int(x1),
+                "range_y0": int(y0),
+                "range_y1": int(y1),
+            }
 
         # Fallback to geometric intersection in lon/lat to avoid false negatives
         # near tile edges after pan/zoom settle.
@@ -913,9 +951,30 @@ def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -
             or (t_max_lat < vp_min_lat)
             or (t_min_lat > vp_max_lat)
         )
-        return not no_overlap
+        intersects = not no_overlap
+        return intersects, {
+            "decision": "allow" if intersects else "defer",
+            "reason": "geom_overlap" if intersects else "geom_no_overlap",
+            "request_generation": int(generation),
+            "settled_generation": int(vp_gen),
+            "tile_x": int(tile_x),
+            "tile_y": int(tile_y),
+            "range_x0": int(x0),
+            "range_x1": int(x1),
+            "range_y0": int(y0),
+            "range_y1": int(y1),
+            "viewport_age_sec": _viewport_age_seconds(),
+            "vp_min_lon": float(vp_min_lon),
+            "vp_min_lat": float(vp_min_lat),
+            "vp_max_lon": float(vp_max_lon),
+            "vp_max_lat": float(vp_max_lat),
+            "tile_min_lon": float(t_min_lon),
+            "tile_min_lat": float(t_min_lat),
+            "tile_max_lon": float(t_max_lon),
+            "tile_max_lat": float(t_max_lat),
+        }
     except Exception:
-        return True
+        return True, {"decision": "allow", "reason": "intersection_exception"}
 
 
 def _record_tile_failure(reason: str, status: int, req_tag: str, req_url: str, **extra) -> None:
@@ -1270,7 +1329,7 @@ async def get_tile(
     operation: str = Query("median"),
     timeseries: bool = Query(False),
 ):
-    global _ACTIVE_TILE_REQUESTS
+    global _ACTIVE_TILE_REQUESTS, _LAST_OUTSIDE_VIEWPORT_LOG_MONOTONIC, _OUTSIDE_VIEWPORT_SUPPRESSED
     # Keep compatibility patches current in long-lived QGIS sessions.
     _patch_rasterio_parsed_path_compat()
 
@@ -1304,7 +1363,13 @@ async def get_tile(
 
         # Fast reject before queueing when tile is outside the settled viewport.
         # This keeps worker slots available for likely-visible tiles.
-        if not _tile_intersects_settled_viewport(z=z, x=x, y=y, generation=request_generation):
+        intersects, vp_debug = _tile_intersects_settled_viewport_debug(
+            z=z,
+            x=x,
+            y=y,
+            generation=request_generation,
+        )
+        if not intersects:
             vp = _SETTLED_VIEWPORT or {}
             _append_tile_event_log(
                 "info",
@@ -1319,6 +1384,26 @@ async def get_tile(
                 pad_deg=vp.get("pad_deg"),
                 pad_tiles=vp.get("pad_tiles"),
             )
+
+            # Throttle detailed diagnostics to avoid log floods during pan/zoom bursts.
+            now_mono = time.monotonic()
+            if (now_mono - _LAST_OUTSIDE_VIEWPORT_LOG_MONOTONIC) >= _OUTSIDE_VIEWPORT_LOG_EVERY_SEC:
+                _append_tiler_log(
+                    "info",
+                    "Deferred tile outside settled viewport (debug)",
+                    tile=req_tag,
+                    request_generation=int(request_generation),
+                    active_generation=int(_VIEW_GENERATION),
+                    settled_generation=vp.get("generation"),
+                    settle_delay_sec=round(float(_VIEW_SETTLE_DELAY_SEC), 3),
+                    view_settling=bool(_is_view_settling()),
+                    suppressed=int(_OUTSIDE_VIEWPORT_SUPPRESSED),
+                    debug=vp_debug,
+                )
+                _OUTSIDE_VIEWPORT_SUPPRESSED = 0
+                _LAST_OUTSIDE_VIEWPORT_LOG_MONOTONIC = now_mono
+            else:
+                _OUTSIDE_VIEWPORT_SUPPRESSED += 1
             return _defer_during_settle_response("outside_settled_viewport")
 
         current_limit = _dynamic_concurrency_limit()

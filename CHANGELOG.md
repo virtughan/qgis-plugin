@@ -3,7 +3,7 @@
 
 ### Fix
 
-- Tiler fixed and working
+- Tiler fixed and working. Issue was tiler only used to work after QGIS restart.
 - Tiles now wait for the map view to settle before requesting new tiles, which reduces unnecessary requests while panning and zooming.
 - Tile request handling was cleaned up by removing unused logic while keeping stable settle timing for smoother behavior.
 
