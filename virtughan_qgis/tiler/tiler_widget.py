@@ -267,6 +267,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._last_active_worker_limit = None
         self._preferred_workers = None
         self._pending_motion_kind = "pan"
+        self._view_motion_active = False
 
         self._init_defaults()
         self._init_index_controls()
@@ -447,13 +448,16 @@ class TilerWidget(QWidget, FORM_CLASS):
         settle_ms = _ZOOM_SETTLE_MS if self._pending_motion_kind == "zoom" else _PAN_SETTLE_MS
         settle_sec = settle_ms / 1000.0
 
-        # Immediate generation bump cancels old-view requests quickly.
+        # During an active motion burst, only debounce settle; avoid bumping
+        # generation on every tiny extent jitter (which can starve tile draws).
         self._last_view_signature = sig
-        self._bump_view_generation(
-            reason=f"view_changed_immediate_{self._pending_motion_kind}",
-            settle=True,
-            settle_delay_sec=settle_sec,
-        )
+        if not self._view_motion_active:
+            self._bump_view_generation(
+                reason=f"view_changed_immediate_{self._pending_motion_kind}",
+                settle=True,
+                settle_delay_sec=settle_sec,
+            )
+            self._view_motion_active = True
 
         # Debounced settled bump starts only after pan/zoom quiet period.
         self._view_change_timer.setInterval(settle_ms)
@@ -507,8 +511,12 @@ class TilerWidget(QWidget, FORM_CLASS):
         if sig is None:
             return
         if self._last_view_signature != sig:
-            # View moved again before settle timer fired; cancel stale work immediately.
-            self._on_canvas_view_changed(self._pending_motion_kind)
+            # View moved again before settle timer fired; keep debouncing without
+            # additional immediate generation bumps.
+            self._last_view_signature = sig
+            settle_ms = _ZOOM_SETTLE_MS if self._pending_motion_kind == "zoom" else _PAN_SETTLE_MS
+            self._view_change_timer.setInterval(settle_ms)
+            self._view_change_timer.start()
             return
 
         # View appears stable; bump generation without extending settle delay.
@@ -519,18 +527,29 @@ class TilerWidget(QWidget, FORM_CLASS):
         except Exception:
             pass
         self._pending_motion_kind = "pan"
+        self._view_motion_active = False
 
     def _current_view_signature(self):
         try:
             if self._canvas is None:
                 return None
             ext = self._canvas.extent()
-            # Avoid false view-generation churn from tiny floating-point jitter.
+            # Quantize by display resolution to avoid perpetual settle from tiny jitter.
+            mupp = 0.0
+            try:
+                mupp = float(self._canvas.mapUnitsPerPixel())
+            except Exception:
+                mupp = 0.0
+            q = max(1e-6, mupp * 0.5)
+
+            def _q(v: float) -> int:
+                return int(round(float(v) / q))
+
             return (
-                round(float(ext.xMinimum()), 4),
-                round(float(ext.yMinimum()), 4),
-                round(float(ext.xMaximum()), 4),
-                round(float(ext.yMaximum()), 4),
+                _q(float(ext.xMinimum())),
+                _q(float(ext.yMinimum())),
+                _q(float(ext.xMaximum())),
+                _q(float(ext.yMaximum())),
                 round(float(self._canvas.scale()), 3),
             )
         except Exception:
@@ -544,12 +563,19 @@ class TilerWidget(QWidget, FORM_CLASS):
             src = self._canvas.mapSettings().destinationCrs()
             dst = QgsCoordinateReferenceSystem("EPSG:4326")
             tr = QgsCoordinateTransform(src, dst, QgsProject.instance())
-            ll = tr.transform(ext.xMinimum(), ext.yMinimum())
-            ur = tr.transform(ext.xMaximum(), ext.yMaximum())
-            min_lon = min(float(ll.x()), float(ur.x()))
-            max_lon = max(float(ll.x()), float(ur.x()))
-            min_lat = min(float(ll.y()), float(ur.y()))
-            max_lat = max(float(ll.y()), float(ur.y()))
+            corners = [
+                (float(ext.xMinimum()), float(ext.yMinimum())),
+                (float(ext.xMinimum()), float(ext.yMaximum())),
+                (float(ext.xMaximum()), float(ext.yMinimum())),
+                (float(ext.xMaximum()), float(ext.yMaximum())),
+            ]
+            pts = [tr.transform(x, y) for x, y in corners]
+            lons = [float(p.x()) for p in pts]
+            lats = [float(p.y()) for p in pts]
+            min_lon = min(lons)
+            max_lon = max(lons)
+            min_lat = min(lats)
+            max_lat = max(lats)
             return (min_lon, min_lat, max_lon, max_lat)
         except Exception:
             return None
@@ -559,22 +585,29 @@ class TilerWidget(QWidget, FORM_CLASS):
         if bbox is None:
             return
         min_lon, min_lat, max_lon, max_lat = bbox
-        try:
-            self._http_json_get(
-                self._diag_url(
-                    "/diag/set-viewport"
-                    f"?generation={int(generation)}"
-                    f"&min_lon={min_lon:.8f}"
-                    f"&min_lat={min_lat:.8f}"
-                    f"&max_lon={max_lon:.8f}"
-                    f"&max_lat={max_lat:.8f}"
-                    "&pad_deg=0.00"
-                    "&pad_tiles=0"
-                ),
-                timeout=0.7,
-            )
-        except Exception:
-            pass
+        self._append_log(
+            "[INFO] Publishing settled viewport "
+            f"gen={int(generation)} "
+            f"bbox=({min_lon:.6f},{min_lat:.6f},{max_lon:.6f},{max_lat:.6f})"
+        )
+        url = self._diag_url(
+            "/diag/set-viewport"
+            f"?generation={int(generation)}"
+            f"&min_lon={min_lon:.8f}"
+            f"&min_lat={min_lat:.8f}"
+            f"&max_lon={max_lon:.8f}"
+            f"&max_lat={max_lat:.8f}"
+            "&pad_deg=0.00"
+            "&pad_tiles=1"
+        )
+        last_err = None
+        for timeout_s in (0.9, 1.2, 1.6):
+            try:
+                self._http_json_get(url, timeout=timeout_s)
+                return
+            except Exception as e:
+                last_err = e
+        self._append_log(f"[WARN] Failed to publish settled viewport: {last_err}")
 
     def _poll_tiler_logs(self):
         if not self._is_local_server_active():

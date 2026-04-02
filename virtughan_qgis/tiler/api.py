@@ -839,16 +839,8 @@ def _retryable_tile_unavailable(reason: str, status_code: int = 503) -> Response
 
 
 def _defer_during_settle_response(reason: str = "view_settling") -> Response:
-    """Return a lightweight non-cacheable response while the view is still moving."""
-    return Response(
-        status_code=204,
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-            "Expires": "0",
-            "X-Tile-Reason": reason,
-        },
-    )
+    """Return a retryable response while view/viewport state is not ready yet."""
+    return _retryable_tile_unavailable(reason, status_code=503)
 
 
 def _tile_bounds_lonlat(z: int, x: int, y: int) -> tuple[float, float, float, float]:
@@ -892,11 +884,14 @@ def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -
         min_lat = float(vp["min_lat"])
         max_lon = float(vp["max_lon"])
         max_lat = float(vp["max_lat"])
+        pad_deg = max(0.0, float(vp.get("pad_deg", 0.0)))
         pad_tiles = max(0, int(vp.get("pad_tiles", 0)))
     except Exception:
         return True
 
     try:
+        tile_x = int(x)
+        tile_y = int(y)
         x0 = int(math.floor(_lon_to_tile_x(min_lon, z))) - pad_tiles
         x1 = int(math.floor(_lon_to_tile_x(max_lon, z))) + pad_tiles
         y0 = int(math.floor(_lat_to_tile_y(max_lat, z))) - pad_tiles
@@ -907,9 +902,27 @@ def _tile_intersects_settled_viewport(z: int, x: int, y: int, generation: int) -
         x1 = max(0, min(n, x1))
         y0 = max(0, min(n, y0))
         y1 = max(0, min(n, y1))
-        if x0 > x1 or y0 > y1:
-            return False
-        return x0 <= int(x) <= x1 and y0 <= int(y) <= y1
+        if x0 <= x1 and y0 <= y1 and x0 <= tile_x <= x1 and y0 <= tile_y <= y1:
+            return True
+
+        # Fallback to geometric intersection in lon/lat to avoid false negatives
+        # near tile edges after pan/zoom settle.
+        t_min_lon, t_min_lat, t_max_lon, t_max_lat = _tile_bounds_lonlat(z=z, x=tile_x, y=tile_y)
+        n_tiles = max(1, 2 ** int(z))
+        lon_per_tile = 360.0 / float(n_tiles)
+        lat_per_tile = max(0.0, t_max_lat - t_min_lat)
+        vp_min_lon = min_lon - pad_deg - (pad_tiles * lon_per_tile)
+        vp_max_lon = max_lon + pad_deg + (pad_tiles * lon_per_tile)
+        vp_min_lat = min_lat - pad_deg - (pad_tiles * lat_per_tile)
+        vp_max_lat = max_lat + pad_deg + (pad_tiles * lat_per_tile)
+
+        no_overlap = (
+            (t_max_lon < vp_min_lon)
+            or (t_min_lon > vp_max_lon)
+            or (t_max_lat < vp_min_lat)
+            or (t_min_lat > vp_max_lat)
+        )
+        return not no_overlap
     except Exception:
         return True
 
@@ -1134,9 +1147,27 @@ async def bump_generation(
     settle_delay_sec: Optional[float] = Query(None),
 ):
     global _VIEW_GENERATION, _SEMAPHORE_EPOCH, _LAST_VIEW_CHANGE_MONOTONIC, _VIEW_SETTLE_DELAY_SEC
+    if str(reason) == "view_settled":
+        _append_tiler_log(
+            "info",
+            "View generation settled",
+            reason=reason,
+            generation=_VIEW_GENERATION,
+            settle=bool(settle),
+            cancelled_tasks=0,
+        )
+        return {
+            "generation": _VIEW_GENERATION,
+            "reason": reason,
+            "settle": bool(settle),
+            "cancelled_tasks": 0,
+        }
+
     _VIEW_GENERATION += 1
     _SEMAPHORE_EPOCH = int(_VIEW_GENERATION)
-    cancelled_tasks = _cancel_stale_request_tasks(_VIEW_GENERATION)
+    # Do not force-cancel in-flight request tasks on every pan/zoom bump.
+    # Aggressive cancellation causes visible tile holes when map motion is frequent.
+    cancelled_tasks = 0
     # Rotate semaphores so new viewport requests do not wait behind stale generations.
     _TILE_REQUEST_SEMAPHORES.clear()
     if settle:
@@ -1202,7 +1233,16 @@ async def set_viewport(
         "pad_tiles": max(0, int(pad_tiles)),
         "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
-    _append_tiler_log("info", "Settled viewport updated", **_SETTLED_VIEWPORT)
+    _append_tiler_log(
+        "info",
+        (
+            "Settled viewport updated "
+            f"gen={int(generation)} "
+            f"bbox=({lo_lon:.6f},{lo_lat:.6f},{hi_lon:.6f},{hi_lat:.6f}) "
+            f"pad_tiles={max(0, int(pad_tiles))}"
+        ),
+        **_SETTLED_VIEWPORT,
+    )
     return _SETTLED_VIEWPORT
 
 
@@ -1270,6 +1310,25 @@ async def get_tile(
                 _append_tile_event_log("info", "Deferred tile while view is settling", tile=req_tag, wait_sec=round(wait_sec, 3))
                 return _defer_during_settle_response("view_settling")
 
+        # Fast reject before queueing when tile is outside the settled viewport.
+        # This keeps worker slots available for likely-visible tiles.
+        if not _tile_intersects_settled_viewport(z=z, x=x, y=y, generation=request_generation):
+            vp = _SETTLED_VIEWPORT or {}
+            _append_tile_event_log(
+                "info",
+                "Deferred tile outside settled viewport",
+                tile=req_tag,
+                request_generation=int(request_generation),
+                settled_generation=vp.get("generation"),
+                min_lon=vp.get("min_lon"),
+                min_lat=vp.get("min_lat"),
+                max_lon=vp.get("max_lon"),
+                max_lat=vp.get("max_lat"),
+                pad_deg=vp.get("pad_deg"),
+                pad_tiles=vp.get("pad_tiles"),
+            )
+            return _defer_during_settle_response("outside_settled_viewport")
+
         current_limit = _dynamic_concurrency_limit()
         _append_tile_event_log(
             "info",
@@ -1279,9 +1338,6 @@ async def get_tile(
         )
         waited = 0.0
         while waited < _QUEUE_WAIT_TIMEOUT_SEC and not acquired:
-            if _is_stale_generation(request_generation):
-                _append_tile_event_log("info", "Dropped stale queued tile", tile=req_tag)
-                return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
             slice_sec = min(_STALE_CHECK_SLICE_SEC, _QUEUE_WAIT_TIMEOUT_SEC - waited)
             try:
                 await asyncio.wait_for(sem.acquire(), timeout=slice_sec)
@@ -1304,14 +1360,6 @@ async def get_tile(
         _ACTIVE_TILE_REQUESTS += 1
         counted_active = True
 
-        if _is_stale_generation(request_generation):
-            _append_tile_event_log("info", "Dropped stale tile before compute", tile=req_tag)
-            return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
-
-        if not _tile_intersects_settled_viewport(z=z, x=x, y=y, generation=request_generation):
-            _append_tile_event_log("info", "Deferred tile outside settled viewport", tile=req_tag)
-            return _defer_during_settle_response("outside_settled_viewport")
-
         compute_task = asyncio.create_task(
             _generate_tile_with_cache_fallback(
                 x=x,
@@ -1332,11 +1380,6 @@ async def get_tile(
         image_bytes = None
         feature = None
         while True:
-            if _is_stale_generation(request_generation):
-                compute_task.cancel()
-                _append_tile_event_log("info", "Cancelled stale tile during compute", tile=req_tag)
-                return _stale_tile_response("stale_view_generation", req_tag=req_tag, req_url=req_url)
-
             remaining = _TILE_COMPUTE_TIMEOUT_SEC - elapsed
             if remaining <= 0.0:
                 compute_task.cancel()
