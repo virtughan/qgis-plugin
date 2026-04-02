@@ -60,23 +60,6 @@ def _prefer_primary_runtime_paths() -> None:
 _prefer_primary_runtime_paths()
 
 
-def _clear_tiler_runtime_modules() -> None:
-    """Clear modules that can cause class-identity mismatches across roots."""
-    for mod_name in list(sys.modules.keys()):
-        if (
-            mod_name == "virtughan"
-            or mod_name.startswith("virtughan.")
-            or mod_name == "rio_tiler"
-            or mod_name.startswith("rio_tiler.")
-            or mod_name == "rasterio"
-            or mod_name.startswith("rasterio.")
-        ):
-            try:
-                del sys.modules[mod_name]
-            except Exception:
-                pass
-
-
 def _in_runtime_path(path: str) -> bool:
     if not path:
         return False
@@ -460,7 +443,6 @@ _VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
 _LAST_VIEW_CHANGE_MONOTONIC = 0.0
 _GENERATION_REQUEST_TASKS: dict[int, set[asyncio.Task]] = {}
 _SETTLED_VIEWPORT: dict = {}
-_CPU_COUNT = max(1, int(os.cpu_count() or 1))
 _MAX_DYNAMIC_CONCURRENCY = 4
 _MIN_DYNAMIC_CONCURRENCY = 4
 _PARSEDPATH_RECOVERY_IN_PROGRESS = False
