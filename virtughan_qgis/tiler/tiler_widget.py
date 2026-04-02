@@ -273,6 +273,8 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._view_motion_active = False
         self._tiler_layer_temporarily_hidden = False
         self._tiler_layer_prev_visibility = None
+        self._poll_fail_count = 0
+        self._poll_failure_logged = False
 
         self._init_defaults()
         self._init_index_controls()
@@ -438,6 +440,7 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _on_canvas_view_changed(self, motion_kind: str = "pan"):
         if not self._is_local_server_active():
+            self._try_recover_local_server("view-change")
             return
         sig = self._current_view_signature()
         if sig is None:
@@ -674,6 +677,9 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _poll_tiler_logs(self):
         if not self._is_local_server_active():
+            self._poll_fail_count += 1
+            if self._poll_fail_count >= 3:
+                self._try_recover_local_server("log-poll")
             self._update_worker_status_ui(None)
             return
         try:
@@ -681,9 +687,18 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._diag_url(f"/diag/logs?since_id={int(self._last_tiler_log_id)}"),
                 timeout=0.7,
             )
-        except Exception:
+        except Exception as e:
+            self._poll_fail_count += 1
+            if self._poll_fail_count >= 3 and not self._poll_failure_logged:
+                self._log(f"[WARN] Tiler log polling failed repeatedly: {e}")
+                self._poll_failure_logged = True
+            if self._poll_fail_count >= 5:
+                self._try_recover_local_server("log-poll-timeout")
             self._update_worker_status_ui(None)
             return
+
+        self._poll_fail_count = 0
+        self._poll_failure_logged = False
 
         # Keep fixed worker display stable; no runtime auto-change.
         self._update_worker_status_ui(4)
@@ -1104,10 +1119,41 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.server.stop()
             self._tiler_log_timer.stop()
             self._update_worker_status_ui(None)
+            self._poll_fail_count = 0
+            self._poll_failure_logged = False
             self._log("Local server stopped.")
             self._apply_localserver_visibility()
         except Exception as e:
             QMessageBox.critical(self, "Stop Server Error", str(e))
+
+    def _try_recover_local_server(self, trigger: str):
+        """Best-effort local server recovery when tiler becomes unresponsive."""
+        try:
+            if not self.runLocalCheck.isChecked():
+                return False
+        except Exception:
+            return False
+
+        try:
+            if self.server.is_running():
+                return True
+        except Exception:
+            return False
+
+        try:
+            if not self._poll_failure_logged:
+                self._log(f"[WARN] Local server is not running ({trigger}); attempting restart.")
+                self._poll_failure_logged = True
+            self._on_start_server()
+            if self.server.is_running():
+                self._poll_fail_count = 0
+                self._poll_failure_logged = False
+                self._log("[INFO] Local server recovered.")
+                return True
+            return False
+        except Exception as e:
+            self._log(f"[WARN] Local server recovery failed: {e}")
+            return False
 
     def _on_add_layer(self):
         try:

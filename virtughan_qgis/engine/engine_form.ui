@@ -248,7 +248,7 @@
 
           <item row="1" column="0" colspan="5">
            <widget class="QLabel" name="aoiPreviewLabel">
-            <property name="text"><string>&lt;i&gt;AOI: not set yet&lt;/i&gt;</string></property>
+            <property name="text"><string>&lt;i&gt;AOI: not set yet. Use smaller aoi and test first.&lt;/i&gt;</string></property>
             <property name="toolTip"><string>Preview (xmin, ymin, xmax, ymax)</string></property>
            </widget>
           </item>

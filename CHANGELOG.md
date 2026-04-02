@@ -1,4 +1,12 @@
 
+## v1.0.12 (2026-04-02)
+
+### Fix
+
+- Tiler fixed and working
+- Tiles now wait for the map view to settle before requesting new tiles, which reduces unnecessary requests while panning and zooming.
+- Tile request handling was cleaned up by removing unused logic while keeping stable settle timing for smoother behavior.
+
 ## v1.0.11 (2026-04-01)
 
 ### Fix
