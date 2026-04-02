@@ -202,6 +202,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None):
             "            backend_args = {k: v for k, v in backend_args.items() if k in allowed}",
             "",
             "        extr = ExtractorBackend(**backend_args)",
+            "        logf.write(\"Please wait: downloading and preparing outputs (this may take few minutes depending on your area and time range).\\n\")",
             "        extr.extract()",
             "        logf.write(\"Extractor finished.\\n\")",
             "    except Exception:",

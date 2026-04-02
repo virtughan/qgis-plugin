@@ -445,6 +445,8 @@ def main():
         for attempt in range(1, max_attempts + 1):
             try:
                 logf.write(f"Compute attempt {attempt}/{max_attempts}\\n")
+                if attempt == 1:
+                    logf.write("Please wait: preparing scenes and computing output (this may take few minutes depending on your area and time range).\\n")
                 from virtughan.engine import VirtughanProcessor
 
                 proc = VirtughanProcessor(
@@ -1294,13 +1296,39 @@ class EngineDockWidget(QDockWidget):
         self._current_log_path = None
 
     def _run_clicked(self):
+        try:
+            if self._current_task is not None:
+                status = self._current_task.status()
+                if status in (QgsTask.Queued, QgsTask.Running):
+                    QMessageBox.information(
+                        self,
+                        "VirtuGhan",
+                        "Compute is already running. Please wait for it to finish.",
+                    )
+                    return
+        except Exception:
+            pass
+
         if not ensure_runtime_network_ready(self):
             _log(self, "Runtime network preflight failed; run cancelled.", Qgis.Warning)
             return
 
         try:
-            self._validate_minimum_matching_scenes(min_count=2)
+            _log(self, "Please wait: checking matching scenes before compute...")
+            self._validate_minimum_matching_scenes(min_count=2, timeout_s=12.0)
             params = self._collect_params()
+        except TimeoutError:
+            # Do not block the run when pre-check hangs on network; compute path has its own retries.
+            _log(
+                self,
+                "Scene pre-check timed out; continuing compute. This can take seconds to a few minutes.",
+                Qgis.Warning,
+            )
+            try:
+                params = self._collect_params()
+            except Exception as e:
+                QMessageBox.warning(self, "VirtuGhan", str(e))
+                return
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -1592,14 +1620,14 @@ class EngineDockWidget(QDockWidget):
             raise result["error"]
         return list(result["scenes"] or [])
 
-    def _validate_minimum_matching_scenes(self, min_count: int = 2):
+    def _validate_minimum_matching_scenes(self, min_count: int = 2, timeout_s: float = 30.0):
         params = self._collect_search_params()
         scenes = self._search_scenes_with_timeout(
             params["bbox"],
             params["start_date"],
             params["end_date"],
             params["cloud_cover"],
-            timeout_s=30.0,
+            timeout_s=timeout_s,
         )
         count = len(scenes or [])
         if count < min_count:

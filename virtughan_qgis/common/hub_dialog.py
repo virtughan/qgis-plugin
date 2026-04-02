@@ -703,11 +703,22 @@ class VirtughanHubDialog(QDialog):
             return
         self._centered_once = True
         try:
-            screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
-            if screen is not None:
-                geometry = self.frameGeometry()
-                geometry.moveCenter(screen.availableGeometry().center())
-                self.move(geometry.topLeft())
+            # Keep the tool panel on the right so it does not cover the map center.
+            target_rect = None
+            main_window = self.iface.mainWindow() if self.iface else None
+            if main_window is not None:
+                target_rect = main_window.frameGeometry()
+
+            if target_rect is None:
+                screen = self.windowHandle().screen() if self.windowHandle() else QApplication.primaryScreen()
+                if screen is not None:
+                    target_rect = screen.availableGeometry()
+
+            if target_rect is not None:
+                margin = 12
+                x = int(target_rect.right() - self.width() - margin)
+                y = int(target_rect.top() + max(20, margin))
+                self.move(x, y)
         except Exception:
             pass
 
