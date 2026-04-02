@@ -136,7 +136,7 @@ class VirtughanHubDialog(QDialog):
         self._help_by_key = {
             "engine": """
 <h3>Compute</h3>
-<p>Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. You can combine values over time using methods like mean, max, min, or median. This is useful when you want one summary output, such as NDVI aggregated over time.</p>
+<p>Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. You can combine values over time using methods like mean, max, min, or median. If you enable timeseries, it also generates time-series outputs from the matching scenes in your selected date range. This is useful when you want both a summary output and a time-based view, such as NDVI over time.</p>
 <p><b>Purpose:</b> Create layers after computing on the satellite images eg. create and download NDVI layer in a map.</p>
 <p><b>Use Compute when:</b> you want derived outputs, not only raw band/image downloads.</p>
 <p><b>Data source:</b> Registry of Open Data on AWS.</p>
