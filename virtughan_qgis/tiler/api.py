@@ -441,7 +441,6 @@ _STALE_CHECK_SLICE_SEC = 0.05
 _DEFAULT_VIEW_SETTLE_DELAY_SEC = max(0.0, float(os.getenv("VIRTUGHAN_VIEW_SETTLE_DELAY_SEC", "1.5") or 1.5))
 _VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
 _LAST_VIEW_CHANGE_MONOTONIC = 0.0
-_GENERATION_REQUEST_TASKS: dict[int, set[asyncio.Task]] = {}
 _SETTLED_VIEWPORT: dict = {}
 _MAX_DYNAMIC_CONCURRENCY = 4
 _MIN_DYNAMIC_CONCURRENCY = 4
@@ -774,47 +773,6 @@ def _get_request_semaphore() -> asyncio.Semaphore:
         sem = asyncio.Semaphore(max(_TILER_CONCURRENCY, _MAX_DYNAMIC_CONCURRENCY))
         _TILE_REQUEST_SEMAPHORES[key] = sem
     return sem
-
-
-def _register_request_task(generation: int) -> Optional[asyncio.Task]:
-    try:
-        task = asyncio.current_task()
-    except Exception:
-        return None
-    if task is None:
-        return None
-    bucket = _GENERATION_REQUEST_TASKS.setdefault(int(generation), set())
-    bucket.add(task)
-    return task
-
-
-def _unregister_request_task(generation: int, task: Optional[asyncio.Task]) -> None:
-    if task is None:
-        return
-    bucket = _GENERATION_REQUEST_TASKS.get(int(generation))
-    if not bucket:
-        return
-    try:
-        bucket.discard(task)
-    except Exception:
-        pass
-    if not bucket:
-        _GENERATION_REQUEST_TASKS.pop(int(generation), None)
-
-
-def _cancel_stale_request_tasks(current_generation: int) -> int:
-    cancelled = 0
-    for gen, tasks in list(_GENERATION_REQUEST_TASKS.items()):
-        if int(gen) >= int(current_generation):
-            continue
-        for task in list(tasks):
-            try:
-                if not task.done():
-                    task.cancel()
-                    cancelled += 1
-            except Exception:
-                continue
-    return cancelled
 
 
 def _append_tiler_log(level: str, message: str, **extra):
@@ -1328,7 +1286,6 @@ async def get_tile(
 
     req_tag = f"{z}/{x}/{y}"
     request_generation = int(_VIEW_GENERATION)
-    request_task = _register_request_task(request_generation)
     req_url = str(request.url)
     _append_tile_url_sample(tile=req_tag, full_url=req_url)
     sem = _get_request_semaphore()
@@ -1621,7 +1578,6 @@ async def get_tile(
                     _INFLIGHT_TILE_TASKS.pop(compute_key, None)
             except Exception:
                 pass
-        _unregister_request_task(request_generation, request_task)
         if acquired:
             try:
                 sem.release()
