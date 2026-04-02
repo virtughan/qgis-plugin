@@ -601,6 +601,15 @@ class TilerWidget(QWidget, FORM_CLASS):
             msg = row.get("message", "")
             tile = row.get("tile")
             url = row.get("url")
+            python_path = row.get("python")
+            pid = row.get("pid")
+            cwd = row.get("cwd")
+            virtughan_path = row.get("virtughan")
+            rasterio_path = row.get("rasterio")
+            rio_tiler_path = row.get("rio_tiler")
+            parse_path_id = row.get("parse_path_id")
+            parse_path_impl_id = row.get("_parse_path_id")
+            changed_fields = row.get("fields")
             err = row.get("error")
             detail = row.get("detail")
             status = row.get("status")
@@ -619,6 +628,24 @@ class TilerWidget(QWidget, FORM_CLASS):
                 suffix += f" ({err})"
             if detail:
                 suffix += f" - {detail}"
+            if python_path:
+                suffix += f" python={python_path}"
+            if pid is not None:
+                suffix += f" pid={pid}"
+            if cwd:
+                suffix += f" cwd={cwd}"
+            if virtughan_path:
+                suffix += f" virtughan={virtughan_path}"
+            if rasterio_path:
+                suffix += f" rasterio={rasterio_path}"
+            if rio_tiler_path:
+                suffix += f" rio_tiler={rio_tiler_path}"
+            if parse_path_id is not None:
+                suffix += f" parse_path_id={parse_path_id}"
+            if parse_path_impl_id is not None:
+                suffix += f" _parse_path_id={parse_path_impl_id}"
+            if changed_fields:
+                suffix += f" changed={changed_fields}"
             self._log(f"{ts} [{lvl}] {msg}{suffix}")
         self._last_tiler_log_id = int(payload.get("last_id", self._last_tiler_log_id))
 

@@ -12,6 +12,8 @@ import traceback
 import time
 import re
 import math
+import json
+import tempfile
 from collections import deque
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -31,6 +33,31 @@ except Exception:
     psutil = None
 
 activate_runtime_paths()
+
+
+def _prefer_primary_runtime_paths() -> None:
+    """Keep primary runtime first in sys.path and fallback paths last."""
+    primary_site = os.path.normpath(RUNTIME_SITE_PACKAGES_DIR)
+    primary_root = os.path.normpath(os.path.dirname(RUNTIME_SITE_PACKAGES_DIR))
+    fallback_site = os.path.normpath(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
+    fallback_root = os.path.normpath(os.path.dirname(RUNTIME_FALLBACK_SITE_PACKAGES_DIR))
+
+    ordered = [primary_site, primary_root, fallback_root, fallback_site]
+    for p in ordered:
+        try:
+            while p in sys.path:
+                sys.path.remove(p)
+        except Exception:
+            pass
+
+    # Primary first, fallback retained only as last resort.
+    sys.path.insert(0, primary_root)
+    sys.path.insert(0, primary_site)
+    sys.path.append(fallback_root)
+    sys.path.append(fallback_site)
+
+
+_prefer_primary_runtime_paths()
 
 
 def _clear_tiler_runtime_modules() -> None:
@@ -209,9 +236,10 @@ def _patch_rasterio_parsed_path_compat() -> None:
             if patched is not None:
                 path_mod.parse_path = patched
 
-    # rio-tiler can import parse_path into module scope; patch those aliases as well.
+    # Any already-loaded module can import parse_path/_parse_path/open into module scope.
+    # Rebind aliases broadly so stale function references do not bypass this compatibility layer.
     for mod_name, mod in list(sys.modules.items()):
-        if not mod_name.startswith("rio_tiler"):
+        if mod is None:
             continue
         try:
             for attr_name in ("parse_path", "_parse_path"):
@@ -219,6 +247,11 @@ def _patch_rasterio_parsed_path_compat() -> None:
                     patched = _wrap_parse_callable(getattr(mod, attr_name, None))
                     if patched is not None:
                         setattr(mod, attr_name, patched)
+
+            # Some modules keep a direct alias to rasterio.open.
+            open_attr = getattr(mod, "open", None)
+            if callable(open_attr) and getattr(open_attr, "__module__", "").startswith("rasterio"):
+                setattr(mod, "open", rasterio.open)
         except Exception:
             continue
 
@@ -280,14 +313,36 @@ TileProcessor, TP_path = _find_tileprocessor()
 
 def _safe_apply_colormap(result, colormap_str):
     """Apply a simple red-yellow-green ramp without relying on matplotlib internals."""
-    arr = np.asarray(result, dtype=float)
+    # rio-tiler can return masked/object arrays containing sentinel values
+    # (e.g., numpy.ma._NoValueType). Normalize to plain float first.
+    raw = result
+    if np.ma.isMaskedArray(raw):
+        raw = np.ma.filled(raw, np.nan)
+
+    arr = np.asarray(raw)
+    if arr.dtype == object:
+        def _safe_float(v):
+            if v is None:
+                return np.nan
+            cls_name = getattr(v, "__class__", type(v)).__name__
+            if cls_name in {"_NoValueType", "MaskedConstant"}:
+                return np.nan
+            try:
+                return float(v)
+            except Exception:
+                return np.nan
+
+        arr = np.vectorize(_safe_float, otypes=[float])(arr)
+    else:
+        arr = arr.astype(float, copy=False)
+
     finite_mask = np.isfinite(arr)
     if not finite_mask.any():
         return Image.fromarray(np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.uint8))
 
     valid = arr[finite_mask]
-    vmin = float(valid.min())
-    vmax = float(valid.max())
+    vmin = float(np.nanmin(valid))
+    vmax = float(np.nanmax(valid))
     if vmax <= vmin:
         norm = np.zeros_like(arr, dtype=float)
     else:
@@ -305,7 +360,59 @@ def _safe_apply_colormap(result, colormap_str):
     return Image.fromarray(rgb_u8)
 
 
+def _patch_tileprocessor_fetch_tile_compat() -> None:
+    """Normalize fetched tile arrays so downstream math never sees _NoValue sentinels."""
+    current_fetch = getattr(TileProcessor, "fetch_tile", None)
+    if current_fetch is None:
+        return
+
+    # Always patch using the original fetch function, even if an older compat wrapper exists.
+    original_fetch = getattr(current_fetch, "_virtughan_original_fetch", current_fetch)
+
+    def _coerce_no_value_safe_float_array(value):
+        if np.ma.isMaskedArray(value):
+            return np.asarray(np.ma.filled(value, np.nan), dtype=float)
+
+        # rio-tiler can return ImageData-like objects in some versions.
+        if hasattr(value, "data") and not isinstance(value, np.ndarray):
+            value = getattr(value, "data")
+
+        # Some paths can return tuples/lists with the array in the first slot.
+        if isinstance(value, (tuple, list)) and value:
+            value = value[0]
+
+        arr = np.asarray(value)
+        if arr.dtype != object:
+            return arr.astype(float, copy=False)
+
+        def _safe_float(v):
+            if v is None:
+                return np.nan
+            cls_name = getattr(v, "__class__", type(v)).__name__
+            if cls_name in {"_NoValueType", "MaskedConstant"}:
+                return np.nan
+            try:
+                return float(v)
+            except Exception:
+                return np.nan
+
+        return np.vectorize(_safe_float, otypes=[float])(arr)
+
+    async def _patched_fetch_tile(url, x, y, z):
+        tile = await original_fetch(url, x, y, z)
+        try:
+            return _coerce_no_value_safe_float_array(tile)
+        except Exception:
+            # Fallback to original tile payload if coercion is not possible.
+            return tile
+
+    _patched_fetch_tile._virtughan_patched = True
+    _patched_fetch_tile._virtughan_original_fetch = original_fetch
+    TileProcessor.fetch_tile = staticmethod(_patched_fetch_tile)
+
+
 TileProcessor.apply_colormap = staticmethod(_safe_apply_colormap)
+_patch_tileprocessor_fetch_tile_compat()
 
 
 def _default_tiler_concurrency() -> int:
@@ -326,6 +433,15 @@ def _resolve_tiler_concurrency() -> int:
 app = FastAPI(title="virtughan tiler (QGIS local)")
 processor = TileProcessor(cache_time=60)  
 logger = logging.getLogger(__name__)
+
+
+@app.on_event("startup")
+async def _on_startup_log_fingerprint():
+    _ensure_consistent_runtime_roots()
+    _stabilize_startup_path_bindings()
+    _persist_and_log_startup_fingerprint()
+
+
 _TILER_CONCURRENCY = _resolve_tiler_concurrency()
 _TILE_REQUEST_SEMAPHORES: dict[tuple[int, int], asyncio.Semaphore] = {}
 _QUEUE_WAIT_TIMEOUT_SEC = 12.0
@@ -347,6 +463,277 @@ _SETTLED_VIEWPORT: dict = {}
 _CPU_COUNT = max(1, int(os.cpu_count() or 1))
 _MAX_DYNAMIC_CONCURRENCY = 4
 _MIN_DYNAMIC_CONCURRENCY = 4
+_PARSEDPATH_RECOVERY_IN_PROGRESS = False
+_LAST_PARSEDPATH_RECOVERY_MONOTONIC = 0.0
+_PARSEDPATH_RECOVERY_COOLDOWN_SEC = 2.0
+_STARTUP_STATE_FILE = os.path.join(tempfile.gettempdir(), "virtughan_tiler_startup_state.json")
+
+
+def _module_file(name: str) -> str:
+    try:
+        mod = importlib.import_module(name)
+        return str(getattr(mod, "__file__", "") or "")
+    except Exception:
+        return ""
+
+
+def _startup_fingerprint() -> dict:
+    parse_targets = {}
+    for mod_name in ("rasterio._path",):
+        try:
+            mod = importlib.import_module(mod_name)
+            parse_targets[mod_name] = {
+                "file": str(getattr(mod, "__file__", "") or ""),
+                "parse_path_id": id(getattr(mod, "parse_path", None)),
+                "_parse_path_id": id(getattr(mod, "_parse_path", None)),
+            }
+        except Exception:
+            parse_targets[mod_name] = {"file": "", "parse_path_id": 0, "_parse_path_id": 0}
+
+    return {
+        "python": sys.executable,
+        "pid": os.getpid(),
+        "cwd": os.getcwd(),
+        "virtughan_file": _module_file("virtughan"),
+        "rasterio_file": _module_file("rasterio"),
+        "rio_tiler_file": _module_file("rio_tiler"),
+        "parse_targets": parse_targets,
+    }
+
+
+def _runtime_state_snapshot() -> dict:
+    snap = {
+        "pid": os.getpid(),
+        "cwd": os.getcwd(),
+        "python": sys.executable,
+        "virtughan_file": _module_file("virtughan"),
+        "rasterio_file": _module_file("rasterio"),
+        "rio_tiler_file": _module_file("rio_tiler"),
+    }
+    try:
+        rp = importlib.import_module("rasterio._path")
+        snap["rasterio_path_file"] = str(getattr(rp, "__file__", "") or "")
+        snap["parse_path_id"] = id(getattr(rp, "parse_path", None))
+        snap["_parse_path_id"] = id(getattr(rp, "_parse_path", None))
+        snap["parsed_path_class_id"] = id(getattr(rp, "_ParsedPath", None))
+    except Exception as exc:
+        snap["rasterio_path_error"] = str(exc)
+
+    try:
+        import virtughan.tile as vt
+        snap["tileprocessor_class_id"] = id(getattr(vt, "TileProcessor", None))
+        snap["tileprocessor_fetch_id"] = id(getattr(getattr(vt, "TileProcessor", object), "fetch_tile", None))
+    except Exception as exc:
+        snap["tileprocessor_error"] = str(exc)
+
+    try:
+        roots = [p for p in sys.path if "virtughan_runtime" in (p or "")]
+        snap["runtime_paths"] = roots[:8]
+    except Exception:
+        pass
+    return snap
+
+
+def _persist_and_log_startup_fingerprint() -> None:
+    current = _startup_fingerprint()
+    previous = None
+    try:
+        if os.path.exists(_STARTUP_STATE_FILE):
+            with open(_STARTUP_STATE_FILE, "r", encoding="utf-8") as fh:
+                previous = json.load(fh)
+    except Exception:
+        previous = None
+
+    _append_tiler_log(
+        "info",
+        "Startup fingerprint",
+        python=current.get("python", ""),
+        pid=current.get("pid", 0),
+        cwd=current.get("cwd", ""),
+        virtughan=current.get("virtughan_file", ""),
+        rasterio=current.get("rasterio_file", ""),
+        rio_tiler=current.get("rio_tiler_file", ""),
+        parse_path_id=current.get("parse_targets", {}).get("rasterio._path", {}).get("parse_path_id", 0),
+        _parse_path_id=current.get("parse_targets", {}).get("rasterio._path", {}).get("_parse_path_id", 0),
+    )
+    _append_tiler_log("info", "Startup runtime state", detail=json.dumps(_runtime_state_snapshot(), default=str))
+
+    if isinstance(previous, dict):
+        changed = []
+        for key in ("python", "virtughan_file", "rasterio_file", "rio_tiler_file"):
+            if str(previous.get(key, "")) != str(current.get(key, "")):
+                changed.append(key)
+        if changed:
+            _append_tiler_log("warning", "Restart fingerprint changed", fields=",".join(changed))
+        else:
+            _append_tiler_log("info", "Restart fingerprint unchanged")
+
+    try:
+        with open(_STARTUP_STATE_FILE, "w", encoding="utf-8") as fh:
+            json.dump(current, fh)
+    except Exception:
+        pass
+
+
+def _runtime_site_label(module_file: str) -> str:
+    norm = os.path.normpath(module_file or "")
+    primary = os.path.normpath(RUNTIME_SITE_PACKAGES_DIR)
+    fallback = os.path.normpath(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
+    if norm.startswith(primary):
+        return "primary"
+    if norm.startswith(fallback):
+        return "fallback"
+    return "other"
+
+
+def _ensure_consistent_runtime_roots() -> None:
+    """Ensure virtughan/rasterio/rio_tiler come from one runtime root on startup."""
+    global TileProcessor, TP_path, processor
+
+    current = {
+        "virtughan": _module_file("virtughan"),
+        "rasterio": _module_file("rasterio"),
+        "rio_tiler": _module_file("rio_tiler"),
+    }
+    labels = {name: _runtime_site_label(path) for name, path in current.items()}
+    runtime_labels = [lab for lab in labels.values() if lab in ("primary", "fallback")]
+
+    # Nothing to do when already aligned or modules are not runtime-backed.
+    if not runtime_labels or len(set(runtime_labels)) <= 1:
+        return
+
+    # Always converge to primary runtime when available.
+    target_site = RUNTIME_SITE_PACKAGES_DIR
+    target_root = os.path.dirname(target_site)
+
+    try:
+        _append_tiler_log(
+            "warning",
+            "Runtime root mismatch detected; aligning module roots",
+            virtughan=current.get("virtughan", ""),
+            rasterio=current.get("rasterio", ""),
+            rio_tiler=current.get("rio_tiler", ""),
+            target_root=target_root,
+        )
+
+        # Prioritize target runtime root in import order.
+        for p in (target_site, target_root):
+            try:
+                while p in sys.path:
+                    sys.path.remove(p)
+            except Exception:
+                pass
+        sys.path.insert(0, target_root)
+        sys.path.insert(0, target_site)
+
+        # Clear only modules that participate in the mismatch.
+        for mod_name in list(sys.modules.keys()):
+            if mod_name == "virtughan" or mod_name.startswith("virtughan."):
+                del sys.modules[mod_name]
+            elif mod_name == "rasterio" or mod_name.startswith("rasterio."):
+                del sys.modules[mod_name]
+            elif mod_name == "rio_tiler" or mod_name.startswith("rio_tiler."):
+                del sys.modules[mod_name]
+
+        importlib.invalidate_caches()
+        _patch_rasterio_parsed_path_compat()
+
+        # Rebind processor classes from aligned imports.
+        TileProcessor, TP_path = _find_tileprocessor()
+        TileProcessor.apply_colormap = staticmethod(_safe_apply_colormap)
+        _patch_tileprocessor_fetch_tile_compat()
+        processor = TileProcessor(cache_time=60)
+
+        after = {
+            "virtughan": _module_file("virtughan"),
+            "rasterio": _module_file("rasterio"),
+            "rio_tiler": _module_file("rio_tiler"),
+        }
+        _append_tiler_log(
+            "info",
+            "Runtime root alignment result",
+            before=json.dumps(current),
+            after=json.dumps(after),
+        )
+    except Exception as exc:
+        _append_tiler_log("warning", "Runtime root alignment failed", detail=str(exc))
+
+
+def _stabilize_startup_path_bindings() -> None:
+    """Run a narrow one-time startup stabilization for rasterio parse-path bindings."""
+    global processor, TileProcessor, TP_path
+
+    try:
+        before = _runtime_state_snapshot()
+
+        rp = importlib.import_module("rasterio._path")
+        rpath = importlib.import_module("rasterio.path")
+        try:
+            rp = importlib.reload(rp)
+        except Exception:
+            # If reload is unavailable or fails, continue with current module object.
+            pass
+        try:
+            rpath = importlib.reload(rpath)
+        except Exception:
+            pass
+
+        # Force both rasterio path entry points to share the same patched callables.
+        parse_path = getattr(rp, "parse_path", None)
+        parse_path_private = getattr(rp, "_parse_path", None)
+        if parse_path is not None:
+            try:
+                setattr(rpath, "parse_path", parse_path)
+            except Exception:
+                pass
+        if parse_path_private is not None:
+            try:
+                setattr(rpath, "_parse_path", parse_path_private)
+            except Exception:
+                pass
+
+        # Rebind already-loaded aliases to the active rasterio._path callables.
+        for mod_name, mod in list(sys.modules.items()):
+            if not (mod_name.startswith("rio_tiler") or mod_name.startswith("virtughan")):
+                continue
+            try:
+                if parse_path is not None and hasattr(mod, "parse_path"):
+                    setattr(mod, "parse_path", parse_path)
+                if parse_path_private is not None and hasattr(mod, "_parse_path"):
+                    setattr(mod, "_parse_path", parse_path_private)
+            except Exception:
+                continue
+
+        # Force rio_tiler + all virtughan modules to re-import from patched rasterio.path.
+        for mod_name in list(sys.modules.keys()):
+            if mod_name == "rio_tiler" or mod_name.startswith("rio_tiler."):
+                del sys.modules[mod_name]
+                continue
+            if mod_name == "virtughan" or mod_name.startswith("virtughan."):
+                del sys.modules[mod_name]
+                continue
+
+        importlib.invalidate_caches()
+        _patch_rasterio_parsed_path_compat()
+        TileProcessor, TP_path = _find_tileprocessor()
+        TileProcessor.apply_colormap = staticmethod(_safe_apply_colormap)
+        _patch_tileprocessor_fetch_tile_compat()
+        processor = TileProcessor(cache_time=60)
+
+        after = _runtime_state_snapshot()
+        changed = []
+        for key in sorted(set(before.keys()) | set(after.keys())):
+            if str(before.get(key)) != str(after.get(key)):
+                changed.append(key)
+
+        _append_tiler_log(
+            "info",
+            "Startup ParsedPath stabilization",
+            fields=",".join(changed) if changed else "none",
+            detail=json.dumps({"before": before, "after": after}, default=str),
+        )
+    except Exception as exc:
+        _append_tiler_log("warning", "Startup ParsedPath stabilization failed", detail=str(exc))
 
 
 def _cpu_usage_percent() -> Optional[float]:
@@ -559,6 +946,51 @@ def _record_tile_failure(reason: str, status: int, req_tag: str, req_url: str, *
     _LAST_TILE_ERROR.clear()
     _LAST_TILE_ERROR.update(payload)
     _append_tiler_log("warning", "Tile response failed", **payload)
+
+
+def _looks_like_parsed_path_error(value) -> bool:
+    text = str(value or "")
+    lowered = text.lower()
+    return ("parsedpath" in lowered) or ("invalid path" in lowered and "scheme=" in lowered and "path=" in lowered)
+
+
+def _refresh_parsedpath_guards() -> None:
+    global processor, _PARSEDPATH_RECOVERY_IN_PROGRESS, _LAST_PARSEDPATH_RECOVERY_MONOTONIC
+    now = time.monotonic()
+    if _PARSEDPATH_RECOVERY_IN_PROGRESS:
+        _append_tiler_log("info", "Skipped ParsedPath refresh: recovery already in progress")
+        return
+    if (now - _LAST_PARSEDPATH_RECOVERY_MONOTONIC) < _PARSEDPATH_RECOVERY_COOLDOWN_SEC:
+        _append_tiler_log("info", "Skipped ParsedPath refresh: cooldown active")
+        return
+
+    _PARSEDPATH_RECOVERY_IN_PROGRESS = True
+    _LAST_PARSEDPATH_RECOVERY_MONOTONIC = now
+    try:
+        before = _runtime_state_snapshot()
+        _append_tiler_log("warning", "Refreshing ParsedPath guards")
+        _patch_rasterio_parsed_path_compat()
+        processor = TileProcessor(cache_time=60)
+        after = _runtime_state_snapshot()
+        changed = []
+        for key in sorted(set(before.keys()) | set(after.keys())):
+            if str(before.get(key)) != str(after.get(key)):
+                changed.append(key)
+        _append_tiler_log(
+            "info",
+            "ParsedPath refresh state diff",
+            fields=",".join(changed) if changed else "none",
+            detail=json.dumps({"before": before, "after": after}, default=str),
+        )
+    finally:
+        _PARSEDPATH_RECOVERY_IN_PROGRESS = False
+
+
+async def _generate_tile_uncached(**kwargs):
+    raw_func = getattr(processor.cached_generate_tile, "__wrapped__", None)
+    if raw_func is not None:
+        return await raw_func(processor, **kwargs)
+    return await processor.cached_generate_tile(**kwargs)
 
 
 def _is_stale_generation(request_generation: int) -> bool:
@@ -825,6 +1257,7 @@ async def get_tile(
     operation: str = Query("median"),
     timeseries: bool = Query(False),
 ):
+    global _ACTIVE_TILE_REQUESTS
     # Keep compatibility patches current in long-lived QGIS sessions.
     _patch_rasterio_parsed_path_compat()
 
@@ -843,7 +1276,6 @@ async def get_tile(
     request_task = _register_request_task(request_generation)
     req_url = str(request.url)
     _append_tile_url_sample(tile=req_tag, full_url=req_url)
-    global _ACTIVE_TILE_REQUESTS
     sem = _get_request_semaphore()
 
     acquired = False
@@ -949,6 +1381,46 @@ async def get_tile(
         return Response(content=image_bytes, media_type="image/png", headers=headers)
 
     except HTTPException as he:
+        if _looks_like_parsed_path_error(getattr(he, "detail", "")):
+            _append_tile_event_log(
+                "warning",
+                "ParsedPath HTTPException detected; attempting in-request recovery",
+                tile=req_tag,
+                detail=str(getattr(he, "detail", "")),
+            )
+            try:
+                _refresh_parsedpath_guards()
+                image_bytes, feature = await asyncio.wait_for(
+                    _generate_tile_uncached(
+                        x=x,
+                        y=y,
+                        z=z,
+                        start_date=start_date,
+                        end_date=end_date,
+                        cloud_cover=cloud_cover,
+                        band1=band1,
+                        band2=(band2 or ""),
+                        formula=formula,
+                        colormap_str=colormap_str,
+                        operation=operation,
+                        latest=not timeseries,
+                    ),
+                    timeout=_TILE_COMPUTE_TIMEOUT_SEC,
+                )
+                headers = {"Cache-Control": "public, max-age=300"}
+                try:
+                    props = feature.get("properties", {})
+                    if "datetime" in props:
+                        headers["X-Image-Date"] = props["datetime"]
+                    if "eo:cloud_cover" in props:
+                        headers["X-Cloud-Cover"] = str(props["eo:cloud_cover"])
+                except Exception:
+                    pass
+                _LAST_TILE_ERROR.clear()
+                _append_tile_event_log("info", "Served tile after parsed-path HTTPException recovery", tile=req_tag)
+                return Response(content=image_bytes, media_type="image/png", headers=headers)
+            except Exception as retry_ex:
+                return JSONResponse(status_code=500, content={"detail": str(retry_ex)})
         return JSONResponse(status_code=he.status_code, content={"detail": he.detail})
     except asyncio.TimeoutError:
         _append_tile_event_log("warning", "Tile generation timeout", tile=req_tag)
@@ -976,6 +1448,47 @@ async def get_tile(
         )
         return _retryable_tile_unavailable("tile_compute_cancelled", status_code=503)
     except Exception as ex:
+        if _looks_like_parsed_path_error(ex):
+            _append_tile_event_log(
+                "warning",
+                "ParsedPath error detected; attempting in-request recovery",
+                tile=req_tag,
+                detail=str(ex),
+            )
+            try:
+                _refresh_parsedpath_guards()
+                image_bytes, feature = await asyncio.wait_for(
+                    _generate_tile_uncached(
+                        x=x,
+                        y=y,
+                        z=z,
+                        start_date=start_date,
+                        end_date=end_date,
+                        cloud_cover=cloud_cover,
+                        band1=band1,
+                        band2=(band2 or ""),
+                        formula=formula,
+                        colormap_str=colormap_str,
+                        operation=operation,
+                        latest=not timeseries,
+                    ),
+                    timeout=_TILE_COMPUTE_TIMEOUT_SEC,
+                )
+                headers = {"Cache-Control": "public, max-age=300"}
+                try:
+                    props = feature.get("properties", {})
+                    if "datetime" in props:
+                        headers["X-Image-Date"] = props["datetime"]
+                    if "eo:cloud_cover" in props:
+                        headers["X-Cloud-Cover"] = str(props["eo:cloud_cover"])
+                except Exception:
+                    pass
+                _LAST_TILE_ERROR.clear()
+                _append_tile_event_log("info", "Served tile after parsed-path recovery", tile=req_tag)
+                return Response(content=image_bytes, media_type="image/png", headers=headers)
+            except Exception:
+                pass
+
         tb = traceback.format_exc()
         err_payload = {
             "error": f"Computation Error: {str(ex)}",
