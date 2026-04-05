@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import subprocess
 import threading
+import importlib
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -80,12 +81,36 @@ except Exception as _e:
 
 VIRTUGHAN_IMPORT_ERROR = None
 VirtughanProcessor = None
+engine_search_stac_api = None
 try:
-    from virtughan.engine import VirtughanProcessor, search_stac_api as engine_search_stac_api
+    _engine_backend = importlib.import_module("virtughan.engine")
+    VirtughanProcessor = getattr(_engine_backend, "VirtughanProcessor", None)
+    engine_search_stac_api = getattr(_engine_backend, "search_stac_api", None)
+    if not callable(engine_search_stac_api):
+        engine_search_stac_api = getattr(_engine_backend, "search_stac", None)
+    if VirtughanProcessor is None:
+        raise AttributeError("VirtughanProcessor is not available in virtughan.engine")
 except Exception as _e:
     VIRTUGHAN_IMPORT_ERROR = _e
     VirtughanProcessor = None
     engine_search_stac_api = None
+
+
+def _resolve_engine_search_stac_api():
+    global engine_search_stac_api
+    if callable(engine_search_stac_api):
+        return engine_search_stac_api
+    for module_name in ("virtughan.extract", "virtughan.engine"):
+        try:
+            backend = importlib.import_module(module_name)
+        except Exception:
+            continue
+        for symbol_name in ("search_stac_api", "search_stac"):
+            candidate = getattr(backend, symbol_name, None)
+            if callable(candidate):
+                engine_search_stac_api = candidate
+                return candidate
+    return None
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "engine_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
@@ -155,11 +180,71 @@ def _build_engine_failure_message(exc, log_path: str | None = None) -> str:
 
 def _resolve_embedded_python_executable() -> str:
     candidates: list[Path] = []
-    env_python = os.environ.get("PYTHONEXECUTABLE")
-    if env_python:
-        candidates.append(Path(env_python))
+    install_roots: list[Path] = []
+
+    def _add_root(path_value):
+        try:
+            p = Path(path_value).resolve()
+        except Exception:
+            return
+        if p not in install_roots:
+            install_roots.append(p)
+
+    def _add_candidate(path_value):
+        try:
+            p = Path(path_value)
+        except Exception:
+            return
+        candidates.append(p)
+
+    def _is_within_install_roots(candidate_path: Path) -> bool:
+        try:
+            resolved = candidate_path.resolve()
+        except Exception:
+            return False
+        for root in install_roots:
+            try:
+                resolved.relative_to(root)
+                return True
+            except Exception:
+                continue
+        return False
 
     prefix = QgsApplication.prefixPath() or ""
+    if prefix:
+        prefix_path = Path(prefix).resolve()
+        _add_root(prefix_path)
+        for i, parent in enumerate(prefix_path.parents):
+            if i >= 4:
+                break
+            _add_root(parent)
+
+    if sys.executable:
+        try:
+            exe_path = Path(sys.executable).resolve()
+            _add_root(exe_path.parent)
+            for i, parent in enumerate(exe_path.parents):
+                if i >= 5:
+                    break
+                _add_root(parent)
+
+            if sys.platform == "darwin":
+                for parent in exe_path.parents:
+                    if parent.suffix.lower() == ".app":
+                        _add_root(parent)
+                        _add_root(parent / "Contents")
+                        _add_root(parent / "Contents" / "MacOS")
+                        break
+        except Exception:
+            pass
+
+    base_executable = getattr(sys, "_base_executable", "")
+    if base_executable:
+        _add_candidate(base_executable)
+    env_python = os.environ.get("PYTHONEXECUTABLE")
+    if env_python:
+        _add_candidate(env_python)
+
     if prefix:
         prefix_path = Path(prefix)
         candidates.extend(
@@ -181,59 +266,75 @@ def _resolve_embedded_python_executable() -> str:
         except Exception:
             pass
 
-    if sys.prefix:
-        candidates.extend(
-            [
-                Path(sys.prefix) / "python.exe",
-                Path(sys.prefix) / "bin" / "python.exe",
-                Path(sys.prefix) / "bin" / "python3",
-                Path(sys.prefix) / "bin" / "python",
-                Path(sys.prefix) / "python3",
-                Path(sys.prefix) / "python",
-            ]
-        )
-
     if sys.platform == "darwin" and sys.executable:
-        exe_path = Path(sys.executable).resolve()
-        for parent in exe_path.parents:
-            if parent.name == "MacOS":
-                app_contents = parent.parent
-                candidates.extend(
-                    [
-                        parent / "bin" / "python3",
-                        app_contents / "MacOS" / "bin" / "python3",
-                        app_contents / "Frameworks" / "bin" / "python3",
-                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
-                        app_contents / "Resources" / "python" / "bin" / "python3",
-                    ]
-                )
-                try:
-                    fw_versions = app_contents / "Frameworks" / "Python.framework" / "Versions"
-                    if fw_versions.is_dir():
-                        for version_dir in sorted(fw_versions.iterdir()):
-                            candidates.append(version_dir / "bin" / "python3")
-                except Exception:
-                    pass
-                break
+        try:
+            exe_path = Path(sys.executable).resolve()
+            for parent in exe_path.parents:
+                if parent.name == "MacOS":
+                    app_contents = parent.parent
+                    candidates.extend(
+                        [
+                            parent / "python",
+                            parent / "python3",
+                            parent / "python3.12",
+                            parent / "bin" / "python3",
+                            parent / "bin" / "python",
+                            app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
+                            app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python",
+                            app_contents / "Resources" / "python" / "bin" / "python3",
+                            app_contents / "Resources" / "python" / "bin" / "python",
+                        ]
+                    )
+                    try:
+                        for entry in sorted(parent.iterdir()):
+                            if entry.is_file() and entry.name.lower().startswith("python"):
+                                candidates.append(entry)
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        for root in list(install_roots):
+            apps_dir = root / "apps"
+            if not apps_dir.is_dir():
+                continue
+            try:
+                for app in sorted(apps_dir.iterdir()):
+                    if app.is_dir() and app.name.lower().startswith("python"):
+                        candidates.append(app / "python.exe")
+                        candidates.append(app / "Scripts" / "python.exe")
+            except Exception:
+                pass
 
     if sys.executable:
-        candidates.append(Path(sys.executable))
+        _add_candidate(sys.executable)
 
     seen: set[str] = set()
     for candidate in candidates:
-        normalized = str(candidate)
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            continue
+        normalized = str(resolved)
         if normalized in seen:
             continue
         seen.add(normalized)
 
-        name = candidate.name.lower()
-        if sys.platform == "darwin" and name == "qgis":
+        name = resolved.name.lower()
+        if name in {"qgis", "qgis-bin.exe", "qgis-ltr-bin.exe"}:
             continue
-        if candidate.is_file() and "python" in name:
-            return normalized
+        if "python" not in name:
+            continue
+        if not resolved.is_file():
+            continue
+        if not _is_within_install_roots(resolved):
+            continue
+        if os.name != "nt" and not os.access(str(resolved), os.X_OK):
+            continue
+        return normalized
 
-    if sys.executable and "python" in Path(sys.executable).name.lower():
-        return sys.executable
     return ""
 
 
@@ -349,7 +450,17 @@ def _with_embedded_python_executable(logf=None):
 
 
 def _run_engine_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
-    python_exe = _resolve_embedded_python_executable() or sys.executable
+    python_exe = _resolve_embedded_python_executable()
+    if not python_exe:
+        raise RuntimeError(
+            "Could not locate an embedded Python executable for subprocess execution. "
+            f"Current sys.executable={sys.executable}"
+        )
+    if sys.platform == "darwin" and Path(python_exe).name.lower() == "qgis":
+        raise RuntimeError(
+            "Refusing to launch subprocess with QGIS GUI executable on macOS. "
+            f"Resolved path={python_exe}"
+        )
     work_dir = tempfile.mkdtemp(prefix="virtughan-engine-")
     payload_path = os.path.join(work_dir, "payload.json")
     runner_path = os.path.join(work_dir, "runner.py")
@@ -451,8 +562,11 @@ def main():
                 logf.write(f"Compute attempt {attempt}/{max_attempts}\\n")
                 if attempt == 1:
                     logf.write("Please wait: preparing scenes and computing output (this may take few minutes depending on your area and time range).\\n")
+                logf.write("Importing backend module virtughan.engine...\\n")
                 from virtughan.engine import VirtughanProcessor
+                logf.write("Imported VirtughanProcessor successfully.\\n")
 
+                logf.write("Creating VirtughanProcessor instance...\\n")
                 proc = VirtughanProcessor(
                     bbox=params["bbox"],
                     start_date=params["start_date"],
@@ -469,6 +583,7 @@ def main():
                     workers=params["workers"],
                     smart_filter=params["smart_filter"],
                 )
+                logf.write("Starting compute()...\\n")
                 proc.compute()
                 logf.write("compute() finished.\\n")
                 return 0
@@ -504,16 +619,36 @@ if __name__ == "__main__":
             rf.write(runner_code)
 
         if logf:
+            logf.write(f"[INFO] launcher source file={__file__}\n")
             logf.write(f"[INFO] running engine in subprocess: {python_exe}\n")
+
+        stdout_capture_path = os.path.join(work_dir, "subprocess_stdout.txt")
+        stderr_capture_path = os.path.join(work_dir, "subprocess_stderr.txt")
+        stdout_handle = open(stdout_capture_path, "w", encoding="utf-8", errors="replace")
+        stderr_handle = open(stderr_capture_path, "w", encoding="utf-8", errors="replace")
 
         run_kwargs = {
             "args": [python_exe, runner_path, payload_path],
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
+            "stdout": stdout_handle,
+            "stderr": stderr_handle,
             "text": True,
         }
 
         env = os.environ.copy()
+        
+        # On macOS, prevent QGIS GUI-related environment from affecting subprocess
+        if sys.platform == "darwin":
+            # Remove dyld-related variables that might cause QGIS to spawn GUI
+            dyld_keys = [k for k in env.keys() if k.startswith("DYLD_")]
+            for key in dyld_keys:
+                env.pop(key, None)
+            # Remove QT/GUI-related variables that might trigger GUI startup
+            gui_env_vars = ["QT_QPA_PLATFORM", "QT_API", "DISPLAY", "XAUTHORITY"]
+            for key in gui_env_vars:
+                env.pop(key, None)
+            # Ensure subprocess doesn't try to initialize GUI
+            env["QT_QPA_PLATFORM"] = "offscreen"
+        
         python_path_entries = []
         if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
@@ -548,6 +683,7 @@ if __name__ == "__main__":
         stderr_data = ""
         try:
             deadline = time.monotonic() + 900.0
+            next_heartbeat = time.monotonic() + 15.0
             while True:
                 if callable(should_cancel) and should_cancel():
                     try:
@@ -566,7 +702,14 @@ if __name__ == "__main__":
                 if proc.poll() is not None:
                     break
 
-                if time.monotonic() > deadline:
+                now = time.monotonic()
+                if now >= next_heartbeat and logf:
+                    logf.write(
+                        "[INFO] compute subprocess still running (first run can take longer while warming imports and caches).\n"
+                    )
+                    next_heartbeat = now + 15.0
+
+                if now > deadline:
                     try:
                         proc.terminate()
                     except Exception:
@@ -585,13 +728,32 @@ if __name__ == "__main__":
 
                 time.sleep(0.2)
 
-            stdout_data, stderr_data = proc.communicate(timeout=5)
+            proc.wait(timeout=5)
         finally:
+            try:
+                stdout_handle.close()
+            except Exception:
+                pass
+            try:
+                stderr_handle.close()
+            except Exception:
+                pass
             if proc.poll() is None:
                 try:
                     proc.kill()
                 except Exception:
                     pass
+
+        try:
+            with open(stdout_capture_path, "r", encoding="utf-8", errors="replace") as sf:
+                stdout_data = sf.read()
+        except Exception:
+            stdout_data = ""
+        try:
+            with open(stderr_capture_path, "r", encoding="utf-8", errors="replace") as ef:
+                stderr_data = ef.read()
+        except Exception:
+            stderr_data = ""
 
         if logf and stdout_data:
             logf.write("[subprocess_stdout]\n")
@@ -1227,7 +1389,7 @@ class EngineDockWidget(QDockWidget):
             x1, y1, x2, y2 = self._aoi_bbox
             self.aoiPreviewLabel.setText(f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f})")
         else:
-            self.aoiPreviewLabel.setText("<i>AOI: not set yet</i>")
+            self.aoiPreviewLabel.setText("<i>AOI: not set yet. Use smaller aoi and test first.</i>")
 
 
 
@@ -1387,15 +1549,15 @@ class EngineDockWidget(QDockWidget):
 
         try:
             _log(self, "Pre-download stage started: checking matching scenes before compute...")
-            self._validate_minimum_matching_scenes(min_count=2, timeout_s=420.0)
+            self._validate_minimum_matching_scenes(min_count=2, timeout_s=120.0)
             _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
         except TimeoutError:
-            _log(self, "Pre-compute scene check timed out after 7 minutes.", Qgis.Warning)
+            _log(self, "Pre-compute scene check timed out after 2 minutes.", Qgis.Warning)
             QMessageBox.warning(
                 self,
                 "VirtuGhan",
-                "Pre-download stage timed out after 7 minutes before compute started.\n\n"
+                "Pre-download stage timed out after 2 minutes before compute started.\n\n"
                 "Please try again later.",
             )
             return
@@ -1525,6 +1687,7 @@ class EngineDockWidget(QDockWidget):
                 QMessageBox.information(self, "VirtuGhan", msg)
 
         self._current_task = _VirtughanTask("VirtuGhan Compute", params, log_path, on_done=_on_done)
+        _log(self, "Compute handoff: backend task queued.")
         QgsApplication.taskManager().addTask(self._current_task)
 
     def _focus_log_section(self):
@@ -1600,13 +1763,14 @@ class EngineDockWidget(QDockWidget):
         if scenes:
             return scenes
 
-        if engine_search_stac_api is None:
+        search_fn = _resolve_engine_search_stac_api()
+        if search_fn is None:
             _log(self, "Cannot load scene footprints: search_stac_api is not available.", Qgis.Warning)
             return []
 
         try:
             params = self._collect_search_params()
-            scenes = engine_search_stac_api(
+            scenes = search_fn(
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
@@ -1678,14 +1842,15 @@ class EngineDockWidget(QDockWidget):
         cloud_cover,
         timeout_s: float = 30.0,
     ):
-        if engine_search_stac_api is None:
+        search_fn = _resolve_engine_search_stac_api()
+        if search_fn is None:
             raise RuntimeError("search_stac_api is not available in the compute backend.")
 
         result = {"scenes": None, "error": None}
 
         def _worker():
             try:
-                result["scenes"] = engine_search_stac_api(
+                result["scenes"] = search_fn(
                     bbox,
                     start_date,
                     end_date,
@@ -1698,7 +1863,19 @@ class EngineDockWidget(QDockWidget):
         t.start()
 
         deadline = time.time() + max(1.0, float(timeout_s))
+        started_at = time.time()
+        next_progress_log_at = started_at + 15.0
         while t.is_alive() and time.time() < deadline:
+            now = time.time()
+            if now >= next_progress_log_at:
+                elapsed = int(now - started_at)
+                remaining = max(0, int(deadline - now))
+                _log(
+                    self,
+                    f"Pre-download scene check still running ({elapsed}s elapsed, {remaining}s remaining)...",
+                    Qgis.Info,
+                )
+                next_progress_log_at = now + 15.0
             try:
                 QgsApplication.processEvents()
             except Exception:
@@ -1707,7 +1884,8 @@ class EngineDockWidget(QDockWidget):
 
         if t.is_alive():
             raise TimeoutError(
-                "Scene search timed out. Please check internet/VPN/proxy and try again."
+                f"Scene search timed out after {int(max(1.0, float(timeout_s)))}s. "
+                "Please check internet/VPN/proxy and try again."
             )
         if result["error"] is not None:
             raise result["error"]
@@ -1808,7 +1986,7 @@ class EngineDockWidget(QDockWidget):
         return len(feats)
 
     def _preview_matching_scenes(self):
-        if engine_search_stac_api is None:
+        if _resolve_engine_search_stac_api() is None:
             QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in the compute backend.")
             return
         try:
