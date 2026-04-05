@@ -13,8 +13,6 @@ from qgis.PyQt.QtCore import QSettings
 from .dependency_versions import (
     VIRTUGHAN_VERSION,
     RASTERIO_VERSION,
-    NUMPY_VERSION_PY_LT_311,
-    NUMPY_VERSION_PY_GTE_311,
     runtime_package_specs,
 )
 
@@ -107,15 +105,23 @@ def _activate_vendor_paths(preferred_site_packages: str | None = None) -> list[s
         if path not in candidate_dirs:
             candidate_dirs.append(path)
 
-    added: list[str] = []
+    activated: list[str] = []
     for path in candidate_dirs:
-        if os.path.isdir(path) and path not in sys.path:
-            sys.path.insert(0, path)
-            added.append(path)
+        if not os.path.isdir(path):
+            continue
 
-    if added:
-        _log("Activated dependency paths: " + ", ".join(added))
-    return added
+        # Always prioritize runtime paths, even when already present in sys.path.
+        while path in sys.path:
+            try:
+                sys.path.remove(path)
+            except Exception:
+                break
+        sys.path.insert(0, path)
+        activated.append(path)
+
+    if activated:
+        _log("Activated dependency paths: " + ", ".join(activated))
+    return activated
 
 
 def activate_runtime_paths() -> list[str]:
@@ -171,23 +177,26 @@ def _is_installed_version_exact(installed: str, required: str) -> bool:
 
 
 def _is_module_loaded_from_runtime(module) -> bool:
-    mod_file = os.path.normpath(getattr(module, "__file__", "") or "")
-    if not mod_file:
-        return False
-    runtime_sites = [
-        os.path.normpath(path) for path in _runtime_site_packages_candidates()
-    ]
-    return any(mod_file.startswith(runtime_site) for runtime_site in runtime_sites)
+    mod_file = getattr(module, "__file__", "") or ""
+    return _is_path_loaded_from_runtime(mod_file)
 
 
 def _is_path_loaded_from_runtime(path: str) -> bool:
-    mod_file = os.path.normpath(path or "")
+    mod_file = os.path.normcase(os.path.normpath(path or ""))
     if not mod_file:
         return False
     runtime_sites = [
-        os.path.normpath(path) for path in _runtime_site_packages_candidates()
+        os.path.normcase(os.path.normpath(candidate))
+        for candidate in _runtime_site_packages_candidates()
     ]
-    return any(mod_file.startswith(runtime_site) for runtime_site in runtime_sites)
+    for runtime_site in runtime_sites:
+        try:
+            common = os.path.commonpath([mod_file, runtime_site])
+        except Exception:
+            continue
+        if common == runtime_site:
+            return True
+    return False
 
 
 def _is_runtime_lock_failure(message: str) -> bool:
@@ -202,6 +211,32 @@ def _is_runtime_lock_failure(message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+def _infer_numpy_compat_spec(error_text: str) -> str | None:
+    text = (error_text or "").lower()
+    if not text:
+        return None
+
+    # NumPy ABI guardrails from compiled extension import errors.
+    if (
+        "compiled using numpy 1.x cannot be run in numpy 2" in text
+        or ("compiled using numpy 1.x" in text and "cannot be run in numpy 2" in text)
+        or "downgrade to 'numpy<2'" in text
+    ):
+        return "numpy<2"
+
+    if (
+        ("compiled using numpy 2" in text and "cannot be run in numpy 1" in text)
+        or "upgrade to 'numpy>=2'" in text
+    ):
+        return "numpy>=2"
+
+    # Conservative fallback: when rasterio import specifically fails due to numpy, prefer NumPy 1.x ABI.
+    if "rasterio import failed" in text and "numpy" in text:
+        return "numpy<2"
+
+    return None
+
+
 def _clear_runtime_module_cache():
     for mod_name in list(sys.modules.keys()):
         if (
@@ -213,6 +248,71 @@ def _clear_runtime_module_cache():
                 del sys.modules[mod_name]
             except Exception:
                 pass
+
+
+def _clear_pip_cache(progress_callback=None) -> tuple[int, list[str]]:
+    """Best-effort cleanup of pip caches to force fresh wheel/index resolution."""
+    candidates: list[str] = []
+
+    pip_cache_env = os.environ.get("PIP_CACHE_DIR", "").strip()
+    if pip_cache_env:
+        candidates.append(pip_cache_env)
+
+    xdg_cache_home = os.environ.get("XDG_CACHE_HOME", "").strip()
+    if xdg_cache_home:
+        candidates.append(os.path.join(xdg_cache_home, "pip"))
+
+    candidates.extend(
+        [
+            os.path.join(os.path.expanduser("~"), ".cache", "pip"),
+            os.path.join(os.path.expanduser("~"), "Library", "Caches", "pip"),
+            os.path.join(os.path.expanduser("~"), "AppData", "Local", "pip", "Cache"),
+        ]
+    )
+
+    unique_candidates: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        norm = os.path.normcase(os.path.normpath(path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        unique_candidates.append(path)
+
+    def _on_rm_error(func, path, _exc_info):
+        try:
+            os.chmod(path, 0o700)
+            func(path)
+        except Exception:
+            pass
+
+    removed = 0
+    failed: list[str] = []
+    for cache_dir in unique_candidates:
+        if not os.path.isdir(cache_dir):
+            continue
+        try:
+            shutil.rmtree(cache_dir, onerror=_on_rm_error)
+            if os.path.isdir(cache_dir):
+                failed.append(f"{cache_dir}: cache folder still exists after delete attempt")
+            else:
+                removed += 1
+        except Exception as exc:
+            failed.append(f"{cache_dir}: {exc}")
+
+    if removed:
+        _log(f"Pip cache cleared: removed {removed} cache folder(s)", Qgis.Info)
+        if progress_callback:
+            progress_callback(f"Cleared pip cache folders: {removed}")
+    elif progress_callback:
+        progress_callback("No pip cache folders found to clear.")
+
+    if failed:
+        _log("Pip cache cleanup completed with warnings", Qgis.Warning)
+        if progress_callback:
+            progress_callback("Pip cache cleanup warnings: " + " | ".join(failed[:5]))
+
+    return removed, failed
 
 
 def _preflight_runtime_reinstall(progress_callback=None) -> tuple[bool, list[str]]:
@@ -312,6 +412,47 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
                 if progress_callback:
                     progress_callback(pip_err)
 
+            if not deps_ok:
+                abi_hint = _infer_numpy_compat_spec(
+                    f"{pip_err}\n{get_last_bootstrap_error() or ''}"
+                )
+                if abi_hint:
+                    msg = (
+                        f"Detected NumPy ABI mismatch; retrying install with constraint '{abi_hint}' "
+                        f"in {target}."
+                    )
+                    _log(msg, Qgis.Warning)
+                    if progress_callback:
+                        progress_callback(msg)
+
+                    retry_packages = [
+                        pkg for pkg in packages if not pkg.strip().lower().startswith("numpy")
+                    ]
+                    retry_packages.append(abi_hint)
+
+                    retry_success = install_dependencies(
+                        target,
+                        retry_packages,
+                        progress_callback=progress_callback,
+                    )
+                    _activate_vendor_paths(preferred_site_packages=target)
+                    importlib.invalidate_caches()
+                    retry_deps_ok = check_dependencies(preferred_site_packages=target)
+
+                    if retry_success and retry_deps_ok:
+                        _log(
+                            "Runtime installation successful after NumPy ABI compatibility retry."
+                        )
+                        return True
+
+                    if not retry_success and retry_deps_ok:
+                        _log(
+                            "Runtime installation completed with pip warnings after NumPy ABI retry, "
+                            "but dependencies verified successfully.",
+                            Qgis.Warning,
+                        )
+                        return True
+
             if idx < len(install_targets) - 1:
                 msg = (
                     f"Runtime installation did not verify cleanly in {target}; "
@@ -396,24 +537,27 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
         return False
 
     try:
-        import rasterio
-        import rasterio.control  # noqa: F401
+        rasterio_spec = importlib.util.find_spec("rasterio")
+        if rasterio_spec is None:
+            _set_last_error("rasterio package not found")
+            _log("rasterio package not found", Qgis.Warning)
+            return False
     except Exception as exc:
-        details = f"rasterio import failed: {exc}"
-        _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _set_last_error(f"rasterio discovery failed: {exc}")
+        _log(f"rasterio discovery failed: {exc}", Qgis.Warning)
         return False
 
-    if not _is_module_loaded_from_runtime(rasterio):
+    rasterio_origin = getattr(rasterio_spec, "origin", "") or ""
+    if not _is_path_loaded_from_runtime(rasterio_origin):
         details = (
-            "rasterio was loaded from a non-runtime path: "
-            f"{getattr(rasterio, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+            "rasterio was discovered from a non-runtime path: "
+            f"{rasterio_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
         _log(details, Qgis.Warning)
         return False
 
-    rasterio_version = _get_installed_distribution_version("rasterio", rasterio)
+    rasterio_version = _get_installed_distribution_version("rasterio", None)
     if not _is_installed_version_exact(rasterio_version, RASTERIO_VERSION):
         details = f"rasterio version mismatch ({rasterio_version}). Expected: {RASTERIO_VERSION}"
         _set_last_error(details)
@@ -421,33 +565,29 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
         return False
 
     try:
-        import numpy
+        numpy_spec = importlib.util.find_spec("numpy")
+        if numpy_spec is None:
+            _set_last_error("numpy package not found")
+            _log("numpy package not found", Qgis.Warning)
+            return False
     except Exception as exc:
-        details = f"numpy import failed: {exc}"
-        _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _set_last_error(f"numpy discovery failed: {exc}")
+        _log(f"numpy discovery failed: {exc}", Qgis.Warning)
         return False
 
-    if not _is_module_loaded_from_runtime(numpy):
+    numpy_origin = getattr(numpy_spec, "origin", "") or ""
+    if not _is_path_loaded_from_runtime(numpy_origin):
         details = (
-            "numpy was loaded from a non-runtime path: "
-            f"{getattr(numpy, '__file__', '')}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+            "numpy was discovered from a non-runtime path: "
+            f"{numpy_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
         _log(details, Qgis.Warning)
         return False
 
-    numpy_version = _get_installed_distribution_version("numpy", numpy)
-    expected_numpy_version = (
-        NUMPY_VERSION_PY_GTE_311
-        if sys.version_info >= (3, 11)
-        else NUMPY_VERSION_PY_LT_311
-    )
-    if not _is_installed_version_exact(numpy_version, expected_numpy_version):
-        details = (
-            f"numpy version mismatch ({numpy_version}). "
-            f"Expected: {expected_numpy_version}"
-        )
+    numpy_version = _get_installed_distribution_version("numpy", None)
+    if not numpy_version:
+        details = "numpy version could not be determined"
         _set_last_error(details)
         _log(details, Qgis.Warning)
         return False
@@ -687,9 +827,12 @@ def _clear_runtime_site_packages() -> tuple[int, list[str]]:
     return removed, failed
 
 
-def repair_runtime_dependencies() -> bool:
+def repair_runtime_dependencies(clear_pip_cache: bool = False, progress_callback=None) -> bool:
     """Clear plugin-managed runtime dependencies and install state for a clean reinstall."""
     try:
+        if clear_pip_cache:
+            _clear_pip_cache(progress_callback=progress_callback)
+
         removed, failed = _clear_runtime_site_packages()
 
         clear_install_state()
@@ -720,6 +863,8 @@ def repair_runtime_dependencies() -> bool:
             return False
 
         _log(f"Dependency repair completed: removed {removed} entries", Qgis.Info)
+        if clear_pip_cache:
+            _log("Dependency repair used fresh mode (pip cache cleared)", Qgis.Info)
         return True
     except Exception as exc:
         _set_last_error(str(exc))
@@ -841,6 +986,10 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
                 _log(import_err, Qgis.Warning)
                 if progress_callback:
                     progress_callback(f"{import_err}\n")
+            else:
+                verify_err = get_last_bootstrap_error() or "Dependency verification failed after install."
+                if progress_callback:
+                    progress_callback(f"{verify_err}\n")
 
             _log("Interactive runtime installation failed", Qgis.Warning)
             if not get_last_bootstrap_error():

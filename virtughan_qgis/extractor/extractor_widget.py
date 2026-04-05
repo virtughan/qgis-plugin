@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import importlib
 import traceback
 import uuid
 import json
@@ -81,12 +82,36 @@ except Exception as _e:
 
 EXTRACTOR_IMPORT_ERROR = None
 ExtractorBackend = None
+extractor_search_stac_api = None
 try:
-    from virtughan.extract import ExtractProcessor as ExtractorBackend, search_stac_api as extractor_search_stac_api
+    _extract_backend = importlib.import_module("virtughan.extract")
+    ExtractorBackend = getattr(_extract_backend, "ExtractProcessor", None)
+    extractor_search_stac_api = getattr(_extract_backend, "search_stac_api", None)
+    if not callable(extractor_search_stac_api):
+        extractor_search_stac_api = getattr(_extract_backend, "search_stac", None)
+    if ExtractorBackend is None:
+        raise AttributeError("ExtractProcessor is not available in virtughan.extract")
 except Exception as _e:
     EXTRACTOR_IMPORT_ERROR = _e
     ExtractorBackend = None
     extractor_search_stac_api = None
+
+
+def _resolve_extractor_search_stac_api():
+    global extractor_search_stac_api
+    if callable(extractor_search_stac_api):
+        return extractor_search_stac_api
+    for module_name in ("virtughan.extract", "virtughan.engine"):
+        try:
+            backend = importlib.import_module(module_name)
+        except Exception:
+            continue
+        for symbol_name in ("search_stac_api", "search_stac"):
+            candidate = getattr(backend, symbol_name, None)
+            if callable(candidate):
+                extractor_search_stac_api = candidate
+                return candidate
+    return None
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
@@ -144,7 +169,17 @@ def _reload_pyproj_modules(logger=None):
 
 
 def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
-    python_exe = _resolve_embedded_python_executable() or sys.executable
+    python_exe = _resolve_embedded_python_executable()
+    if not python_exe:
+        raise RuntimeError(
+            "Could not locate an embedded Python executable for subprocess execution. "
+            f"Current sys.executable={sys.executable}"
+        )
+    if sys.platform == "darwin" and Path(python_exe).name.lower() == "qgis":
+        raise RuntimeError(
+            "Refusing to launch subprocess with QGIS GUI executable on macOS. "
+            f"Resolved path={python_exe}"
+        )
     work_dir = tempfile.mkdtemp(prefix="virtughan-extractor-")
     payload_path = os.path.join(work_dir, "payload.json")
     runner_path = os.path.join(work_dir, "runner.py")
@@ -228,6 +263,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             rf.write(runner_code)
 
         if logf:
+            logf.write(f"[INFO] launcher source file={__file__}\n")
             logf.write(f"[INFO] running extractor in subprocess: {python_exe}\n")
 
         run_kwargs = {
@@ -238,6 +274,20 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
         }
 
         env = os.environ.copy()
+        
+        # On macOS, prevent QGIS GUI-related environment from affecting subprocess
+        if sys.platform == "darwin":
+            # Remove dyld-related variables that might cause QGIS to spawn GUI
+            dyld_keys = [k for k in env.keys() if k.startswith("DYLD_")]
+            for key in dyld_keys:
+                env.pop(key, None)
+            # Remove QT/GUI-related variables that might trigger GUI startup
+            gui_env_vars = ["QT_QPA_PLATFORM", "QT_API", "DISPLAY", "XAUTHORITY"]
+            for key in gui_env_vars:
+                env.pop(key, None)
+            # Ensure subprocess doesn't try to initialize GUI
+            env["QT_QPA_PLATFORM"] = "offscreen"
+        
         python_path_entries = []
         if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
@@ -326,11 +376,71 @@ def _log(widget, msg, level=Qgis.Info):
 
 def _resolve_embedded_python_executable() -> str:
     candidates: list[Path] = []
-    env_python = os.environ.get("PYTHONEXECUTABLE")
-    if env_python:
-        candidates.append(Path(env_python))
+    install_roots: list[Path] = []
+
+    def _add_root(path_value):
+        try:
+            p = Path(path_value).resolve()
+        except Exception:
+            return
+        if p not in install_roots:
+            install_roots.append(p)
+
+    def _add_candidate(path_value):
+        try:
+            p = Path(path_value)
+        except Exception:
+            return
+        candidates.append(p)
+
+    def _is_within_install_roots(candidate_path: Path) -> bool:
+        try:
+            resolved = candidate_path.resolve()
+        except Exception:
+            return False
+        for root in install_roots:
+            try:
+                resolved.relative_to(root)
+                return True
+            except Exception:
+                continue
+        return False
 
     prefix = QgsApplication.prefixPath() or ""
+    if prefix:
+        prefix_path = Path(prefix).resolve()
+        _add_root(prefix_path)
+        for i, parent in enumerate(prefix_path.parents):
+            if i >= 4:
+                break
+            _add_root(parent)
+
+    if sys.executable:
+        try:
+            exe_path = Path(sys.executable).resolve()
+            _add_root(exe_path.parent)
+            for i, parent in enumerate(exe_path.parents):
+                if i >= 5:
+                    break
+                _add_root(parent)
+
+            if sys.platform == "darwin":
+                for parent in exe_path.parents:
+                    if parent.suffix.lower() == ".app":
+                        _add_root(parent)
+                        _add_root(parent / "Contents")
+                        _add_root(parent / "Contents" / "MacOS")
+                        break
+        except Exception:
+            pass
+
+    base_executable = getattr(sys, "_base_executable", "")
+    if base_executable:
+        _add_candidate(base_executable)
+    env_python = os.environ.get("PYTHONEXECUTABLE")
+    if env_python:
+        _add_candidate(env_python)
+
     if prefix:
         prefix_path = Path(prefix)
         candidates.extend(
@@ -352,59 +462,75 @@ def _resolve_embedded_python_executable() -> str:
         except Exception:
             pass
 
-    if sys.prefix:
-        candidates.extend(
-            [
-                Path(sys.prefix) / "python.exe",
-                Path(sys.prefix) / "bin" / "python.exe",
-                Path(sys.prefix) / "bin" / "python3",
-                Path(sys.prefix) / "bin" / "python",
-                Path(sys.prefix) / "python3",
-                Path(sys.prefix) / "python",
-            ]
-        )
-
     if sys.platform == "darwin" and sys.executable:
-        exe_path = Path(sys.executable).resolve()
-        for parent in exe_path.parents:
-            if parent.name == "MacOS":
-                app_contents = parent.parent
-                candidates.extend(
-                    [
-                        parent / "bin" / "python3",
-                        app_contents / "MacOS" / "bin" / "python3",
-                        app_contents / "Frameworks" / "bin" / "python3",
-                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
-                        app_contents / "Resources" / "python" / "bin" / "python3",
-                    ]
-                )
-                try:
-                    fw_versions = app_contents / "Frameworks" / "Python.framework" / "Versions"
-                    if fw_versions.is_dir():
-                        for version_dir in sorted(fw_versions.iterdir()):
-                            candidates.append(version_dir / "bin" / "python3")
-                except Exception:
-                    pass
-                break
+        try:
+            exe_path = Path(sys.executable).resolve()
+            for parent in exe_path.parents:
+                if parent.name == "MacOS":
+                    app_contents = parent.parent
+                    candidates.extend(
+                        [
+                            parent / "python",
+                            parent / "python3",
+                            parent / "python3.12",
+                            parent / "bin" / "python3",
+                            parent / "bin" / "python",
+                            app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
+                            app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python",
+                            app_contents / "Resources" / "python" / "bin" / "python3",
+                            app_contents / "Resources" / "python" / "bin" / "python",
+                        ]
+                    )
+                    try:
+                        for entry in sorted(parent.iterdir()):
+                            if entry.is_file() and entry.name.lower().startswith("python"):
+                                candidates.append(entry)
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        for root in list(install_roots):
+            apps_dir = root / "apps"
+            if not apps_dir.is_dir():
+                continue
+            try:
+                for app in sorted(apps_dir.iterdir()):
+                    if app.is_dir() and app.name.lower().startswith("python"):
+                        candidates.append(app / "python.exe")
+                        candidates.append(app / "Scripts" / "python.exe")
+            except Exception:
+                pass
 
     if sys.executable:
-        candidates.append(Path(sys.executable))
+        _add_candidate(sys.executable)
 
     seen: set[str] = set()
     for candidate in candidates:
-        normalized = str(candidate)
+        try:
+            resolved = candidate.resolve()
+        except Exception:
+            continue
+        normalized = str(resolved)
         if normalized in seen:
             continue
         seen.add(normalized)
 
-        name = candidate.name.lower()
-        if sys.platform == "darwin" and name == "qgis":
+        name = resolved.name.lower()
+        if name in {"qgis", "qgis-bin.exe", "qgis-ltr-bin.exe"}:
             continue
-        if candidate.is_file() and "python" in name:
-            return normalized
+        if "python" not in name:
+            continue
+        if not resolved.is_file():
+            continue
+        if not _is_within_install_roots(resolved):
+            continue
+        if os.name != "nt" and not os.access(str(resolved), os.X_OK):
+            continue
+        return normalized
 
-    if sys.executable and "python" in Path(sys.executable).name.lower():
-        return sys.executable
     return ""
 
 
@@ -900,7 +1026,7 @@ class ExtractorDockWidget(QDockWidget):
                 f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f})"
             )
         else:
-            self.aoiPreviewLabel.setText("<i>AOI: not set yet</i>")
+            self.aoiPreviewLabel.setText("<i>AOI: not set yet. Use smaller aoi and test first.</i>")
 
     def _open_help(self):
         host = self.window()
@@ -916,7 +1042,7 @@ class ExtractorDockWidget(QDockWidget):
     def _reset_form(self):
         self._aoi_bbox = None
         self._aoi_polygon_wgs84 = None
-        self._update_aoi_preview("AOI: not set yet")
+        self._update_aoi_preview("AOI: not set yet. Use smaller aoi and test first.")
         try:
             self._aoi.clear()
         except Exception:
@@ -1007,15 +1133,15 @@ class ExtractorDockWidget(QDockWidget):
 
         try:
             _log(self, "Pre-download stage started: checking matching scenes before download...")
-            self._validate_minimum_matching_scenes(min_count=1, timeout_s=420.0)
+            self._validate_minimum_matching_scenes(min_count=1, timeout_s=120.0)
             _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
         except TimeoutError:
-            _log(self, "Pre-download scene check timed out after 7 minutes.", Qgis.Warning)
+            _log(self, "Pre-download scene check timed out after 2 minutes.", Qgis.Warning)
             QMessageBox.warning(
                 self,
                 "VirtuGhan",
-                "Pre-download stage timed out after 7 minutes before download started.\n\n"
+                "Pre-download stage timed out after 2 minutes before download started.\n\n"
                 "Please try again later.",
             )
             return
@@ -1045,6 +1171,7 @@ class ExtractorDockWidget(QDockWidget):
         self._focus_log_section()
         self._has_successful_run = False
         self._last_output_layer_ids = []
+        _log(self, "Download handoff: starting backend task.")
 
         def _on_done(ok, exc):
             self._stop_tailing()
@@ -1104,6 +1231,7 @@ class ExtractorDockWidget(QDockWidget):
             "VirtuGhan Extractor", params, log_path, on_done=_on_done
         )
         QgsApplication.taskManager().addTask(self._current_task)
+        _log(self, "Download handoff: backend task queued.")
 
     def _start_tailing(self, log_path: str):
         self._current_log_path = log_path
@@ -1193,13 +1321,14 @@ class ExtractorDockWidget(QDockWidget):
         if scenes:
             return scenes
 
-        if extractor_search_stac_api is None:
+        search_fn = _resolve_extractor_search_stac_api()
+        if search_fn is None:
             _log(self, "Cannot load scene footprints: search_stac_api is not available.", Qgis.Warning)
             return []
 
         try:
             params = self._collect_search_params()
-            scenes = extractor_search_stac_api(
+            scenes = search_fn(
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
@@ -1271,14 +1400,15 @@ class ExtractorDockWidget(QDockWidget):
         cloud_cover,
         timeout_s: float = 30.0,
     ):
-        if extractor_search_stac_api is None:
+        search_fn = _resolve_extractor_search_stac_api()
+        if search_fn is None:
             raise RuntimeError("search_stac_api is not available in virtughan.extract.")
 
         result = {"scenes": None, "error": None}
 
         def _worker():
             try:
-                result["scenes"] = extractor_search_stac_api(
+                result["scenes"] = search_fn(
                     bbox,
                     start_date,
                     end_date,
@@ -1291,7 +1421,19 @@ class ExtractorDockWidget(QDockWidget):
         t.start()
 
         deadline = time.time() + max(1.0, float(timeout_s))
+        started_at = time.time()
+        next_progress_log_at = started_at + 15.0
         while t.is_alive() and time.time() < deadline:
+            now = time.time()
+            if now >= next_progress_log_at:
+                elapsed = int(now - started_at)
+                remaining = max(0, int(deadline - now))
+                _log(
+                    self,
+                    f"Pre-download scene check still running ({elapsed}s elapsed, {remaining}s remaining)...",
+                    Qgis.Info,
+                )
+                next_progress_log_at = now + 15.0
             try:
                 QgsApplication.processEvents()
             except Exception:
@@ -1300,14 +1442,16 @@ class ExtractorDockWidget(QDockWidget):
 
         if t.is_alive():
             raise TimeoutError(
-                "Scene search timed out. Please check internet/VPN/proxy and try again."
+                f"Scene search timed out after {int(max(1.0, float(timeout_s)))}s. "
+                "Please check internet/VPN/proxy and try again."
             )
         if result["error"] is not None:
             raise result["error"]
         return list(result["scenes"] or [])
 
     def _validate_minimum_matching_scenes(self, min_count: int = 1, timeout_s: float = 30.0):
-        if extractor_search_stac_api is None:
+        search_fn = _resolve_extractor_search_stac_api()
+        if search_fn is None:
             raise RuntimeError("search_stac_api is not available in virtughan.extract.")
 
         params = self._collect_search_params()
@@ -1404,7 +1548,8 @@ class ExtractorDockWidget(QDockWidget):
         return len(feats)
 
     def _preview_matching_scenes(self):
-        if extractor_search_stac_api is None:
+        search_fn = _resolve_extractor_search_stac_api()
+        if search_fn is None:
             QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in virtughan.extract.")
             return
         try:
@@ -1421,7 +1566,7 @@ class ExtractorDockWidget(QDockWidget):
         QgsApplication.processEvents()
         _log(self, "Searching matching scenes...")
         try:
-            scenes = extractor_search_stac_api(
+            scenes = search_fn(
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],

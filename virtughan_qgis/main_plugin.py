@@ -201,8 +201,17 @@ class VirtuGhanPlugin:
         def _attempt_cleanup(attempt: int = 0):
             # Wait for plugin manager to remove plugin files.
             if os.path.isdir(PLUGIN_DIR):
-                if attempt < 5:
-                    QTimer.singleShot(800, lambda: _attempt_cleanup(attempt + 1))
+                # macOS plugin uninstall can take noticeably longer than Windows.
+                # Keep watching for a while before concluding this was disable/reload.
+                max_attempts = 30
+                delay_ms = 1000
+                if attempt < max_attempts:
+                    QTimer.singleShot(delay_ms, lambda: _attempt_cleanup(attempt + 1))
+                else:
+                    _emit_warning(
+                        "Plugin unload detected but plugin folder still exists; "
+                        "automatic dependency cleanup was skipped (likely disable/reload or slow uninstall)."
+                    )
                 return
 
             ok = uninstall_runtime_dependencies()
@@ -311,7 +320,7 @@ class VirtuGhanPlugin:
         if reply != QMessageBox.Yes:
             return
 
-        repaired = repair_runtime_dependencies()
+        repaired = repair_runtime_dependencies(clear_pip_cache=True)
         if not repaired:
             details = get_last_bootstrap_error() or "Some files could not be cleared."
             QMessageBox.warning(
@@ -320,7 +329,7 @@ class VirtuGhanPlugin:
                 f"Dependency repair completed with warnings:\n\n{details}",
             )
 
-        ok = interactive_install_dependencies(self.iface.mainWindow())
+        ok = interactive_install_dependencies(self.iface.mainWindow(), force_reinstall=True)
         if ok:
             QMessageBox.information(
                 self.iface.mainWindow(),

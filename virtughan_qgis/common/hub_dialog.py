@@ -531,14 +531,14 @@ class VirtughanHubDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "VirtuGhan",
-            "This will force a clean reinstall: clear existing runtime dependencies and install again.\n\nContinue?",
+            "This will force a clean reinstall: clear runtime dependencies, clear pip cache, and install again.\n\nContinue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
 
-        cleaned = repair_runtime_dependencies()
+        cleaned = repair_runtime_dependencies(clear_pip_cache=True)
         if not cleaned:
             details = get_last_bootstrap_error() or "Some dependency files could not be cleared."
             QMessageBox.warning(
