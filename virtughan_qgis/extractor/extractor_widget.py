@@ -2,7 +2,6 @@
 import os
 import sys
 import time
-import importlib
 import traceback
 import uuid
 import json
@@ -80,21 +79,7 @@ except Exception as _e:
     COMMON_IMPORT_ERROR = _e
     CommonParamsWidget = None
 
-EXTRACTOR_IMPORT_ERROR = None
-ExtractorBackend = None
 extractor_search_stac_api = None
-try:
-    _extract_backend = importlib.import_module("virtughan.extract")
-    ExtractorBackend = getattr(_extract_backend, "ExtractProcessor", None)
-    extractor_search_stac_api = getattr(_extract_backend, "search_stac_api", None)
-    if not callable(extractor_search_stac_api):
-        extractor_search_stac_api = getattr(_extract_backend, "search_stac", None)
-    if ExtractorBackend is None:
-        raise AttributeError("ExtractProcessor is not available in virtughan.extract")
-except Exception as _e:
-    EXTRACTOR_IMPORT_ERROR = _e
-    ExtractorBackend = None
-    extractor_search_stac_api = None
 
 
 def _resolve_extractor_search_stac_api():
@@ -102,9 +87,8 @@ def _resolve_extractor_search_stac_api():
     if callable(extractor_search_stac_api):
         return extractor_search_stac_api
     for module_name in ("virtughan.extract", "virtughan.engine"):
-        try:
-            backend = importlib.import_module(module_name)
-        except Exception:
+        backend = sys.modules.get(module_name)
+        if backend is None:
             continue
         for symbol_name in ("search_stac_api", "search_stac"):
             candidate = getattr(backend, symbol_name, None)
@@ -117,6 +101,7 @@ UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
 
 _PYPROJ_GUARD_APPLIED = False
+_EXTRACTOR_INPROCESS_BACKEND_CLASS = None
 
 
 class _TaskCancelledError(RuntimeError):
@@ -166,6 +151,60 @@ def _reload_pyproj_modules(logger=None):
     """No-op: reloading pyproj in-process can destabilize repeated runs on Windows/QGIS."""
     if logger:
         logger("Skipped pyproj module reload for run-to-run stability")
+
+
+def _run_extractor_inprocess_fallback(params: dict, log_path: str, logf=None, should_cancel=None):
+    global _EXTRACTOR_INPROCESS_BACKEND_CLASS
+    if logf:
+        logf.write("[WARNING] macOS fallback: running extractor in-process because external Python preflight failed.\n")
+
+    runtime_paths = [
+        RUNTIME_SITE_PACKAGES_DIR,
+        RUNTIME_ROOT,
+        RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
+        RUNTIME_FALLBACK_ROOT,
+    ]
+    for dep_path in runtime_paths:
+        if dep_path and os.path.isdir(dep_path) and dep_path not in sys.path:
+            # Keep runtime paths available, but do not force highest precedence on mac fallback.
+            sys.path.append(dep_path)
+
+    if callable(should_cancel) and should_cancel():
+        raise _TaskCancelledError("Download cancelled by user.")
+
+    import inspect
+    if _EXTRACTOR_INPROCESS_BACKEND_CLASS is None:
+        backend_mod = sys.modules.get("virtughan.extract")
+        if backend_mod is None:
+            import virtughan.extract as backend_mod
+        _EXTRACTOR_INPROCESS_BACKEND_CLASS = getattr(backend_mod, "ExtractProcessor")
+    ExtractorBackend = _EXTRACTOR_INPROCESS_BACKEND_CLASS
+
+    backend_args = {
+        "bbox": params["bbox"],
+        "start_date": params["start_date"],
+        "end_date": params["end_date"],
+        "cloud_cover": params["cloud_cover"],
+        "bands_list": params["bands_list"],
+        "output_dir": params["output_dir"],
+        "workers": int(params.get("workers", 1) or 1),
+        "zip_output": params.get("zip_output", False),
+        "smart_filter": params.get("smart_filter", True),
+        "log_file": logf,
+    }
+    if params.get("polygon_wgs84"):
+        backend_args["polygon_wgs84"] = params["polygon_wgs84"]
+
+    sig = inspect.signature(ExtractorBackend.__init__)
+    accepts_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    if not accepts_kwargs:
+        allowed = {name for name in sig.parameters.keys() if name != "self"}
+        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
+
+    extr = ExtractorBackend(**backend_args)
+    extr.extract()
 
 
 def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
@@ -275,19 +314,6 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
 
         env = os.environ.copy()
         
-        # On macOS, prevent QGIS GUI-related environment from affecting subprocess
-        if sys.platform == "darwin":
-            # Remove dyld-related variables that might cause QGIS to spawn GUI
-            dyld_keys = [k for k in env.keys() if k.startswith("DYLD_")]
-            for key in dyld_keys:
-                env.pop(key, None)
-            # Remove QT/GUI-related variables that might trigger GUI startup
-            gui_env_vars = ["QT_QPA_PLATFORM", "QT_API", "DISPLAY", "XAUTHORITY"]
-            for key in gui_env_vars:
-                env.pop(key, None)
-            # Ensure subprocess doesn't try to initialize GUI
-            env["QT_QPA_PLATFORM"] = "offscreen"
-        
         python_path_entries = []
         if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
@@ -318,6 +344,86 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             startupinfo.wShowWindow = 0
             run_kwargs["startupinfo"] = startupinfo
             run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        preflight_cmd = [python_exe, "-c", "import encodings,sys; print(sys.executable)"]
+        preflight = None
+        if sys.platform == "darwin":
+            pyhome_candidates = [None]
+            try:
+                exe_path = Path(python_exe).resolve()
+                app_contents = None
+                for parent in exe_path.parents:
+                    if parent.name == "Contents":
+                        app_contents = parent
+                        break
+                if app_contents is not None:
+                    for candidate in (
+                        app_contents / "Resources" / "python",
+                        app_contents / "Resources",
+                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current",
+                    ):
+                        if candidate.is_dir():
+                            pyhome_candidates.append(str(candidate))
+            except Exception:
+                pass
+
+            selected_env = None
+            for pyhome in pyhome_candidates:
+                candidate_env = env.copy()
+                if pyhome:
+                    candidate_env["PYTHONHOME"] = pyhome
+                else:
+                    candidate_env.pop("PYTHONHOME", None)
+
+                preflight = subprocess.run(
+                    preflight_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=candidate_env,
+                    timeout=15,
+                )
+                if logf:
+                    logf.write(
+                        f"[INFO] mac preflight pyhome={pyhome or '<unset>'} returncode={preflight.returncode}\n"
+                    )
+                if preflight.returncode == 0:
+                    selected_env = candidate_env
+                    break
+
+            if selected_env is None:
+                stderr_text = (preflight.stderr or "").strip() if preflight else ""
+                if "encodings" in stderr_text or "init_fs_encoding" in stderr_text:
+                    _run_extractor_inprocess_fallback(params, log_path, logf=logf, should_cancel=should_cancel)
+                    return
+                raise RuntimeError(
+                    "Resolved Python executable failed startup preflight. "
+                    f"path={python_exe}, returncode={preflight.returncode if preflight else 'n/a'}, "
+                    f"stderr={stderr_text or 'n/a'}"
+                )
+            env = selected_env
+            run_kwargs["env"] = env
+        else:
+            preflight = subprocess.run(
+                preflight_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                timeout=15,
+            )
+            if preflight.returncode != 0:
+                raise RuntimeError(
+                    "Resolved Python executable failed startup preflight. "
+                    f"path={python_exe}, returncode={preflight.returncode}, stderr={preflight.stderr.strip()}"
+                )
+
+        if logf and preflight is not None:
+            logf.write(f"[INFO] python preflight returncode={preflight.returncode}\n")
+            if preflight.stdout:
+                logf.write(f"[INFO] python preflight stdout={preflight.stdout.strip()}\n")
+            if preflight.stderr:
+                logf.write(f"[INFO] python preflight stderr={preflight.stderr.strip()}\n")
 
         proc = subprocess.Popen(**run_kwargs)
         stdout_data = ""
@@ -358,7 +464,13 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
-            raise RuntimeError(f"Extractor subprocess failed (exit code {proc.returncode}).")
+            stderr_tail = (stderr_data or "").strip()
+            if stderr_tail:
+                stderr_tail = stderr_tail[-800:]
+            raise RuntimeError(
+                f"Extractor subprocess failed (exit code {proc.returncode}). "
+                f"python={python_exe}. stderr_tail={stderr_tail}"
+            )
     finally:
         try:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -521,6 +633,11 @@ def _resolve_embedded_python_executable() -> str:
         name = resolved.name.lower()
         if name in {"qgis", "qgis-bin.exe", "qgis-ltr-bin.exe"}:
             continue
+        if sys.platform == "darwin":
+            posix_path = resolved.as_posix().lower()
+            if "/contents/resources/scripts/python" in posix_path:
+                # This wrapper can point to a missing versioned python executable.
+                continue
         if "python" not in name:
             continue
         if not resolved.is_file():
@@ -567,12 +684,44 @@ class _ExtractorTask(QgsTask):
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
                 logf.write(f"Params: {self.params}\n")
-                _run_extractor_in_subprocess(
-                    self.params,
-                    self.log_path,
-                    logf=logf,
-                    should_cancel=self.isCanceled,
-                )
+                if os.name == "nt":
+                    _run_extractor_in_subprocess(
+                        self.params,
+                        self.log_path,
+                        logf=logf,
+                        should_cancel=self.isCanceled,
+                    )
+                else:
+                    import inspect
+                    from virtughan.extract import ExtractProcessor as ExtractorBackend
+
+                    logf.write("[INFO] non-Windows path: running extractor in-process\n")
+                    backend_args = {
+                        "bbox": self.params["bbox"],
+                        "start_date": self.params["start_date"],
+                        "end_date": self.params["end_date"],
+                        "cloud_cover": self.params["cloud_cover"],
+                        "bands_list": self.params["bands_list"],
+                        "output_dir": self.params["output_dir"],
+                        "workers": int(self.params.get("workers", 1) or 1),
+                        "zip_output": self.params.get("zip_output", False),
+                        "smart_filter": self.params.get("smart_filter", True),
+                        "log_file": logf,
+                    }
+                    if self.params.get("polygon_wgs84"):
+                        backend_args["polygon_wgs84"] = self.params["polygon_wgs84"]
+
+                    sig = inspect.signature(ExtractorBackend.__init__)
+                    accepts_kwargs = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                    )
+                    if not accepts_kwargs:
+                        allowed = {name for name in sig.parameters.keys() if name != "self"}
+                        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
+
+                    extr = ExtractorBackend(**backend_args)
+                    extr.extract()
+                    logf.write("Extractor finished.\n")
             return True
         except _TaskCancelledError as e:
             self.exc = e
@@ -1062,10 +1211,6 @@ class ExtractorDockWidget(QDockWidget):
         return max(1, int(self.workersSpin.value()))
 
     def _collect_params(self):
-        if ExtractorBackend is None:
-            raise RuntimeError(
-                f"Extractor backend import failed: {EXTRACTOR_IMPORT_ERROR}"
-            )
         if not self._aoi_bbox:
             raise RuntimeError("Please set AOI before running.")
 
@@ -1450,6 +1595,9 @@ class ExtractorDockWidget(QDockWidget):
         return list(result["scenes"] or [])
 
     def _validate_minimum_matching_scenes(self, min_count: int = 1, timeout_s: float = 30.0):
+        if _resolve_extractor_search_stac_api() is None:
+            _log(self, "Pre-download STAC validation skipped because in-process resolver is unavailable.", Qgis.Warning)
+            return
         search_fn = _resolve_extractor_search_stac_api()
         if search_fn is None:
             raise RuntimeError("search_stac_api is not available in virtughan.extract.")

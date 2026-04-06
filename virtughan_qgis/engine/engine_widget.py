@@ -9,7 +9,7 @@ import shutil
 import tempfile
 import subprocess
 import threading
-import importlib
+import multiprocessing
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -79,21 +79,7 @@ except Exception as _e:
     COMMON_IMPORT_ERROR = _e
     CommonParamsWidget = None
 
-VIRTUGHAN_IMPORT_ERROR = None
-VirtughanProcessor = None
 engine_search_stac_api = None
-try:
-    _engine_backend = importlib.import_module("virtughan.engine")
-    VirtughanProcessor = getattr(_engine_backend, "VirtughanProcessor", None)
-    engine_search_stac_api = getattr(_engine_backend, "search_stac_api", None)
-    if not callable(engine_search_stac_api):
-        engine_search_stac_api = getattr(_engine_backend, "search_stac", None)
-    if VirtughanProcessor is None:
-        raise AttributeError("VirtughanProcessor is not available in virtughan.engine")
-except Exception as _e:
-    VIRTUGHAN_IMPORT_ERROR = _e
-    VirtughanProcessor = None
-    engine_search_stac_api = None
 
 
 def _resolve_engine_search_stac_api():
@@ -101,9 +87,8 @@ def _resolve_engine_search_stac_api():
     if callable(engine_search_stac_api):
         return engine_search_stac_api
     for module_name in ("virtughan.extract", "virtughan.engine"):
-        try:
-            backend = importlib.import_module(module_name)
-        except Exception:
+        backend = sys.modules.get(module_name)
+        if backend is None:
             continue
         for symbol_name in ("search_stac_api", "search_stac"):
             candidate = getattr(backend, symbol_name, None)
@@ -325,6 +310,11 @@ def _resolve_embedded_python_executable() -> str:
         name = resolved.name.lower()
         if name in {"qgis", "qgis-bin.exe", "qgis-ltr-bin.exe"}:
             continue
+        if sys.platform == "darwin":
+            posix_path = resolved.as_posix().lower()
+            if "/contents/resources/scripts/python" in posix_path:
+                # This wrapper can point to a missing versioned python executable.
+                continue
         if "python" not in name:
             continue
         if not resolved.is_file():
@@ -384,6 +374,104 @@ def _apply_transient_read_fallback(logf=None):
             + ", ".join(f"{k}={v}" for k, v in fallback_values.items())
             + "\n"
         )
+
+
+_ENGINE_FALLBACK_BACKEND_CLASS = None
+
+
+def _engine_compute_fallback_worker(params: dict, log_path: str, result_queue):
+    try:
+        backend_cls = _ENGINE_FALLBACK_BACKEND_CLASS
+        if backend_cls is None:
+            import virtughan.engine as _backend_mod
+            backend_cls = getattr(_backend_mod, "VirtughanProcessor")
+
+        _configure_geospatial_runtime(logf=None)
+        cpl_log_path = os.path.join(params["output_dir"], "gdal.log")
+        os.environ["CPL_LOG"] = cpl_log_path
+
+        with open(log_path, "a", encoding="utf-8", buffering=1) as worker_log:
+            worker_log.write("[WARNING] macOS fallback: running compute in forked process because external Python preflight failed.\n")
+            proc = backend_cls(
+                bbox=params["bbox"],
+                start_date=params["start_date"],
+                end_date=params["end_date"],
+                cloud_cover=params["cloud_cover"],
+                formula=params["formula"],
+                band1=params["band1"],
+                band2=params["band2"],
+                operation=params["operation"],
+                timeseries=params["timeseries"],
+                output_dir=params["output_dir"],
+                log_file=worker_log,
+                cmap="RdYlGn",
+                workers=params["workers"],
+                smart_filter=params["smart_filter"],
+            )
+            proc.compute()
+        result_queue.put({"ok": True})
+    except Exception:
+        details = traceback.format_exc()
+        try:
+            with open(log_path, "a", encoding="utf-8", buffering=1) as worker_log:
+                worker_log.write("[fallback_worker_exception]\n")
+                worker_log.write(details)
+        except Exception:
+            pass
+        result_queue.put({"ok": False, "error": details})
+
+
+def _run_engine_inprocess_fallback(params: dict, log_path: str, logf=None, should_cancel=None):
+    global _ENGINE_FALLBACK_BACKEND_CLASS
+    if logf:
+        logf.write("[WARNING] macOS fallback: switching from external subprocess to forked process.\n")
+
+    if _ENGINE_FALLBACK_BACKEND_CLASS is None:
+        backend_mod = sys.modules.get("virtughan.engine")
+        if backend_mod is None:
+            import virtughan.engine as backend_mod
+        _ENGINE_FALLBACK_BACKEND_CLASS = getattr(backend_mod, "VirtughanProcessor")
+
+    ctx = multiprocessing.get_context("fork")
+    result_queue = ctx.Queue()
+    proc = ctx.Process(
+        target=_engine_compute_fallback_worker,
+        args=(params, log_path, result_queue),
+        daemon=True,
+    )
+    proc.start()
+
+    deadline = time.monotonic() + 900.0
+    while proc.is_alive():
+        if callable(should_cancel) and should_cancel():
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            proc.join(timeout=2.0)
+            raise _TaskCancelledError("Compute cancelled by user.")
+        if time.monotonic() > deadline:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            proc.join(timeout=2.0)
+            raise RuntimeError("Compute fallback process timed out after 15 minutes.")
+        time.sleep(0.2)
+
+    proc.join(timeout=1.0)
+    result = None
+    try:
+        result = result_queue.get_nowait()
+    except Exception:
+        result = None
+
+    if proc.exitcode == 0 and isinstance(result, dict) and result.get("ok"):
+        return
+
+    if isinstance(result, dict) and result.get("error"):
+        raise RuntimeError(result.get("error"))
+    raise RuntimeError(f"Compute fallback process failed with exit code {proc.exitcode}.")
 
 
 @contextmanager
@@ -636,19 +724,6 @@ if __name__ == "__main__":
 
         env = os.environ.copy()
         
-        # On macOS, prevent QGIS GUI-related environment from affecting subprocess
-        if sys.platform == "darwin":
-            # Remove dyld-related variables that might cause QGIS to spawn GUI
-            dyld_keys = [k for k in env.keys() if k.startswith("DYLD_")]
-            for key in dyld_keys:
-                env.pop(key, None)
-            # Remove QT/GUI-related variables that might trigger GUI startup
-            gui_env_vars = ["QT_QPA_PLATFORM", "QT_API", "DISPLAY", "XAUTHORITY"]
-            for key in gui_env_vars:
-                env.pop(key, None)
-            # Ensure subprocess doesn't try to initialize GUI
-            env["QT_QPA_PLATFORM"] = "offscreen"
-        
         python_path_entries = []
         if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
             python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
@@ -677,6 +752,86 @@ if __name__ == "__main__":
             startupinfo.wShowWindow = 0
             run_kwargs["startupinfo"] = startupinfo
             run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        preflight_cmd = [python_exe, "-c", "import encodings,sys; print(sys.executable)"]
+        preflight = None
+        if sys.platform == "darwin":
+            pyhome_candidates = [None]
+            try:
+                exe_path = Path(python_exe).resolve()
+                app_contents = None
+                for parent in exe_path.parents:
+                    if parent.name == "Contents":
+                        app_contents = parent
+                        break
+                if app_contents is not None:
+                    for candidate in (
+                        app_contents / "Resources" / "python",
+                        app_contents / "Resources",
+                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current",
+                    ):
+                        if candidate.is_dir():
+                            pyhome_candidates.append(str(candidate))
+            except Exception:
+                pass
+
+            selected_env = None
+            for pyhome in pyhome_candidates:
+                candidate_env = env.copy()
+                if pyhome:
+                    candidate_env["PYTHONHOME"] = pyhome
+                else:
+                    candidate_env.pop("PYTHONHOME", None)
+
+                preflight = subprocess.run(
+                    preflight_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=candidate_env,
+                    timeout=15,
+                )
+                if logf:
+                    logf.write(
+                        f"[INFO] mac preflight pyhome={pyhome or '<unset>'} returncode={preflight.returncode}\n"
+                    )
+                if preflight.returncode == 0:
+                    selected_env = candidate_env
+                    break
+
+            if selected_env is None:
+                stderr_text = (preflight.stderr or "").strip() if preflight else ""
+                if "encodings" in stderr_text or "init_fs_encoding" in stderr_text:
+                    _run_engine_inprocess_fallback(params, log_path, logf=logf, should_cancel=should_cancel)
+                    return
+                raise RuntimeError(
+                    "Resolved Python executable failed startup preflight. "
+                    f"path={python_exe}, returncode={preflight.returncode if preflight else 'n/a'}, "
+                    f"stderr={stderr_text or 'n/a'}"
+                )
+            env = selected_env
+            run_kwargs["env"] = env
+        else:
+            preflight = subprocess.run(
+                preflight_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                timeout=15,
+            )
+            if preflight.returncode != 0:
+                raise RuntimeError(
+                    "Resolved Python executable failed startup preflight. "
+                    f"path={python_exe}, returncode={preflight.returncode}, stderr={preflight.stderr.strip()}"
+                )
+
+        if logf and preflight is not None:
+            logf.write(f"[INFO] python preflight returncode={preflight.returncode}\n")
+            if preflight.stdout:
+                logf.write(f"[INFO] python preflight stdout={preflight.stdout.strip()}\n")
+            if preflight.stderr:
+                logf.write(f"[INFO] python preflight stderr={preflight.stderr.strip()}\n")
 
         proc = subprocess.Popen(**run_kwargs)
         stdout_data = ""
@@ -763,7 +918,13 @@ if __name__ == "__main__":
             logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
-            raise RuntimeError(f"Engine subprocess failed (exit code {proc.returncode}).")
+            stderr_tail = (stderr_data or "").strip()
+            if stderr_tail:
+                stderr_tail = stderr_tail[-800:]
+            raise RuntimeError(
+                f"Engine subprocess failed (exit code {proc.returncode}). "
+                f"python={python_exe}. stderr_tail={stderr_tail}"
+            )
     finally:
         try:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -810,12 +971,39 @@ class _VirtughanTask(QgsTask):
             os.environ["CPL_LOG"] = os.path.join(self.params["output_dir"], "gdal.log")
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
-                _run_engine_in_subprocess(
-                    self.params,
-                    self.log_path,
-                    logf=logf,
-                    should_cancel=self.isCanceled,
-                )
+                if os.name == "nt":
+                    _run_engine_in_subprocess(
+                        self.params,
+                        self.log_path,
+                        logf=logf,
+                        should_cancel=self.isCanceled,
+                    )
+                else:
+                    from virtughan.engine import VirtughanProcessor
+
+                    workers = int(self.params.get("workers", 1) or 1)
+                    logf.write("[INFO] non-Windows path: running compute in-process\n")
+                    proc = VirtughanProcessor(
+                        bbox=self.params["bbox"],
+                        start_date=self.params["start_date"],
+                        end_date=self.params["end_date"],
+                        cloud_cover=self.params["cloud_cover"],
+                        formula=self.params["formula"],
+                        band1=self.params["band1"],
+                        band2=self.params["band2"],
+                        operation=self.params["operation"],
+                        timeseries=self.params["timeseries"],
+                        output_dir=self.params["output_dir"],
+                        log_file=logf,
+                        cmap="RdYlGn",
+                        workers=workers,
+                        smart_filter=self.params["smart_filter"],
+                    )
+                    if workers > 1:
+                        with _with_embedded_python_executable(logf=logf):
+                            proc.compute()
+                    else:
+                        proc.compute()
             return True
         except _TaskCancelledError as e:
             self.exc = e
@@ -1458,8 +1646,6 @@ class EngineDockWidget(QDockWidget):
         return max(1, int(self.workersSpin.value()))
 
     def _collect_params(self):
-        if VirtughanProcessor is None:
-            raise RuntimeError(f"VirtughanProcessor import failed: {VIRTUGHAN_IMPORT_ERROR}")
         if not self._aoi_bbox:
             raise RuntimeError("Please set AOI (Map extent / Draw rectangle / Draw polygon) before running.")
 
@@ -1892,6 +2078,9 @@ class EngineDockWidget(QDockWidget):
         return list(result["scenes"] or [])
 
     def _validate_minimum_matching_scenes(self, min_count: int = 2, timeout_s: float = 30.0):
+        if _resolve_engine_search_stac_api() is None:
+            _log(self, "Pre-compute STAC validation skipped because in-process resolver is unavailable.", Qgis.Warning)
+            return
         params = self._collect_search_params()
         scenes = self._search_scenes_with_timeout(
             params["bbox"],

@@ -53,6 +53,60 @@ def get_bootstrap_log_path() -> str:
     return os.path.join(log_dir, "bootstrap.log")
 
 
+def get_runtime_restart_guard_path() -> str:
+    guard_dir = os.path.join(QgsApplication.qgisSettingsDirPath(), "virtughan")
+    os.makedirs(guard_dir, exist_ok=True)
+    return os.path.join(guard_dir, "restart_required.flag")
+
+
+def mark_runtime_restart_required(reason: str = "runtime dependencies updated"):
+    try:
+        guard_path = get_runtime_restart_guard_path()
+        with open(guard_path, "w", encoding="utf-8") as fh:
+            fh.write(f"pid={os.getpid()}\n")
+            fh.write(f"reason={reason}\n")
+        _log(f"Marked runtime restart required ({reason})", Qgis.Info)
+    except Exception as exc:
+        _log(f"Could not mark runtime restart requirement: {exc}", Qgis.Warning)
+
+
+def clear_runtime_restart_required():
+    try:
+        guard_path = get_runtime_restart_guard_path()
+        if os.path.isfile(guard_path):
+            os.remove(guard_path)
+    except Exception as exc:
+        _log(f"Could not clear runtime restart requirement: {exc}", Qgis.Warning)
+
+
+def is_runtime_restart_required() -> bool:
+    guard_path = get_runtime_restart_guard_path()
+    if not os.path.isfile(guard_path):
+        return False
+
+    try:
+        with open(guard_path, "r", encoding="utf-8") as fh:
+            lines = [line.strip() for line in fh.readlines() if line.strip()]
+    except Exception:
+        return False
+
+    pid_line = next((line for line in lines if line.startswith("pid=")), "")
+    if not pid_line:
+        return False
+
+    try:
+        marked_pid = int(pid_line.split("=", 1)[1])
+    except Exception:
+        return False
+
+    if marked_pid != os.getpid():
+        # New QGIS session detected; clear stale marker and allow execution.
+        clear_runtime_restart_required()
+        return False
+
+    return True
+
+
 def _level_name(level) -> str:
     success_level = getattr(Qgis, "Success", None)
     if level == Qgis.Critical:
@@ -638,8 +692,19 @@ def ensure_runtime_network_ready(parent=None) -> bool:
 
     Returns True when ready. If TLS bundle is missing, prompts user to repair.
     """
+    restart_flag_set = is_runtime_restart_required()
+    if restart_flag_set:
+        _log(
+            "Runtime dependencies were updated in this QGIS session; "
+            "validating refreshed runtime without restart.",
+            Qgis.Info,
+        )
+
     ok, details = check_runtime_tls_bundle()
     if ok:
+        if restart_flag_set:
+            clear_runtime_restart_required()
+            _log("Runtime refresh validated; restart requirement cleared.", Qgis.Info)
         return True
 
     _set_last_error(details)
@@ -680,6 +745,8 @@ def ensure_runtime_network_ready(parent=None) -> bool:
         )
         return False
 
+    clear_runtime_restart_required()
+
     return True
 
 
@@ -699,6 +766,7 @@ def install_dependencies(parent=None, quiet=False) -> bool:
     _log("Attempting runtime dependency installation...", Qgis.Info)
 
     if _install_via_pip(DEFAULT_PACKAGES, targets=install_targets) and check_dependencies():
+        mark_runtime_restart_required("runtime dependencies installed")
         return True
 
     _set_last_error(
@@ -865,6 +933,7 @@ def repair_runtime_dependencies(clear_pip_cache: bool = False, progress_callback
         _log(f"Dependency repair completed: removed {removed} entries", Qgis.Info)
         if clear_pip_cache:
             _log("Dependency repair used fresh mode (pip cache cleared)", Qgis.Info)
+        mark_runtime_restart_required("runtime dependencies repaired")
         return True
     except Exception as exc:
         _set_last_error(str(exc))
@@ -903,6 +972,7 @@ def uninstall_runtime_dependencies() -> bool:
             return False
 
         _log(f"Dependency uninstall completed: removed {removed} entries", Qgis.Info)
+        clear_runtime_restart_required()
         return True
     except Exception as exc:
         _set_last_error(str(exc))
@@ -1014,6 +1084,7 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
 
         if success:
             mark_as_installed()
+            mark_runtime_restart_required("runtime dependencies installed (interactive)")
             _log("First-time installation completed successfully", Qgis.Info)
         else:
             _log("First-time installation failed or cancelled", Qgis.Warning)
