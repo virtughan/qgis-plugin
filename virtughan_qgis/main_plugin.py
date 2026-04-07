@@ -1,5 +1,6 @@
 # virtughan_qgis/main_plugin.py
 import os
+import sys
 
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtCore import Qt, QTimer, QCoreApplication
@@ -208,9 +209,9 @@ class VirtuGhanPlugin:
                 if attempt < max_attempts:
                     QTimer.singleShot(delay_ms, lambda: _attempt_cleanup(attempt + 1))
                 else:
-                    _emit_warning(
-                        "Plugin unload detected but plugin folder still exists; "
-                        "automatic dependency cleanup was skipped (likely disable/reload or slow uninstall)."
+                    _emit_info(
+                        "Plugin unload detected. Runtime dependency cleanup will be finalized after restart "
+                        "if the plugin is fully uninstalled."
                     )
                 return
 
@@ -259,9 +260,19 @@ class VirtuGhanPlugin:
             try:
                 if hasattr(self._hub_dialog, "show_page"):
                     self._hub_dialog.show_page(start_page)
+                mw = self.iface.mainWindow() if self.iface else None
+                if mw is not None and sys.platform != "darwin":
+                    try:
+                        if mw.isMinimized():
+                            mw.showNormal()
+                    except Exception:
+                        pass
+                    mw.raise_()
+                    mw.activateWindow()
                 self._hub_dialog.show()
-                self._hub_dialog.raise_()
-                self._hub_dialog.activateWindow()
+                if sys.platform != "darwin":
+                    self._hub_dialog.raise_()
+                    self._hub_dialog.activateWindow()
                 return
             except RuntimeError:
                 self._hub_dialog = None
@@ -279,7 +290,8 @@ class VirtuGhanPlugin:
         except Exception:
             pass
 
-        self._hub_dialog = self._VirtughanHubDialog(self.iface, start_page=start_page, parent=self.iface.mainWindow())
+        hub_parent = None if sys.platform == "darwin" else self.iface.mainWindow()
+        self._hub_dialog = self._VirtughanHubDialog(self.iface, start_page=start_page, parent=hub_parent)
         try:
             if self._results_history_session:
                 self._hub_dialog.set_results_history(self._results_history_session)
@@ -288,8 +300,19 @@ class VirtuGhanPlugin:
         self._hub_dialog.finished.connect(self._on_hub_finished)
         self._hub_dialog.setModal(False)
         self._hub_dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        mw = self.iface.mainWindow() if self.iface else None
+        if mw is not None and sys.platform != "darwin":
+            try:
+                if mw.isMinimized():
+                    mw.showNormal()
+            except Exception:
+                pass
+            mw.raise_()
+            mw.activateWindow()
         self._hub_dialog.show()
-        self._hub_dialog.raise_()
+        if sys.platform != "darwin":
+            self._hub_dialog.raise_()
+            self._hub_dialog.activateWindow()
 
     def _on_hub_finished(self, _result: int):
         try:

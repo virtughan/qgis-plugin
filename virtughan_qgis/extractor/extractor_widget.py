@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import importlib
 import traceback
 import uuid
 import json
@@ -207,7 +208,83 @@ def _run_extractor_inprocess_fallback(params: dict, log_path: str, logf=None, sh
     extr.extract()
 
 
+def _run_extractor_inprocess_mac(params: dict, logf=None, should_cancel=None):
+    runtime_pairs = [
+        (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+        (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+    ]
+
+    chosen_paths = []
+    for site_pkgs, root in runtime_pairs:
+        if not site_pkgs or not os.path.isdir(site_pkgs):
+            continue
+        if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
+            chosen_paths = [site_pkgs]
+            if root and os.path.isdir(root):
+                chosen_paths.append(root)
+            break
+
+    if not chosen_paths:
+        for site_pkgs, root in runtime_pairs:
+            if site_pkgs and os.path.isdir(site_pkgs):
+                chosen_paths = [site_pkgs]
+                if root and os.path.isdir(root):
+                    chosen_paths.append(root)
+                break
+
+    for dep_path in chosen_paths:
+        while dep_path in sys.path:
+            try:
+                sys.path.remove(dep_path)
+            except Exception:
+                break
+        sys.path.insert(0, dep_path)
+
+    if callable(should_cancel) and should_cancel():
+        raise _TaskCancelledError("Download cancelled by user.")
+
+    backend_mod = sys.modules.get("virtughan.extract")
+    if backend_mod is None:
+        backend_mod = importlib.import_module("virtughan.extract")
+    else:
+        backend_mod = importlib.reload(backend_mod)
+    ExtractorBackend = getattr(backend_mod, "ExtractProcessor")
+
+    import inspect
+    backend_args = {
+        "bbox": params["bbox"],
+        "start_date": params["start_date"],
+        "end_date": params["end_date"],
+        "cloud_cover": params["cloud_cover"],
+        "bands_list": params["bands_list"],
+        "output_dir": params["output_dir"],
+        "workers": int(params.get("workers", 1) or 1),
+        "zip_output": params.get("zip_output", False),
+        "smart_filter": params.get("smart_filter", True),
+        "log_file": logf,
+    }
+    if params.get("polygon_wgs84"):
+        backend_args["polygon_wgs84"] = params["polygon_wgs84"]
+
+    sig = inspect.signature(ExtractorBackend.__init__)
+    accepts_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
+    if not accepts_kwargs:
+        allowed = {name for name in sig.parameters.keys() if name != "self"}
+        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
+
+    extr = ExtractorBackend(**backend_args)
+    extr.extract()
+
+
 def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
+    if sys.platform == "darwin":
+        if logf:
+            logf.write("[INFO] macOS guard: bypassing external subprocess and using in-process extractor path.\n")
+        _run_extractor_inprocess_mac(params, logf=logf, should_cancel=should_cancel)
+        return
+
     python_exe = _resolve_embedded_python_executable()
     if not python_exe:
         raise RuntimeError(
@@ -314,22 +391,28 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
 
         env = os.environ.copy()
         
-        python_path_entries = []
-        if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
-            python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
-        if os.path.isdir(RUNTIME_ROOT):
-            python_path_entries.append(RUNTIME_ROOT)
-        if os.path.isdir(RUNTIME_FALLBACK_SITE_PACKAGES_DIR):
-            python_path_entries.append(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
-        if os.path.isdir(RUNTIME_FALLBACK_ROOT):
-            python_path_entries.append(RUNTIME_FALLBACK_ROOT)
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
+        selected_runtime_paths = []
+        for site_pkgs, root in runtime_pairs:
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
+                selected_runtime_paths = [site_pkgs]
+                break
 
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        if existing_pythonpath:
-            python_path_entries.append(existing_pythonpath)
+        if not selected_runtime_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    selected_runtime_paths = [site_pkgs]
+                    break
 
-        if python_path_entries:
-            env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+        if selected_runtime_paths:
+            env["PYTHONPATH"] = os.pathsep.join(selected_runtime_paths)
+        else:
+            env.pop("PYTHONPATH", None)
 
         # Prevent user-level site-packages from shadowing plugin-managed runtime deps.
         env["PYTHONNOUSERSITE"] = "1"
@@ -375,13 +458,23 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                 else:
                     candidate_env.pop("PYTHONHOME", None)
 
+                preflight_run_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                    "env": candidate_env,
+                    "timeout": 15,
+                }
+                if os.name == "nt":
+                    preflight_startupinfo = subprocess.STARTUPINFO()
+                    preflight_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    preflight_startupinfo.wShowWindow = 0
+                    preflight_run_kwargs["startupinfo"] = preflight_startupinfo
+                    preflight_run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
                 preflight = subprocess.run(
                     preflight_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    env=candidate_env,
-                    timeout=15,
+                    **preflight_run_kwargs,
                 )
                 if logf:
                     logf.write(
@@ -404,13 +497,23 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             env = selected_env
             run_kwargs["env"] = env
         else:
+            preflight_run_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "env": env,
+                "timeout": 15,
+            }
+            if os.name == "nt":
+                preflight_startupinfo = subprocess.STARTUPINFO()
+                preflight_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                preflight_startupinfo.wShowWindow = 0
+                preflight_run_kwargs["startupinfo"] = preflight_startupinfo
+                preflight_run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
             preflight = subprocess.run(
                 preflight_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                timeout=15,
+                **preflight_run_kwargs,
             )
             if preflight.returncode != 0:
                 raise RuntimeError(
@@ -684,44 +787,20 @@ class _ExtractorTask(QgsTask):
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
                 logf.write(f"Params: {self.params}\n")
-                if os.name == "nt":
+                if sys.platform == "darwin":
+                    logf.write("[INFO] macOS path: running extractor in-process with module reload.\n")
+                    _run_extractor_inprocess_mac(
+                        self.params,
+                        logf=logf,
+                        should_cancel=self.isCanceled,
+                    )
+                else:
                     _run_extractor_in_subprocess(
                         self.params,
                         self.log_path,
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
-                else:
-                    import inspect
-                    from virtughan.extract import ExtractProcessor as ExtractorBackend
-
-                    logf.write("[INFO] non-Windows path: running extractor in-process\n")
-                    backend_args = {
-                        "bbox": self.params["bbox"],
-                        "start_date": self.params["start_date"],
-                        "end_date": self.params["end_date"],
-                        "cloud_cover": self.params["cloud_cover"],
-                        "bands_list": self.params["bands_list"],
-                        "output_dir": self.params["output_dir"],
-                        "workers": int(self.params.get("workers", 1) or 1),
-                        "zip_output": self.params.get("zip_output", False),
-                        "smart_filter": self.params.get("smart_filter", True),
-                        "log_file": logf,
-                    }
-                    if self.params.get("polygon_wgs84"):
-                        backend_args["polygon_wgs84"] = self.params["polygon_wgs84"]
-
-                    sig = inspect.signature(ExtractorBackend.__init__)
-                    accepts_kwargs = any(
-                        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-                    )
-                    if not accepts_kwargs:
-                        allowed = {name for name in sig.parameters.keys() if name != "self"}
-                        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
-
-                    extr = ExtractorBackend(**backend_args)
-                    extr.extract()
-                    logf.write("Extractor finished.\n")
             return True
         except _TaskCancelledError as e:
             self.exc = e

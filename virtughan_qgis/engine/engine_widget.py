@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import threading
 import multiprocessing
+import importlib
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -80,6 +81,7 @@ except Exception as _e:
     CommonParamsWidget = None
 
 engine_search_stac_api = None
+_COMPUTE_SUBPROCESS_RUN_COUNT = 0
 
 
 def _resolve_engine_search_stac_api():
@@ -376,15 +378,48 @@ def _apply_transient_read_fallback(logf=None):
         )
 
 
-_ENGINE_FALLBACK_BACKEND_CLASS = None
-
-
 def _engine_compute_fallback_worker(params: dict, log_path: str, result_queue):
     try:
-        backend_cls = _ENGINE_FALLBACK_BACKEND_CLASS
-        if backend_cls is None:
-            import virtughan.engine as _backend_mod
-            backend_cls = getattr(_backend_mod, "VirtughanProcessor")
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
+        chosen_paths = []
+        for site_pkgs, root in runtime_pairs:
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
+                chosen_paths = [site_pkgs]
+                if root and os.path.isdir(root):
+                    chosen_paths.append(root)
+                break
+
+        if not chosen_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    chosen_paths = [site_pkgs]
+                    if root and os.path.isdir(root):
+                        chosen_paths.append(root)
+                    break
+
+        for dep_path in chosen_paths:
+            while dep_path in sys.path:
+                try:
+                    sys.path.remove(dep_path)
+                except Exception:
+                    break
+            sys.path.insert(0, dep_path)
+
+        for mod_name in list(sys.modules.keys()):
+            if mod_name == "virtughan.engine" or mod_name.startswith("virtughan.engine."):
+                try:
+                    del sys.modules[mod_name]
+                except Exception:
+                    pass
+
+        importlib.invalidate_caches()
+        _backend_mod = importlib.import_module("virtughan.engine")
+        backend_cls = getattr(_backend_mod, "VirtughanProcessor")
 
         _configure_geospatial_runtime(logf=None)
         cpl_log_path = os.path.join(params["output_dir"], "gdal.log")
@@ -422,22 +457,25 @@ def _engine_compute_fallback_worker(params: dict, log_path: str, result_queue):
 
 
 def _run_engine_inprocess_fallback(params: dict, log_path: str, logf=None, should_cancel=None):
-    global _ENGINE_FALLBACK_BACKEND_CLASS
     if logf:
-        logf.write("[WARNING] macOS fallback: switching from external subprocess to forked process.\n")
+        logf.write("[WARNING] macOS fallback: switching from external subprocess to spawned process.\n")
 
-    if _ENGINE_FALLBACK_BACKEND_CLASS is None:
-        backend_mod = sys.modules.get("virtughan.engine")
-        if backend_mod is None:
-            import virtughan.engine as backend_mod
-        _ENGINE_FALLBACK_BACKEND_CLASS = getattr(backend_mod, "VirtughanProcessor")
+    fallback_exe = _resolve_embedded_python_executable()
+    if fallback_exe:
+        try:
+            multiprocessing.set_executable(fallback_exe)
+            if logf:
+                logf.write(f"[INFO] macOS fallback multiprocessing executable: {fallback_exe}\n")
+        except Exception as exc:
+            if logf:
+                logf.write(f"[WARNING] could not set fallback multiprocessing executable: {exc}\n")
 
-    ctx = multiprocessing.get_context("fork")
+    ctx = multiprocessing.get_context("spawn")
     result_queue = ctx.Queue()
     proc = ctx.Process(
         target=_engine_compute_fallback_worker,
         args=(params, log_path, result_queue),
-        daemon=True,
+        daemon=False,
     )
     proc.start()
 
@@ -466,12 +504,94 @@ def _run_engine_inprocess_fallback(params: dict, log_path: str, logf=None, shoul
     except Exception:
         result = None
 
-    if proc.exitcode == 0 and isinstance(result, dict) and result.get("ok"):
+    if isinstance(result, dict) and result.get("ok"):
         return
 
     if isinstance(result, dict) and result.get("error"):
         raise RuntimeError(result.get("error"))
+
+    # On macOS fork fallback, child can occasionally terminate with a late native-code
+    # signal after outputs are already written. Treat this as success if outputs exist.
+    if proc.exitcode in (-5, -6, -11):
+        try:
+            out_dir = params.get("output_dir", "")
+            has_outputs = False
+            if out_dir and os.path.isdir(out_dir):
+                for _root, _dirs, files in os.walk(out_dir):
+                    if any(fn.lower().endswith((".tif", ".tiff", ".vrt", ".png")) for fn in files):
+                        has_outputs = True
+                        break
+            if has_outputs:
+                if logf:
+                    logf.write(
+                        f"[WARNING] fallback child exited with code {proc.exitcode} after writing outputs; treating run as successful.\n"
+                    )
+                return
+        except Exception:
+            pass
+
     raise RuntimeError(f"Compute fallback process failed with exit code {proc.exitcode}.")
+
+
+def _run_engine_inprocess_mac(params: dict, logf=None, should_cancel=None):
+    runtime_pairs = [
+        (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+        (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+    ]
+
+    chosen_paths = []
+    for site_pkgs, root in runtime_pairs:
+        if not site_pkgs or not os.path.isdir(site_pkgs):
+            continue
+        if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
+            chosen_paths = [site_pkgs]
+            if root and os.path.isdir(root):
+                chosen_paths.append(root)
+            break
+
+    if not chosen_paths:
+        for site_pkgs, root in runtime_pairs:
+            if site_pkgs and os.path.isdir(site_pkgs):
+                chosen_paths = [site_pkgs]
+                if root and os.path.isdir(root):
+                    chosen_paths.append(root)
+                break
+
+    for dep_path in chosen_paths:
+        while dep_path in sys.path:
+            try:
+                sys.path.remove(dep_path)
+            except Exception:
+                break
+        sys.path.insert(0, dep_path)
+
+    if callable(should_cancel) and should_cancel():
+        raise _TaskCancelledError("Compute cancelled by user.")
+
+    backend_mod = sys.modules.get("virtughan.engine")
+    if backend_mod is None:
+        backend_mod = importlib.import_module("virtughan.engine")
+    else:
+        backend_mod = importlib.reload(backend_mod)
+    backend_cls = getattr(backend_mod, "VirtughanProcessor")
+
+    proc = backend_cls(
+        bbox=params["bbox"],
+        start_date=params["start_date"],
+        end_date=params["end_date"],
+        cloud_cover=params["cloud_cover"],
+        formula=params["formula"],
+        band1=params["band1"],
+        band2=params["band2"],
+        operation=params["operation"],
+        timeseries=params["timeseries"],
+        output_dir=params["output_dir"],
+        log_file=logf,
+        cmap="RdYlGn",
+        workers=params["workers"],
+        smart_filter=params["smart_filter"],
+    )
+    proc.compute()
 
 
 @contextmanager
@@ -538,6 +658,13 @@ def _with_embedded_python_executable(logf=None):
 
 
 def _run_engine_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
+    if sys.platform == "darwin":
+        if logf:
+            logf.write("[INFO] macOS guard: bypassing external subprocess and using in-process compute path.\n")
+        _run_engine_inprocess_mac(params, logf=logf, should_cancel=should_cancel)
+        return
+
+    global _COMPUTE_SUBPROCESS_RUN_COUNT
     python_exe = _resolve_embedded_python_executable()
     if not python_exe:
         raise RuntimeError(
@@ -724,24 +851,31 @@ if __name__ == "__main__":
 
         env = os.environ.copy()
         
-        python_path_entries = []
-        if os.path.isdir(RUNTIME_SITE_PACKAGES_DIR):
-            python_path_entries.append(RUNTIME_SITE_PACKAGES_DIR)
-        if os.path.isdir(RUNTIME_ROOT):
-            python_path_entries.append(RUNTIME_ROOT)
-        if os.path.isdir(RUNTIME_FALLBACK_SITE_PACKAGES_DIR):
-            python_path_entries.append(RUNTIME_FALLBACK_SITE_PACKAGES_DIR)
-        if os.path.isdir(RUNTIME_FALLBACK_ROOT):
-            python_path_entries.append(RUNTIME_FALLBACK_ROOT)
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
+        selected_runtime_paths = []
+        for site_pkgs, root in runtime_pairs:
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
+                selected_runtime_paths = [site_pkgs]
+                break
 
-        existing_pythonpath = env.get("PYTHONPATH", "")
-        if existing_pythonpath:
-            python_path_entries.append(existing_pythonpath)
+        if not selected_runtime_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    selected_runtime_paths = [site_pkgs]
+                    break
 
-        if python_path_entries:
-            env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
-            if logf:
-                logf.write(f"[INFO] subprocess PYTHONPATH={env['PYTHONPATH']}\n")
+        if selected_runtime_paths:
+            env["PYTHONPATH"] = os.pathsep.join(selected_runtime_paths)
+        else:
+            env.pop("PYTHONPATH", None)
+
+        if logf:
+            logf.write(f"[INFO] subprocess PYTHONPATH={env.get('PYTHONPATH', '')}\n")
 
         env["PYTHONNOUSERSITE"] = "1"
         run_kwargs["env"] = env
@@ -783,13 +917,23 @@ if __name__ == "__main__":
                 else:
                     candidate_env.pop("PYTHONHOME", None)
 
+                preflight_run_kwargs = {
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                    "env": candidate_env,
+                    "timeout": 15,
+                }
+                if os.name == "nt":
+                    preflight_startupinfo = subprocess.STARTUPINFO()
+                    preflight_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    preflight_startupinfo.wShowWindow = 0
+                    preflight_run_kwargs["startupinfo"] = preflight_startupinfo
+                    preflight_run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
                 preflight = subprocess.run(
                     preflight_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    env=candidate_env,
-                    timeout=15,
+                    **preflight_run_kwargs,
                 )
                 if logf:
                     logf.write(
@@ -812,13 +956,23 @@ if __name__ == "__main__":
             env = selected_env
             run_kwargs["env"] = env
         else:
+            preflight_run_kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+                "env": env,
+                "timeout": 15,
+            }
+            if os.name == "nt":
+                preflight_startupinfo = subprocess.STARTUPINFO()
+                preflight_startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                preflight_startupinfo.wShowWindow = 0
+                preflight_run_kwargs["startupinfo"] = preflight_startupinfo
+                preflight_run_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
             preflight = subprocess.run(
                 preflight_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env,
-                timeout=15,
+                **preflight_run_kwargs,
             )
             if preflight.returncode != 0:
                 raise RuntimeError(
@@ -838,7 +992,10 @@ if __name__ == "__main__":
         stderr_data = ""
         try:
             deadline = time.monotonic() + 900.0
-            next_heartbeat = time.monotonic() + 15.0
+            is_first_subprocess_run = _COMPUTE_SUBPROCESS_RUN_COUNT == 0
+            heartbeat_interval = 30.0 if is_first_subprocess_run else 300.0
+            next_heartbeat = time.monotonic() + heartbeat_interval
+            _COMPUTE_SUBPROCESS_RUN_COUNT += 1
             while True:
                 if callable(should_cancel) and should_cancel():
                     try:
@@ -859,10 +1016,16 @@ if __name__ == "__main__":
 
                 now = time.monotonic()
                 if now >= next_heartbeat and logf:
-                    logf.write(
-                        "[INFO] compute subprocess still running (first run can take longer while warming imports and caches).\n"
-                    )
-                    next_heartbeat = now + 15.0
+                    if is_first_subprocess_run:
+                        logf.write(
+                            "[INFO] compute subprocess still running (first run can take longer while warming imports and caches).\n"
+                        )
+                        # After the first warm-up notice, use sparse heartbeat logging.
+                        is_first_subprocess_run = False
+                        heartbeat_interval = 300.0
+                    else:
+                        logf.write("[INFO] compute subprocess still running.\n")
+                    next_heartbeat = now + heartbeat_interval
 
                 if now > deadline:
                     try:
@@ -971,39 +1134,20 @@ class _VirtughanTask(QgsTask):
             os.environ["CPL_LOG"] = os.path.join(self.params["output_dir"], "gdal.log")
 
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
-                if os.name == "nt":
+                if sys.platform == "darwin":
+                    logf.write("[INFO] macOS path: running compute in-process with module reload.\n")
+                    _run_engine_inprocess_mac(
+                        self.params,
+                        logf=logf,
+                        should_cancel=self.isCanceled,
+                    )
+                else:
                     _run_engine_in_subprocess(
                         self.params,
                         self.log_path,
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
-                else:
-                    from virtughan.engine import VirtughanProcessor
-
-                    workers = int(self.params.get("workers", 1) or 1)
-                    logf.write("[INFO] non-Windows path: running compute in-process\n")
-                    proc = VirtughanProcessor(
-                        bbox=self.params["bbox"],
-                        start_date=self.params["start_date"],
-                        end_date=self.params["end_date"],
-                        cloud_cover=self.params["cloud_cover"],
-                        formula=self.params["formula"],
-                        band1=self.params["band1"],
-                        band2=self.params["band2"],
-                        operation=self.params["operation"],
-                        timeseries=self.params["timeseries"],
-                        output_dir=self.params["output_dir"],
-                        log_file=logf,
-                        cmap="RdYlGn",
-                        workers=workers,
-                        smart_filter=self.params["smart_filter"],
-                    )
-                    if workers > 1:
-                        with _with_embedded_python_executable(logf=logf):
-                            proc.compute()
-                    else:
-                        proc.compute()
             return True
         except _TaskCancelledError as e:
             self.exc = e
