@@ -12,6 +12,7 @@ import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
+from contextlib import contextmanager
 
 from qgis.core import (
     Qgis,
@@ -209,73 +210,82 @@ def _run_extractor_inprocess_fallback(params: dict, log_path: str, logf=None, sh
 
 
 def _run_extractor_inprocess_mac(params: dict, logf=None, should_cancel=None):
-    runtime_pairs = [
-        (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
-        (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
-    ]
+    with _with_embedded_python_executable(logf=logf):
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
 
-    chosen_paths = []
-    for site_pkgs, root in runtime_pairs:
-        if not site_pkgs or not os.path.isdir(site_pkgs):
-            continue
-        if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
-            chosen_paths = [site_pkgs]
-            if root and os.path.isdir(root):
-                chosen_paths.append(root)
-            break
-
-    if not chosen_paths:
+        chosen_paths = []
         for site_pkgs, root in runtime_pairs:
-            if site_pkgs and os.path.isdir(site_pkgs):
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
                 chosen_paths = [site_pkgs]
                 if root and os.path.isdir(root):
                     chosen_paths.append(root)
                 break
 
-    for dep_path in chosen_paths:
-        while dep_path in sys.path:
-            try:
-                sys.path.remove(dep_path)
-            except Exception:
-                break
-        sys.path.insert(0, dep_path)
+        if not chosen_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    chosen_paths = [site_pkgs]
+                    if root and os.path.isdir(root):
+                        chosen_paths.append(root)
+                    break
 
-    if callable(should_cancel) and should_cancel():
-        raise _TaskCancelledError("Download cancelled by user.")
+        for dep_path in chosen_paths:
+            while dep_path in sys.path:
+                try:
+                    sys.path.remove(dep_path)
+                except Exception:
+                    break
+            sys.path.insert(0, dep_path)
 
-    backend_mod = sys.modules.get("virtughan.extract")
-    if backend_mod is None:
-        backend_mod = importlib.import_module("virtughan.extract")
-    else:
-        backend_mod = importlib.reload(backend_mod)
-    ExtractorBackend = getattr(backend_mod, "ExtractProcessor")
+        if callable(should_cancel) and should_cancel():
+            raise _TaskCancelledError("Download cancelled by user.")
 
-    import inspect
-    backend_args = {
-        "bbox": params["bbox"],
-        "start_date": params["start_date"],
-        "end_date": params["end_date"],
-        "cloud_cover": params["cloud_cover"],
-        "bands_list": params["bands_list"],
-        "output_dir": params["output_dir"],
-        "workers": int(params.get("workers", 1) or 1),
-        "zip_output": params.get("zip_output", False),
-        "smart_filter": params.get("smart_filter", True),
-        "log_file": logf,
-    }
-    if params.get("polygon_wgs84"):
-        backend_args["polygon_wgs84"] = params["polygon_wgs84"]
+        backend_mod = sys.modules.get("virtughan.extract")
+        if backend_mod is None:
+            backend_mod = importlib.import_module("virtughan.extract")
+        else:
+            backend_mod = importlib.reload(backend_mod)
+        ExtractorBackend = getattr(backend_mod, "ExtractProcessor")
 
-    sig = inspect.signature(ExtractorBackend.__init__)
-    accepts_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
-    if not accepts_kwargs:
-        allowed = {name for name in sig.parameters.keys() if name != "self"}
-        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
+        workers = int(params.get("workers", 1) or 1)
+        if workers > 1:
+            if logf:
+                logf.write(
+                    "[INFO] macOS in-process extractor: forcing workers=1 to avoid spawning extra QGIS windows.\n"
+                )
+            workers = 1
 
-    extr = ExtractorBackend(**backend_args)
-    extr.extract()
+        import inspect
+        backend_args = {
+            "bbox": params["bbox"],
+            "start_date": params["start_date"],
+            "end_date": params["end_date"],
+            "cloud_cover": params["cloud_cover"],
+            "bands_list": params["bands_list"],
+            "output_dir": params["output_dir"],
+            "workers": workers,
+            "zip_output": params.get("zip_output", False),
+            "smart_filter": params.get("smart_filter", True),
+            "log_file": logf,
+        }
+        if params.get("polygon_wgs84"):
+            backend_args["polygon_wgs84"] = params["polygon_wgs84"]
+
+        sig = inspect.signature(ExtractorBackend.__init__)
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if not accepts_kwargs:
+            allowed = {name for name in sig.parameters.keys() if name != "self"}
+            backend_args = {k: v for k, v in backend_args.items() if k in allowed}
+
+        extr = ExtractorBackend(**backend_args)
+        extr.extract()
 
 
 def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_cancel=None):
@@ -752,6 +762,42 @@ def _resolve_embedded_python_executable() -> str:
         return normalized
 
     return ""
+
+
+@contextmanager
+def _with_embedded_python_executable(logf=None):
+    original_executable = sys.executable
+    original_python_executable_env = os.environ.get("PYTHONEXECUTABLE")
+    embedded_python = _resolve_embedded_python_executable()
+    try:
+        if embedded_python and embedded_python != original_executable:
+            sys.executable = embedded_python
+            if logf:
+                logf.write(f"Using embedded Python executable: {embedded_python}\n")
+        elif logf:
+            logf.write("Embedded Python executable not resolved; keeping current sys.executable\n")
+
+        if embedded_python:
+            os.environ["PYTHONEXECUTABLE"] = embedded_python
+
+        try:
+            import multiprocessing as _mp
+            mp_set_executable = getattr(_mp, "set_executable", None)
+            if callable(mp_set_executable) and embedded_python:
+                mp_set_executable(embedded_python)
+                if logf:
+                    logf.write(f"Using multiprocessing executable: {embedded_python}\n")
+        except Exception as mp_exc:
+            if logf:
+                logf.write(f"Could not configure multiprocessing executable: {mp_exc}\n")
+
+        yield
+    finally:
+        if original_python_executable_env is None:
+            os.environ.pop("PYTHONEXECUTABLE", None)
+        else:
+            os.environ["PYTHONEXECUTABLE"] = original_python_executable_env
+        sys.executable = original_executable
 
 
 class _ExtractorTask(QgsTask):

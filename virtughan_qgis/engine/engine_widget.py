@@ -534,64 +534,73 @@ def _run_engine_inprocess_fallback(params: dict, log_path: str, logf=None, shoul
 
 
 def _run_engine_inprocess_mac(params: dict, logf=None, should_cancel=None):
-    runtime_pairs = [
-        (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
-        (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
-    ]
+    with _with_embedded_python_executable(logf=logf):
+        runtime_pairs = [
+            (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
+            (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
+        ]
 
-    chosen_paths = []
-    for site_pkgs, root in runtime_pairs:
-        if not site_pkgs or not os.path.isdir(site_pkgs):
-            continue
-        if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
-            chosen_paths = [site_pkgs]
-            if root and os.path.isdir(root):
-                chosen_paths.append(root)
-            break
-
-    if not chosen_paths:
+        chosen_paths = []
         for site_pkgs, root in runtime_pairs:
-            if site_pkgs and os.path.isdir(site_pkgs):
+            if not site_pkgs or not os.path.isdir(site_pkgs):
+                continue
+            if os.path.isdir(os.path.join(site_pkgs, "virtughan")):
                 chosen_paths = [site_pkgs]
                 if root and os.path.isdir(root):
                     chosen_paths.append(root)
                 break
 
-    for dep_path in chosen_paths:
-        while dep_path in sys.path:
-            try:
-                sys.path.remove(dep_path)
-            except Exception:
-                break
-        sys.path.insert(0, dep_path)
+        if not chosen_paths:
+            for site_pkgs, root in runtime_pairs:
+                if site_pkgs and os.path.isdir(site_pkgs):
+                    chosen_paths = [site_pkgs]
+                    if root and os.path.isdir(root):
+                        chosen_paths.append(root)
+                    break
 
-    if callable(should_cancel) and should_cancel():
-        raise _TaskCancelledError("Compute cancelled by user.")
+        for dep_path in chosen_paths:
+            while dep_path in sys.path:
+                try:
+                    sys.path.remove(dep_path)
+                except Exception:
+                    break
+            sys.path.insert(0, dep_path)
 
-    backend_mod = sys.modules.get("virtughan.engine")
-    if backend_mod is None:
-        backend_mod = importlib.import_module("virtughan.engine")
-    else:
-        backend_mod = importlib.reload(backend_mod)
-    backend_cls = getattr(backend_mod, "VirtughanProcessor")
+        if callable(should_cancel) and should_cancel():
+            raise _TaskCancelledError("Compute cancelled by user.")
 
-    proc = backend_cls(
-        bbox=params["bbox"],
-        start_date=params["start_date"],
-        end_date=params["end_date"],
-        cloud_cover=params["cloud_cover"],
-        formula=params["formula"],
-        band1=params["band1"],
-        band2=params["band2"],
-        operation=params["operation"],
-        timeseries=params["timeseries"],
-        output_dir=params["output_dir"],
-        log_file=logf,
-        cmap="RdYlGn",
-        workers=params["workers"],
-        smart_filter=params["smart_filter"],
-    )
-    proc.compute()
+        backend_mod = sys.modules.get("virtughan.engine")
+        if backend_mod is None:
+            backend_mod = importlib.import_module("virtughan.engine")
+        else:
+            backend_mod = importlib.reload(backend_mod)
+        backend_cls = getattr(backend_mod, "VirtughanProcessor")
+
+        workers = int(params.get("workers", 1) or 1)
+        if workers > 1:
+            if logf:
+                logf.write(
+                    "[INFO] macOS in-process compute: forcing workers=1 to avoid spawning extra QGIS windows.\n"
+                )
+            workers = 1
+
+        proc = backend_cls(
+            bbox=params["bbox"],
+            start_date=params["start_date"],
+            end_date=params["end_date"],
+            cloud_cover=params["cloud_cover"],
+            formula=params["formula"],
+            band1=params["band1"],
+            band2=params["band2"],
+            operation=params["operation"],
+            timeseries=params["timeseries"],
+            output_dir=params["output_dir"],
+            log_file=logf,
+            cmap="RdYlGn",
+            workers=workers,
+            smart_filter=params["smart_filter"],
+        )
+        proc.compute()
 
 
 @contextmanager
