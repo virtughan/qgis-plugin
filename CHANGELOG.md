@@ -1,4 +1,35 @@
 
+## v1.1.0 (2026-05-24)
+
+### Feat
+
+- **qgis-4-support**: adds full compatibility with QGIS 4.0.x (Qt6/PyQt6) while maintaining QGIS 3.22+ support
+- **qt-compat-layer**: introduces `qt_compat.py` module that resolves Qt5/Qt6 scoped enum differences automatically
+- **metadata-version-range**: declares `qgisMaximumVersion=4.99` for plugin store visibility on QGIS 4.x
+
+### Fix
+
+- **security-scan**: removes all bundled `.exe` files (pip entry points and distlib launchers) that blocked plugin store approval; pip is now bundled as a pure-Python `.whl` file
+- **tiler-formula-encoding**: fixes `SyntaxError` on QGIS 4.x tiler where the `+` operator in formulas was decoded as space by the XYZ tile fetcher; uses `__PLUS__` placeholder for safe URL transport
+- **compute-stuck-detection**: adds 3-minute inactivity timeout that auto-kills stuck compute subprocesses instead of hanging for 15 minutes; shows clear error message with troubleshooting steps
+- **compute-ssl-preflight**: adds pre-flight STAC API connectivity check before compute; auto-detects corporate proxy/SSL interception and applies `GDAL_HTTP_UNSAFESSL=YES` workaround
+- **compute-timeouts**: reduces GDAL HTTP timeout from 30s to 20s, max retries from 8 to 3, adds connection timeout (10s) and low-speed detection for faster failure on unreachable networks
+- **installer-dialog-qt6**: fixes installer dialog not appearing on QGIS 4.x due to removed `QDialog.exec_()` method in Qt6; uses compatible `exec` fallback
+- **installer-flag-logic**: installer dialog now always shows when `installed.flag` is missing (after uninstall), even if stale runtime packages exist from a previous session
+- **uninstall-flag-clear**: immediately clears install state flag during plugin unload when "uninstall dependencies" is enabled, ensuring next install shows the dialog
+- **cross-platform-python**: improves Python executable resolution for Linux (adds `/usr/bin/python3`, versioned interpreters) and macOS (Framework Python, Homebrew paths)
+- **cross-platform-rasterio**: removes `--only-binary rasterio` restriction on Linux/macOS to allow source builds when no pre-built wheel is available
+- **cross-platform-numpy**: accepts system numpy on Linux/macOS instead of requiring it from the runtime path; QGIS ships its own numpy on these platforms
+- **cross-platform-permissions**: adds Linux/macOS permission error markers (`Permission denied`, `EACCES`, `Operation not permitted`) to lock detection
+- **compute-layout**: restructures Compute tab Index Selection grid to reduce minimum width (Band1/Band2 on separate rows) for better fit on smaller displays and macOS
+- **hub-scroll**: disables horizontal scrollbar on page content and removes minimum width constraints so content fills available width on all platforms
+
+### Refactor
+
+- **vendor-deps**: replaces `pip install --target` with wheel-only bundling (`pip-26.0.1-py3-none-any.whl`) for zero-binary plugin packaging
+- **build-scripts**: simplifies build scripts to use active Python directly instead of `uv run` (avoids TLS issues on corporate networks)
+- **error-messages**: improves compute failure messages with specific guidance for stuck, timeout, network, and SVD convergence errors
+
 ## v1.0.12 (2026-04-02)
 
 ### Fix

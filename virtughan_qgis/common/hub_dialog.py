@@ -22,10 +22,14 @@ from ..bootstrap import (
     get_uninstall_on_plugin_uninstall,
     set_uninstall_on_plugin_uninstall,
 )
+from ..qt_compat import (
+    QtCompat, QMessageBoxCompat, QFrameCompat, QAbstractItemViewCompat,
+    QPainterCompat, QDockWidgetCompat, QStyleCompat, QSizePolicyCompat,
+)
 
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-NAV_BUSY_ROLE = Qt.UserRole + 77
+NAV_BUSY_ROLE = QtCompat.UserRole + 77
 
 
 class _NavBusyDelegate(QStyledItemDelegate):
@@ -36,7 +40,7 @@ class _NavBusyDelegate(QStyledItemDelegate):
             self._busy_icon = QIcon(icon_path)
         else:
             style = parent.style() if parent else QApplication.style()
-            self._busy_icon = style.standardIcon(QStyle.SP_BrowserReload)
+            self._busy_icon = style.standardIcon(QStyleCompat.SP_BrowserReload)
 
     def paint(self, painter, option, index):
         super().paint(painter, option, index)
@@ -49,7 +53,9 @@ class _NavBusyDelegate(QStyledItemDelegate):
         y = option.rect.y() + (option.rect.height() - size) // 2
         self._busy_icon.paint(painter, x, y, size, size)
 
-def load_icon(rel_path: str, fallback: QStyle.StandardPixmap = QStyle.SP_FileDialogListView) -> QIcon:
+def load_icon(rel_path: str, fallback=None) -> QIcon:
+    if fallback is None:
+        fallback = QStyleCompat.SP_FileDialogListView
 
     if rel_path.startswith(":/"):
         ic = QIcon(rel_path)
@@ -70,15 +76,15 @@ def load_icon(rel_path: str, fallback: QStyle.StandardPixmap = QStyle.SP_FileDia
 def make_tab_icon(kind: str, size: int = 18, color: QColor | None = None) -> QIcon:
     c = color or QColor(255, 255, 255)
     px = QPixmap(size, size)
-    px.fill(Qt.transparent)
+    px.fill(QtCompat.transparent)
 
     p = QPainter(px)
-    p.setRenderHint(QPainter.Antialiasing, False)
+    p.setRenderHint(QPainterCompat.Antialiasing, False)
 
     pen = QPen(c)
     pen.setWidth(1)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
+    pen.setCapStyle(QtCompat.RoundCap)
+    pen.setJoinStyle(QtCompat.RoundJoin)
     p.setPen(pen)
 
     k = (kind or "").lower().strip()
@@ -276,14 +282,14 @@ class VirtughanHubDialog(QDialog):
 
         self.nav = QListWidget()
         self.nav.setObjectName("virtNav")
-        self.nav.setSelectionMode(self.nav.SingleSelection)
+        self.nav.setSelectionMode(QAbstractItemViewCompat.SingleSelection)
         self.nav.setAlternatingRowColors(False)
         self.nav.setFixedWidth(150)
-        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.nav.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.nav.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.nav.setFocusPolicy(Qt.NoFocus)
-        self.nav.setFrameShape(QFrame.NoFrame)
+        self.nav.setHorizontalScrollBarPolicy(QtCompat.ScrollBarAlwaysOff)
+        self.nav.setVerticalScrollMode(QAbstractItemViewCompat.ScrollPerPixel)
+        self.nav.setSelectionBehavior(QAbstractItemViewCompat.SelectRows)
+        self.nav.setFocusPolicy(QtCompat.NoFocus)
+        self.nav.setFrameShape(QFrameCompat.NoFrame)
         self.nav.setIconSize(QSize(24, 24))
         self.nav.setSpacing(0)
         self.nav.setItemDelegate(_NavBusyDelegate(self.nav))
@@ -296,7 +302,7 @@ class VirtughanHubDialog(QDialog):
         self._help_is_minimized = False
         self.helpPane.setMinimumWidth(0)
         self.helpPane.setMaximumWidth(0)
-        self.helpPane.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.helpPane.setSizePolicy(QSizePolicyCompat.Preferred, QSizePolicyCompat.Expanding)
         help_layout = QVBoxLayout(self.helpPane)
         help_layout.setContentsMargins(6, 6, 6, 6)
         help_layout.setSpacing(4)
@@ -323,8 +329,8 @@ class VirtughanHubDialog(QDialog):
         self.helpText.setObjectName("virtHelpText")
         self.helpText.setOpenExternalLinks(True)
         self.helpText.setReadOnly(True)
-        self.helpText.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.helpText.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.helpText.setVerticalScrollBarPolicy(QtCompat.ScrollBarAsNeeded)
+        self.helpText.setHorizontalScrollBarPolicy(QtCompat.ScrollBarAsNeeded)
 
         help_layout.addLayout(top_row)
         help_layout.addWidget(self.helpText, 1)
@@ -344,33 +350,33 @@ class VirtughanHubDialog(QDialog):
         self._add_page(
             "Compute",
             EngineDockWidget(self.iface),
-            load_icon("static/images/icons/compute.svg", QStyle.SP_ComputerIcon),
+            load_icon("static/images/icons/compute.svg", QStyleCompat.SP_ComputerIcon),
             key="engine",
         )
         self._add_page(
             "Download",
             ExtractorDockWidget(self.iface),
-            load_icon("static/images/icons/download.svg", QStyle.SP_ArrowDown),
+            load_icon("static/images/icons/download.svg", QStyleCompat.SP_ArrowDown),
             key="extractor",
         )
         self._add_page(
             "Tiles",
             TilerDockWidget(self.iface),
-            load_icon("static/images/icons/tiles.svg", QStyle.SP_DirIcon),
+            load_icon("static/images/icons/tiles.svg", QStyleCompat.SP_DirIcon),
             key="tiler",
         )
         self._add_separator()
         self._add_page(
             "Search",
             GeocodingPlaceWidget(self.iface),
-            load_icon("static/images/icons/search.svg", QStyle.SP_FileDialogContentsView),
+            load_icon("static/images/icons/search.svg", QStyleCompat.SP_FileDialogContentsView),
             key="places",
         )
         self._results_widget = ResultsWidget(self.iface, self)
         self._add_page(
             "Results",
             self._results_widget,
-            load_icon("static/images/icons/results.svg", QStyle.SP_FileDialogDetailedView),
+            load_icon("static/images/icons/results.svg", QStyleCompat.SP_FileDialogDetailedView),
             key="results",
         )
         self._add_separator()
@@ -378,7 +384,7 @@ class VirtughanHubDialog(QDialog):
         self._add_page(
             "Dependencies",
             self._build_dependencies_page(),
-            load_icon("static/images/icons/dependencies.svg", QStyle.SP_FileDialogInfoView),
+            load_icon("static/images/icons/dependencies.svg", QStyleCompat.SP_FileDialogInfoView),
             key="dependencies",
         )
 
@@ -499,10 +505,10 @@ class VirtughanHubDialog(QDialog):
             self,
             "VirtuGhan",
             "This will check core runtime dependencies and repair only if needed.\n\nContinue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+            QMessageBoxCompat.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBoxCompat.Yes:
             return
 
         ok = interactive_install_dependencies(self, force_reinstall=False)
@@ -532,10 +538,10 @@ class VirtughanHubDialog(QDialog):
             self,
             "VirtuGhan",
             "This will force a clean reinstall: clear runtime dependencies, clear pip cache, and install again.\n\nContinue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+            QMessageBoxCompat.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBoxCompat.Yes:
             return
 
         cleaned = repair_runtime_dependencies(clear_pip_cache=True)
@@ -775,36 +781,19 @@ class VirtughanHubDialog(QDialog):
         # Strip dock chrome so it looks like a plain page
         if isinstance(content_widget, QDockWidget):
             dock = content_widget
-            dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
-            dock.setAllowedAreas(Qt.NoDockWidgetArea)
+            dock.setFeatures(QDockWidgetCompat.NoDockWidgetFeatures)
+            dock.setAllowedAreas(QtCompat.NoDockWidgetArea)
             dock.setTitleBarWidget(QWidget(dock))
             target_widget = dock
         else:
             target_widget = content_widget
 
-        # Keep a stable content size so shrinking the dialog produces scrollbars
-        # instead of squeezing form controls.
-        try:
-            if isinstance(content_widget, QDockWidget):
-                content = content_widget.widget()
-                if content is not None:
-                    content_min = content.sizeHint()
-                    content.setMinimumSize(content_min)
-                    content_widget.setMinimumSize(content_min)
-                else:
-                    content_widget.setMinimumSize(content_widget.sizeHint())
-            else:
-                target_widget.setMinimumSize(target_widget.sizeHint())
-        except Exception:
-            pass
-
         scroller = QScrollArea()
         scroller.setObjectName("virtPageScroller")
         scroller.setWidgetResizable(True)
-        scroller.setFrameShape(QFrame.NoFrame)
-        scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroller.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroller.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        scroller.setFrameShape(QFrameCompat.NoFrame)
+        scroller.setHorizontalScrollBarPolicy(QtCompat.ScrollBarAsNeeded)
+        scroller.setVerticalScrollBarPolicy(QtCompat.ScrollBarAsNeeded)
         scroller.setWidget(target_widget)
 
         # Wrap the dock in a plain QWidget page
@@ -826,12 +815,12 @@ class VirtughanHubDialog(QDialog):
 
     def _add_separator(self):
         top_space = QListWidgetItem("")
-        top_space.setFlags(Qt.NoItemFlags)
+        top_space.setFlags(QtCompat.NoItemFlags)
         top_space.setSizeHint(QSize(200, 10))
         self.nav.addItem(top_space)
 
         line = QListWidgetItem("")
-        line.setFlags(Qt.NoItemFlags)
+        line.setFlags(QtCompat.NoItemFlags)
         line.setSizeHint(QSize(200, 14))
         self.nav.addItem(line)
 
@@ -840,20 +829,20 @@ class VirtughanHubDialog(QDialog):
         line_layout.setContentsMargins(8, 5, 8, 5)
         line_layout.setSpacing(0)
         hline = QFrame()
-        hline.setFrameShape(QFrame.HLine)
-        hline.setFrameShadow(QFrame.Plain)
+        hline.setFrameShape(QFrameCompat.HLine)
+        hline.setFrameShadow(QFrameCompat.Plain)
         hline.setStyleSheet("color: #9aa0aa;")
         line_layout.addWidget(hline)
         self.nav.setItemWidget(line, line_widget)
 
         bottom_space = QListWidgetItem("")
-        bottom_space.setFlags(Qt.NoItemFlags)
+        bottom_space.setFlags(QtCompat.NoItemFlags)
         bottom_space.setSizeHint(QSize(200, 12))
         self.nav.addItem(bottom_space)
 
     def _add_dependencies_spacer(self):
         spacer = QListWidgetItem("")
-        spacer.setFlags(Qt.NoItemFlags)
+        spacer.setFlags(QtCompat.NoItemFlags)
         spacer.setSizeHint(QSize(200, 0))
         self.nav.addItem(spacer)
         self._dependencies_spacer_item = spacer

@@ -18,12 +18,14 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import QgsProject, QgsRasterLayer
 
+from ..qt_compat import QtCompat, QAbstractItemViewCompat
+
 
 class _ScaledImageLabel(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._image_path = None
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(QtCompat.AlignCenter)
         self.setMinimumHeight(220)
         self.setWordWrap(True)
 
@@ -46,7 +48,7 @@ class _ScaledImageLabel(QLabel):
             self.setText(f"Could not load image:\n{self._image_path}")
             self.setPixmap(QPixmap())
             return
-        shown = pix.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        shown = pix.scaled(self.size(), QtCompat.KeepAspectRatio, QtCompat.SmoothTransformation)
         self.setPixmap(shown)
         self.setToolTip(self._image_path)
 
@@ -94,7 +96,7 @@ class ResultsWidget(QWidget):
         self.info.setWordWrap(True)
         self.meta = QLabel("")
         self.meta.setWordWrap(True)
-        self.meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.meta.setTextInteractionFlags(QtCompat.TextSelectableByMouse)
 
         self.btn_toggle_details = QPushButton("Show Run Details")
         self.btn_toggle_details.setCheckable(True)
@@ -110,7 +112,7 @@ class ResultsWidget(QWidget):
         self.details_host.setVisible(False)
 
         self.history_list = QListWidget()
-        self.history_list.setSelectionMode(self.history_list.SingleSelection)
+        self.history_list.setSelectionMode(QAbstractItemViewCompat.SingleSelection)
         self.history_list.setMaximumHeight(120)
         self.history_list.currentRowChanged.connect(self._on_history_row_changed)
 
@@ -150,7 +152,7 @@ class ResultsWidget(QWidget):
         self.timeseries_image = _ScaledImageLabel()
         self.btn_play = QPushButton("Play")
         self.btn_pause = QPushButton("Pause")
-        self.slider = QSlider(Qt.Horizontal)
+        self.slider = QSlider(QtCompat.Horizontal)
         self.slider.setMinimum(0)
         self.slider.setMaximum(0)
         self.frame_label = QLabel("Frame: -")

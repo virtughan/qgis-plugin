@@ -8,6 +8,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsApplication, QgsMessageLog, Qgis
 
 from .common.map_setup import setup_default_map
+from .qt_compat import QtCompat, QMessageBoxCompat
 
 
 PLUGIN_DIR = os.path.dirname(__file__)
@@ -19,6 +20,7 @@ try:
         repair_runtime_dependencies,
         uninstall_runtime_dependencies,
         get_uninstall_on_plugin_uninstall,
+        clear_install_state,
     )
 except Exception:
     def get_last_bootstrap_error():
@@ -35,6 +37,9 @@ except Exception:
 
     def get_uninstall_on_plugin_uninstall():
         return False
+
+    def clear_install_state():
+        pass
 
 class VirtuGhanPlugin:
     def __init__(self, iface):
@@ -181,6 +186,14 @@ class VirtuGhanPlugin:
         except Exception:
             return
 
+        # Always clear the install state flag immediately so that if the runtime
+        # folder survives (locked files), the next install will still show the
+        # installer dialog rather than silently skipping it.
+        try:
+            clear_install_state()
+        except Exception:
+            pass
+
         iface = self.iface
 
         def _emit_info(msg: str):
@@ -299,7 +312,7 @@ class VirtuGhanPlugin:
             pass
         self._hub_dialog.finished.connect(self._on_hub_finished)
         self._hub_dialog.setModal(False)
-        self._hub_dialog.setAttribute(Qt.WA_DeleteOnClose, True)
+        self._hub_dialog.setAttribute(QtCompat.WA_DeleteOnClose, True)
         mw = self.iface.mainWindow() if self.iface else None
         if mw is not None and sys.platform != "darwin":
             try:
@@ -337,10 +350,10 @@ class VirtuGhanPlugin:
             self.iface.mainWindow(),
             "VirtuGhan",
             "This will clear plugin runtime dependencies and reinstall them.\n\nContinue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+            QMessageBoxCompat.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBoxCompat.Yes:
             return
 
         repaired = repair_runtime_dependencies(clear_pip_cache=True)

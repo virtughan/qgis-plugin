@@ -19,7 +19,7 @@ def ensure_vendored_dependencies(root: Path) -> None:
     """
     Validate that either:
     1. virtughan is pre-vendored (offline mode), OR
-    2. pip is bundled (for runtime installation)
+    2. pip wheel is bundled (for runtime installation)
     """
     plugin_root = root / PLUGIN_NAME
     
@@ -29,13 +29,14 @@ def ensure_vendored_dependencies(root: Path) -> None:
         plugin_root / "libs" / "virtughan",
     ]
     
-    # Check for bundled pip
-    pip_path = plugin_root / "vendor" / "pip"
+    # Check for bundled pip wheel
+    pip_dir = plugin_root / "vendor" / "pip"
+    pip_wheels = list(pip_dir.glob("pip-*.whl")) if pip_dir.is_dir() else []
     
     if any(path.is_dir() for path in prevendored):
         return
     
-    if pip_path.is_dir():
+    if pip_wheels:
         return
     
     # If neither exists, fail
@@ -43,11 +44,11 @@ def ensure_vendored_dependencies(root: Path) -> None:
         "Missing vendored dependencies.\n\n"
         "Either:\n"
         "  1. Pre-vendor virtughan: python vendor_deps.py --clean\n"
-        "  2. Or bundle pip: python vendor_deps.py --clean\n\n"
+        "  2. Or bundle pip wheel: python vendor_deps.py --clean\n\n"
         "Expected one of:\n"
         f"  - {prevendored[0]}\n"
         f"  - {prevendored[1]}\n"
-        f"  - {pip_path} (for runtime pip installation)"
+        f"  - {pip_dir}/pip-*.whl (pip wheel for runtime installation)"
     )
 
 

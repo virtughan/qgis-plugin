@@ -17,6 +17,8 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QObject, QTimer
 from qgis.PyQt.QtGui import QFont
 
+from .qt_compat import QtCompat
+
 
 class InstallProgress(QObject):
     """Signal emitter for installation progress."""
@@ -52,7 +54,7 @@ class FirstTimeInstallerDialog(QDialog):
         self.setModal(True)
 
         # Prevent closing while installing
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
+        self.setWindowFlags(self.windowFlags() & ~QtCompat.WindowCloseButtonHint)
 
         self._init_ui()
         self._setup_signals()
@@ -203,7 +205,9 @@ class FirstTimeInstallerDialog(QDialog):
         self.log_text.appendPlainText("")
         self.log_text.appendPlainText("Preparing setup... installation will start in 1 second.")
         QTimer.singleShot(1000, self._start_install)
-        result = self.exec_()
+        # exec_() is removed in Qt6; use exec() with fallback
+        _exec = getattr(self, 'exec', None) or getattr(self, 'exec_')
+        result = _exec()
         return self._success
 
     def _start_install(self):

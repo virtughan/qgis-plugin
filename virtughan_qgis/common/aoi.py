@@ -13,7 +13,6 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsRectangle,
-    QgsWkbTypes,
     QgsGeometry,
     QgsPointXY,
     QgsVectorLayer,
@@ -21,6 +20,8 @@ from qgis.core import (
     QgsField,
 )
 from qgis.gui import QgsMapCanvas, QgsMapTool, QgsRubberBand
+
+from ..qt_compat import QtCompat, get_polygon_geometry_type
 
 
 def rect_to_wgs84_bbox(rect: QgsRectangle, project: QgsProject) -> list[float]:
@@ -108,7 +109,7 @@ class AoiPolygonTool(QgsMapTool):
         self.canvas = canvas
         self.on_done = on_done
         self.points = []
-        self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self.rb = QgsRubberBand(canvas, get_polygon_geometry_type())
         self.rb.setWidth(1)
         # Use provided colors or default blue
         stroke = stroke_color or QColor(0, 102, 255, 200)
@@ -123,9 +124,9 @@ class AoiPolygonTool(QgsMapTool):
                 pass
 
     def canvasPressEvent(self, e):
-        if e.button() == Qt.LeftButton:
+        if e.button() == QtCompat.LeftButton:
             self.points.append(self.toMapCoordinates(e.pos()))
-        elif e.button() == Qt.RightButton:
+        elif e.button() == QtCompat.RightButton:
             self._finish()
 
     def canvasMoveEvent(self, e):
@@ -139,9 +140,9 @@ class AoiPolygonTool(QgsMapTool):
         self._finish()
 
     def keyPressEvent(self, e):
-        if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if e.key() in (QtCompat.Key_Return, QtCompat.Key_Enter):
             self._finish()
-        elif e.key() == Qt.Key_Escape:
+        elif e.key() == QtCompat.Key_Escape:
             self._cleanup()
             self.on_done(None)
 
@@ -155,7 +156,7 @@ class AoiPolygonTool(QgsMapTool):
 
     def _cleanup(self):
         try:
-            self.rb.reset(QgsWkbTypes.PolygonGeometry)
+            self.rb.reset(get_polygon_geometry_type())
         except Exception:
             pass
         self.points.clear()
@@ -172,7 +173,7 @@ class AoiRectTool(QgsMapTool):
         self.canvas = canvas
         self.on_done = on_done
         self.start_pt = None
-        self.rb = QgsRubberBand(canvas, QgsWkbTypes.PolygonGeometry)
+        self.rb = QgsRubberBand(canvas, get_polygon_geometry_type())
         self.rb.setWidth(1)
         # Use provided colors or default blue
         stroke = stroke_color or QColor(0, 102, 255, 200)
@@ -187,7 +188,7 @@ class AoiRectTool(QgsMapTool):
                 pass
 
     def canvasPressEvent(self, e):
-        if e.button() == Qt.LeftButton:
+        if e.button() == QtCompat.LeftButton:
             self.start_pt = self.toMapCoordinates(e.pos())
 
     def canvasMoveEvent(self, e):
@@ -207,7 +208,7 @@ class AoiRectTool(QgsMapTool):
         self.rb.setToGeometry(QgsGeometry.fromPolygonXY([ring]), None)
 
     def canvasReleaseEvent(self, e):
-        if e.button() == Qt.LeftButton and self.start_pt is not None:
+        if e.button() == QtCompat.LeftButton and self.start_pt is not None:
             cur = self.toMapCoordinates(e.pos())
             xmin = min(self.start_pt.x(), cur.x()); xmax = max(self.start_pt.x(), cur.x())
             ymin = min(self.start_pt.y(), cur.y()); ymax = max(self.start_pt.y(), cur.y())
@@ -215,12 +216,12 @@ class AoiRectTool(QgsMapTool):
             self._finish(None if rect.isEmpty() else rect)
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Escape:
+        if e.key() == QtCompat.Key_Escape:
             self._finish(None)
 
     def _finish(self, rect: QgsRectangle | None):
         try:
-            self.rb.reset(QgsWkbTypes.PolygonGeometry)
+            self.rb.reset(get_polygon_geometry_type())
         except Exception:
             pass
         try:

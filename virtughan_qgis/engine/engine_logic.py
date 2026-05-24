@@ -11,6 +11,7 @@ from qgis.core import (
 )
 
 from ..bootstrap import activate_runtime_paths
+from ..qt_compat import QtCompat
 
 activate_runtime_paths()
 
@@ -35,7 +36,7 @@ def _coerce_to_qdate(val) -> QDate:
     s = "" if val is None else str(val).strip()
     if not s:
         return QDate()
-    return QDate.fromString(s, Qt.ISODate)
+    return QDate.fromString(s, QtCompat.ISODate)
 
 
 def _extent_to_wgs84_bbox(extent, src_crs):

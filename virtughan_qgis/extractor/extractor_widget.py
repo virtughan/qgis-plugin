@@ -73,8 +73,11 @@ from ..bootstrap import (
 
 activate_runtime_paths()
 
+from ..qt_compat import QtCompat
+
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
+_EXTRACTOR_SUBPROCESS_DISABLED = False  # Set True after subprocess fails; use in-process for rest of session
 try:
     from ..common.common_widget import CommonParamsWidget
 except Exception as _e:
@@ -400,7 +403,33 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
         }
 
         env = os.environ.copy()
-        
+
+        # Fix PROJ conflict: PostgreSQL/PostGIS ships an older proj.db that
+        # breaks rasterio CRS operations. Explicitly set PROJ paths to QGIS's
+        # PROJ and remove PostgreSQL directories from PATH.
+        prefix = QgsApplication.prefixPath() or ""
+        proj_candidates = [
+            os.path.join(prefix, "share", "proj"),
+            os.path.normpath(os.path.join(prefix, "..", "share", "proj")),
+            os.path.normpath(os.path.join(prefix, "..", "..", "share", "proj")),
+        ]
+        for proj_path in proj_candidates:
+            if os.path.isfile(os.path.join(proj_path, "proj.db")):
+                env["PROJ_LIB"] = proj_path
+                env["PROJ_DATA"] = proj_path
+                if logf:
+                    logf.write(f"[INFO] subprocess PROJ_LIB={proj_path}\n")
+                break
+
+        # Remove PostgreSQL/PostGIS paths from PATH to prevent DLL/proj.db conflicts
+        if os.name == "nt":
+            path_dirs = env.get("PATH", "").split(os.pathsep)
+            clean_path = [
+                d for d in path_dirs
+                if "postgresql" not in d.lower() and "postgis" not in d.lower()
+            ]
+            env["PATH"] = os.pathsep.join(clean_path)
+
         runtime_pairs = [
             (RUNTIME_SITE_PACKAGES_DIR, RUNTIME_ROOT),
             (RUNTIME_FALLBACK_SITE_PACKAGES_DIR, RUNTIME_FALLBACK_ROOT),
@@ -542,6 +571,12 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
         stdout_data = ""
         stderr_data = ""
         try:
+            # Track log file activity to detect stuck subprocess
+            last_log_size = 0
+            last_log_activity = time.monotonic()
+            stuck_timeout = 90.0  # 90 seconds without log activity = stuck
+            deadline = time.monotonic() + 600.0  # 10 minutes max
+
             while True:
                 if callable(should_cancel) and should_cancel():
                     try:
@@ -559,6 +594,59 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
 
                 if proc.poll() is not None:
                     break
+
+                now = time.monotonic()
+
+                # Check if log file is still being written to
+                try:
+                    current_log_size = os.path.getsize(log_path) if os.path.exists(log_path) else 0
+                    if current_log_size > last_log_size:
+                        last_log_size = current_log_size
+                        last_log_activity = now
+                except Exception:
+                    pass
+
+                # Detect stuck subprocess
+                if (now - last_log_activity) > stuck_timeout:
+                    if logf:
+                        logf.write(
+                            f"[ERROR] Extractor subprocess appears stuck — no log activity for "
+                            f"{int(stuck_timeout)}s. Killing subprocess.\n"
+                        )
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    raise RuntimeError(
+                        "Extractor subprocess appears stuck (no progress for 90 seconds).\n\n"
+                        "Falling back to in-process execution."
+                    )
+
+                if now > deadline:
+                    if logf:
+                        logf.write("[ERROR] Extractor subprocess timed out after 10 minutes.\n")
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                    raise RuntimeError(
+                        "Extractor subprocess timed out after 10 minutes."
+                    )
+
                 time.sleep(0.2)
 
             stdout_data, stderr_data = proc.communicate(timeout=5)
@@ -817,6 +905,7 @@ class _ExtractorTask(QgsTask):
         return super().cancel()
 
     def run(self):
+        global _EXTRACTOR_SUBPROCESS_DISABLED
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
@@ -840,13 +929,43 @@ class _ExtractorTask(QgsTask):
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
-                else:
-                    _run_extractor_in_subprocess(
-                        self.params,
-                        self.log_path,
+                elif _EXTRACTOR_SUBPROCESS_DISABLED:
+                    logf.write("[INFO] Subprocess previously failed; using in-process extractor (workers=1).\n")
+                    fallback_params = dict(self.params)
+                    fallback_params["workers"] = 1
+                    _run_extractor_inprocess_mac(
+                        fallback_params,
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
+                else:
+                    try:
+                        _run_extractor_in_subprocess(
+                            self.params,
+                            self.log_path,
+                            logf=logf,
+                            should_cancel=self.isCanceled,
+                        )
+                    except RuntimeError as sub_err:
+                        err_msg = str(sub_err)
+                        is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
+                        is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
+                        if is_stuck or is_env_issue:
+                            _EXTRACTOR_SUBPROCESS_DISABLED = True
+                            logf.write(
+                                f"\n[WARNING] Subprocess failed: {err_msg}\n"
+                                "[INFO] Retrying extractor in-process (single-threaded fallback)...\n"
+                                "[INFO] Subprocess disabled for this session; future runs will use in-process directly.\n"
+                            )
+                            fallback_params = dict(self.params)
+                            fallback_params["workers"] = 1
+                            _run_extractor_inprocess_mac(
+                                fallback_params,
+                                logf=logf,
+                                should_cancel=self.isCanceled,
+                            )
+                        else:
+                            raise
             return True
         except _TaskCancelledError as e:
             self.exc = e
@@ -914,6 +1033,9 @@ class _UiLogTailer:
                     # tqdm writes progress updates with carriage returns; normalize to line breaks for UI logs.
                     normalized = chunk.replace("\r\n", "\n").replace("\r", "\n")
                     self._widget.appendPlainText(normalized.rstrip("\n"))
+                    # Auto-scroll to bottom to show latest log
+                    sb = self._widget.verticalScrollBar()
+                    sb.setValue(sb.maximum())
                     self._pos = f.tell()
                     self._last_growth_monotonic = time.monotonic()
                     self._stalled_notified = False
@@ -987,7 +1109,7 @@ class ExtractorDockWidget(QDockWidget):
 
         self.aoiStartDrawButton.clicked.connect(self._aoi_action_clicked)
         self.aoiClearButton.clicked.connect(self._clear_aoi)
-        self.aoiModeCombo.currentTextChanged.connect(self._aoi_mode_changed)
+        self.aoiModeCombo.activated.connect(lambda idx: self._aoi_mode_changed(self.aoiModeCombo.itemText(idx)))
 
         self.outputBrowseButton.clicked.connect(self._browse_output)
         self.resetButton.clicked.connect(self._reset_form)
@@ -1035,8 +1157,8 @@ class ExtractorDockWidget(QDockWidget):
             logo_label = QLabel(self.ui_root)
             logo_label.setObjectName("virtughanHeaderLogo")
             logo_label.setFixedSize(24, 24)
-            logo_label.setAlignment(Qt.AlignCenter)
-            logo_label.setPixmap(px.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo_label.setAlignment(QtCompat.AlignCenter)
+            logo_label.setPixmap(px.scaled(24, 24, QtCompat.KeepAspectRatio, QtCompat.SmoothTransformation))
 
             idx = header_layout.indexOf(title_label)
             header_layout.insertWidget(max(0, idx), logo_label)
@@ -1124,18 +1246,19 @@ class ExtractorDockWidget(QDockWidget):
             self.aoiClearButton.setVisible(False)
             return
 
-        self.aoiStartDrawButton.setVisible(True)
+        # Clear previous AOI before applying new mode
+        self._clear_aoi()
+
+        # Hide the action button — action is triggered directly from dropdown
+        self.aoiStartDrawButton.setVisible(False)
         self.aoiClearButton.setVisible(True)
 
         if "extent" in t:
-            self.aoiStartDrawButton.setText("Use Canvas Extent")
-            self.aoiStartDrawButton.setToolTip("Capture current map canvas extent")
+            self._use_canvas_extent()
         elif "rectangle" in t:
-            self.aoiStartDrawButton.setText("Draw Rectangle")
-            self.aoiStartDrawButton.setToolTip("Press, drag, release to draw a rectangle")
+            self._start_draw_rectangle()
         else:
-            self.aoiStartDrawButton.setText("Draw Polygon")
-            self.aoiStartDrawButton.setToolTip("Left-click to add vertices; right-click/Enter/double-click to finish")
+            self._start_draw_polygon()
 
     def _aoi_action_clicked(self):
         mode = (self.aoiModeCombo.currentText() or "").lower()
@@ -1181,7 +1304,7 @@ class ExtractorDockWidget(QDockWidget):
             except Exception:
                 canvas.setMapTool(None)
             # Restore cursor and message bar
-            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            canvas.setCursor(QCursor(QtCompat.ArrowCursor))
             self.iface.messageBar().clearWidgets()
             
             if not rect or rect.isEmpty():
@@ -1197,7 +1320,7 @@ class ExtractorDockWidget(QDockWidget):
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
-        canvas.setCursor(QCursor(Qt.CrossCursor))
+        canvas.setCursor(QCursor(QtCompat.CrossCursor))
         self.iface.messageBar().pushInfo(
             "VirtuGhan",
             "Click and drag on the map to draw a rectangle"
@@ -1223,7 +1346,7 @@ class ExtractorDockWidget(QDockWidget):
             except Exception:
                 canvas.setMapTool(None)
             # Restore cursor and message bar
-            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            canvas.setCursor(QCursor(QtCompat.ArrowCursor))
             self.iface.messageBar().clearWidgets()
             
             if geom_map is None or geom_map.isEmpty():
@@ -1239,7 +1362,7 @@ class ExtractorDockWidget(QDockWidget):
         self._drawing_tool = tool  # Keep reference for cleanup
         canvas.setMapTool(tool)
         # Show message and change cursor
-        canvas.setCursor(QCursor(Qt.CrossCursor))
+        canvas.setCursor(QCursor(QtCompat.CrossCursor))
         self.iface.messageBar().pushInfo(
             "VirtuGhan",
             "Left-click to add points, right-click or double-click to finish"
@@ -1278,7 +1401,7 @@ class ExtractorDockWidget(QDockWidget):
             # Restore previous map tool
             if self._prev_tool:
                 canvas.setMapTool(self._prev_tool)
-            canvas.setCursor(QCursor(Qt.ArrowCursor))
+            canvas.setCursor(QCursor(QtCompat.ArrowCursor))
             self.iface.messageBar().clearWidgets()
         
         self._drawing_tool = None  # Clear reference
@@ -1514,17 +1637,20 @@ class ExtractorDockWidget(QDockWidget):
 
     def _focus_log_section(self):
         try:
-            self.logText.setFocus(Qt.OtherFocusReason)
+            self.logText.setFocus(QtCompat.OtherFocusReason)
             sb = self.logText.verticalScrollBar()
             sb.setValue(sb.maximum())
         except Exception:
             pass
 
+        # Scroll the outer page scroll area to the bottom so the log is visible
         try:
             parent = self.logText.parentWidget()
             while parent is not None:
                 if isinstance(parent, QScrollArea):
-                    parent.ensureWidgetVisible(self.logText, 0, 24)
+                    vsb = parent.verticalScrollBar()
+                    if vsb:
+                        vsb.setValue(vsb.maximum())
                     break
                 parent = parent.parentWidget()
         except Exception:
@@ -1860,7 +1986,8 @@ class ExtractorDockWidget(QDockWidget):
                 aoi_fill_color=self._aoi_fill_color,
                 aoi_stroke_color=self._aoi_stroke_color,
             )
-            dlg.exec_()
+            _exec = getattr(dlg, 'exec', None) or getattr(dlg, 'exec_')
+            _exec()
 
             selected_scenes = dlg.selected_scenes()
             self._selected_preview_scenes = selected_scenes
@@ -1934,7 +2061,7 @@ class ExtractorDockWidget(QDockWidget):
                 active_tool = canvas.mapTool()
                 if isinstance(active_tool, (AoiRectTool, AoiPolygonTool)):
                     canvas.setMapTool(None)
-                canvas.setCursor(QCursor(Qt.ArrowCursor))
+                canvas.setCursor(QCursor(QtCompat.ArrowCursor))
             self.iface.messageBar().clearWidgets()
         except Exception:
             pass

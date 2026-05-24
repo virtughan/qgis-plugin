@@ -6,7 +6,6 @@ import threading
 import importlib
 import logging
 import json
-import urllib.request
 from collections import deque
 
 from qgis.PyQt import uic
@@ -23,8 +22,10 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QSizePolicy,
 )
-from qgis.core import QgsMessageLog, Qgis, QgsProject
+from qgis.core import QgsMessageLog, Qgis, QgsProject, QgsBlockingNetworkRequest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform
+from qgis.PyQt.QtCore import QUrl
+from qgis.PyQt.QtNetwork import QNetworkRequest
 
 from .tiler_logic import TilerLogic
 from ..bootstrap import (
@@ -36,6 +37,8 @@ from ..bootstrap import (
 )
 
 activate_runtime_paths()
+
+from ..qt_compat import QtCompat, QSizePolicyCompat
 
 CommonParamsWidget = None
 try:
@@ -318,8 +321,8 @@ class TilerWidget(QWidget, FORM_CLASS):
             logo_label = QLabel(self)
             logo_label.setObjectName("virtughanHeaderLogo")
             logo_label.setFixedSize(24, 24)
-            logo_label.setAlignment(Qt.AlignCenter)
-            logo_label.setPixmap(px.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo_label.setAlignment(QtCompat.AlignCenter)
+            logo_label.setPixmap(px.scaled(24, 24, QtCompat.KeepAspectRatio, QtCompat.SmoothTransformation))
 
             idx = header_layout.indexOf(title_label)
             header_layout.insertWidget(max(0, idx), logo_label)
@@ -336,6 +339,9 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             if hasattr(self, "_tilerLogText") and self._tilerLogText is not None:
                 self._tilerLogText.appendPlainText(msg)
+                # Auto-scroll to bottom to show latest log
+                sb = self._tilerLogText.verticalScrollBar()
+                sb.setValue(sb.maximum())
         except Exception:
             pass
 
@@ -351,7 +357,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._tilerLogText.setReadOnly(True)
         self._tilerLogText.setMinimumHeight(72)
         self._tilerLogText.setMaximumHeight(120)
-        self._tilerLogText.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._tilerLogText.setSizePolicy(QSizePolicyCompat.Expanding, QSizePolicyCompat.Preferred)
 
         clear_btn = QPushButton("Clear Log")
         clear_btn.clicked.connect(self._clear_tiler_log)
@@ -374,7 +380,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             pass
 
         try:
-            self.groupBoxLocal.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            self.groupBoxLocal.setSizePolicy(QSizePolicyCompat.Expanding, QSizePolicyCompat.Fixed)
         except Exception:
             pass
         self._rebalance_vertical_layout()
@@ -434,10 +440,15 @@ class TilerWidget(QWidget, FORM_CLASS):
         return f"{base}{path}"
 
     def _http_json_get(self, url: str, timeout: float = 0.6):
-        req = urllib.request.Request(url=url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read().decode("utf-8", errors="replace")
-            return json.loads(data)
+        request = QNetworkRequest(QUrl(url))
+        blocking = QgsBlockingNetworkRequest()
+        blocking.setAuthCfg("")  # no auth needed for localhost
+        err = blocking.get(request)
+        if err != QgsBlockingNetworkRequest.NoError:
+            raise RuntimeError(blocking.errorMessage())
+        reply = blocking.reply()
+        data = bytes(reply.content()).decode("utf-8", errors="replace")
+        return json.loads(data)
 
     def _on_canvas_view_changed(self, motion_kind: str = "pan"):
         if not self._has_active_tiler_layer():

@@ -1,8 +1,9 @@
 import json
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
-from qgis.PyQt.QtCore import Qt, QTimer
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl, QByteArray
+from qgis.PyQt.QtNetwork import QNetworkRequest
+from qgis.core import QgsNetworkAccessManager, QgsBlockingNetworkRequest
 from qgis.PyQt.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -94,12 +95,17 @@ class GeocodingPlaceWidget(QWidget):
                 "addressdetails": 1,
             }
             url = f"https://nominatim.openstreetmap.org/search?{urlencode(params)}"
-            req = Request(
-                url,
-                headers={"User-Agent": "VirtuGhan-QGIS-Plugin/1.0 (https://virtughan.com)"},
+            request = QNetworkRequest(QUrl(url))
+            request.setRawHeader(
+                QByteArray(b"User-Agent"),
+                QByteArray(b"VirtuGhan-QGIS-Plugin/1.0 (https://virtughan.com)"),
             )
-            with urlopen(req, timeout=15) as response:
-                payload = response.read().decode("utf-8")
+            blocking = QgsBlockingNetworkRequest()
+            err = blocking.get(request)
+            if err != QgsBlockingNetworkRequest.NoError:
+                raise RuntimeError(blocking.errorMessage())
+            reply = blocking.reply()
+            payload = bytes(reply.content()).decode("utf-8")
             items = json.loads(payload)
         except Exception as exc:
             self.status_label.setText(f"Search failed: {exc}")

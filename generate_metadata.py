@@ -18,6 +18,7 @@ description={qgis_config.get("description", project["description"])}
 about={qgis_config.get("about", project["description"])}
 version={project["version"]}
 qgisMinimumVersion={qgis_config.get("qgis_minimum_version", "3.22")}
+qgisMaximumVersion={qgis_config.get("qgis_maximum_version", "4.99")}
 author={"; ".join([author.get("name", "") for author in project.get("authors", [])])}
 email={project.get("authors", [{}])[0].get("email", "")}
 category={qgis_config.get("category", "Analysis")}

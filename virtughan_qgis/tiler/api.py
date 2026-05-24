@@ -1032,6 +1032,8 @@ def _refresh_parsedpath_guards() -> None:
 
 
 async def _generate_tile_uncached(**kwargs):
+    if "formula" in kwargs:
+        kwargs["formula"] = _sanitize_formula(kwargs["formula"])
     raw_func = getattr(processor.cached_generate_tile, "__wrapped__", None)
     if raw_func is not None:
         return await raw_func(processor, **kwargs)
@@ -1131,6 +1133,8 @@ async def _handle_unhandled_exception(request: Request, exc: Exception):
 
 async def _generate_tile_with_cache_fallback(**kwargs):
     """Generate tile cache-first, with uncached fallback only for recursion issues."""
+    if "formula" in kwargs:
+        kwargs["formula"] = _sanitize_formula(kwargs["formula"])
     raw_func = getattr(processor.cached_generate_tile, "__wrapped__", None)
     try:
         return await processor.cached_generate_tile(**kwargs)
@@ -1313,6 +1317,33 @@ async def diag_runtime():
     }
 
 
+def _sanitize_formula(formula: str) -> str:
+    """
+    Normalize formula string for safe eval() in the virtughan backend.
+
+    Fixes issues where:
+    - QGIS XYZ tile fetcher decodes %2B as space (losing the + operator)
+    - __PLUS__ placeholder is used to safely transport + through URLs
+    - Extra whitespace causes issues
+    """
+    if not formula:
+        return "band1"
+
+    f = formula.strip()
+
+    # Decode __PLUS__ placeholder back to +
+    f = f.replace("__PLUS__", "+")
+
+    # Collapse multiple spaces to single space
+    f = " ".join(f.split())
+
+    # Remove spaces around operators for clean eval
+    f = re.sub(r'\s*([+\-*/()])\s*', r'\1', f)
+
+    f = f.strip()
+    return f if f else "band1"
+
+
 @app.get("/tile/{z}/{x}/{y}")
 async def get_tile(
     request: Request,
@@ -1333,7 +1364,10 @@ async def get_tile(
     # Keep compatibility patches current in long-lived QGIS sessions.
     _patch_rasterio_parsed_path_compat()
 
-    
+    # Sanitize formula: strip whitespace and normalize to avoid SyntaxError in
+    # Python 3.13+ when the backend uses compile()/eval() on the formula string.
+    formula = _sanitize_formula(formula)
+
     if z < 10 or z > 23:
         return JSONResponse(content={"error": "Zoom level must be between 10 and 23"}, status_code=400)
 

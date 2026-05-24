@@ -15,6 +15,7 @@ from .dependency_versions import (
     RASTERIO_VERSION,
     runtime_package_specs,
 )
+from .qt_compat import QMessageBoxCompat
 
 PKG_NAME = "virtughan"
 DEFAULT_PACKAGES = runtime_package_specs()
@@ -261,6 +262,10 @@ def _is_runtime_lock_failure(message: str) -> bool:
         "permissionerror",
         "being used by another process",
         "still exists after delete attempt",
+        "permission denied",
+        "errno 13",
+        "eacces",
+        "operation not permitted",
     ]
     return any(marker in text for marker in markers)
 
@@ -630,16 +635,33 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
         return False
 
     numpy_origin = getattr(numpy_spec, "origin", "") or ""
+    # On Linux/macOS, numpy may come from the system QGIS Python environment
+    # rather than our runtime directory. This is acceptable as long as it works.
     if not _is_path_loaded_from_runtime(numpy_origin):
-        details = (
-            "numpy was discovered from a non-runtime path: "
-            f"{numpy_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
-        )
-        _set_last_error(details)
-        _log(details, Qgis.Warning)
-        return False
+        if sys.platform == "win32":
+            details = (
+                "numpy was discovered from a non-runtime path: "
+                f"{numpy_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+            )
+            _set_last_error(details)
+            _log(details, Qgis.Warning)
+            return False
+        else:
+            # On Linux/macOS, accept system numpy as valid
+            _log(
+                f"numpy loaded from system path ({numpy_origin}); "
+                "accepted on non-Windows platform.",
+                Qgis.Info,
+            )
 
     numpy_version = _get_installed_distribution_version("numpy", None)
+    if not numpy_version:
+        # Try importing numpy directly to get version
+        try:
+            import numpy
+            numpy_version = getattr(numpy, "__version__", "")
+        except Exception:
+            pass
     if not numpy_version:
         details = "numpy version could not be determined"
         _set_last_error(details)
@@ -718,10 +740,10 @@ def ensure_runtime_network_ready(parent=None) -> bool:
         "VirtuGhan",
         "Runtime TLS certificates are missing or broken, so online data requests will fail.\n\n"
         "Do you want to repair dependencies now?",
-        QMessageBox.Yes | QMessageBox.No,
-        QMessageBox.Yes,
+        QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+        QMessageBoxCompat.Yes,
     )
-    if reply != QMessageBox.Yes:
+    if reply != QMessageBoxCompat.Yes:
         return False
 
     repaired = repair_runtime_dependencies()
@@ -810,7 +832,8 @@ def _show_manual_install_dialog(parent):
         layout.addWidget(ok_button)
 
         dialog.setLayout(layout)
-        dialog.exec_()
+        _exec = getattr(dialog, 'exec', None) or getattr(dialog, 'exec_')
+        _exec()
     except Exception as exc:
         _log(f"Error showing manual install dialog: {exc}", Qgis.Warning)
 
@@ -997,16 +1020,20 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
     # For repair action, force_reinstall=True bypasses this shortcut.
     _activate_vendor_paths()
     if not force_reinstall:
-        deps_ok = check_dependencies()
-        imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
-        if deps_ok and imports_ok:
-            _log("Dependencies already properly installed, skipping installer dialog")
-            mark_as_installed()
-            return True
-        if deps_ok and not imports_ok and import_err:
-            _set_last_error(import_err)
-            _log(import_err, Qgis.Warning)
-            return False
+        # If the install state flag is missing, always show the installer
+        # (even if deps happen to exist from a previous session).
+        if not is_already_installed():
+            _log("No install state flag found; will show installer dialog.", Qgis.Info)
+        else:
+            deps_ok = check_dependencies()
+            imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
+            if deps_ok and imports_ok:
+                _log("Dependencies already properly installed, skipping installer dialog")
+                return True
+            if deps_ok and not imports_ok and import_err:
+                _set_last_error(import_err)
+                _log(import_err, Qgis.Warning)
+                return False
     else:
         _log("Force reinstall requested: bypassing healthy-dependencies shortcut", Qgis.Info)
 

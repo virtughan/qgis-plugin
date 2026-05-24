@@ -26,6 +26,8 @@ from qgis.core import (
 )
 from qgis.gui import QgsMapCanvas, QgsMapToolIdentifyFeature
 
+from ..qt_compat import QtCompat, QTableWidgetCompat, QDialogButtonBoxCompat
+
 
 class ScenePreviewDialog(QDialog):
     def __init__(
@@ -65,7 +67,7 @@ class ScenePreviewDialog(QDialog):
         controls_row.addStretch(1)
         root.addLayout(controls_row)
 
-        top_split = QSplitter(Qt.Horizontal, self)
+        top_split = QSplitter(QtCompat.Horizontal, self)
         root.addWidget(top_split, 2)
 
         table_host = QWidget(top_split)
@@ -77,8 +79,8 @@ class ScenePreviewDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Scene ID", "Datetime", "Cloud %"])
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.MultiSelection)
+        self.table.setSelectionBehavior(QTableWidgetCompat.SelectRows)
+        self.table.setSelectionMode(QTableWidgetCompat.MultiSelection)
         self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         table_layout.addWidget(self.table)
 
@@ -90,11 +92,11 @@ class ScenePreviewDialog(QDialog):
         top_split.setStretchFactor(1, 2)
 
         self.canvas = QgsMapCanvas(self)
-        self.canvas.setCanvasColor(Qt.white)
+        self.canvas.setCanvasColor(QtCompat.white)
         root.addWidget(self.canvas, 3)
 
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Close, self)
-        self.buttons.button(QDialogButtonBox.Close).setText("Close")
+        self.buttons = QDialogButtonBox(QDialogButtonBoxCompat.Close, self)
+        self.buttons.button(QDialogButtonBoxCompat.Close).setText("Close")
         self.buttons.rejected.connect(self.reject)
         root.addWidget(self.buttons)
 
@@ -340,7 +342,7 @@ class ScenePreviewDialog(QDialog):
             props = scene.get("properties", {}) or {}
 
             id_item = QTableWidgetItem(sid)
-            id_item.setData(Qt.UserRole, sid)
+            id_item.setData(QtCompat.UserRole, sid)
             dt_item = QTableWidgetItem(str(props.get("datetime", "")))
             cloud_item = QTableWidgetItem(str(props.get("eo:cloud_cover", "")))
 
@@ -372,7 +374,7 @@ class ScenePreviewDialog(QDialog):
             row_item = self.table.item(row, 0)
             if not row_item:
                 continue
-            sid = str(row_item.data(Qt.UserRole) or row_item.text() or "")
+            sid = str(row_item.data(QtCompat.UserRole) or row_item.text() or "")
             if sid:
                 selected_ids.add(sid)
 
@@ -387,7 +389,7 @@ class ScenePreviewDialog(QDialog):
         item = self.table.item(row, 0)
         if not item:
             return
-        sid = str(item.data(Qt.UserRole) or item.text() or "")
+        sid = str(item.data(QtCompat.UserRole) or item.text() or "")
         self._show_scene_details(sid)
 
     def _on_feature_identified(self, feature):

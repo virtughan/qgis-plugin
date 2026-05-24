@@ -47,21 +47,35 @@ def _detect_lock_related_error(lines: list[str]) -> str | None:
         "Access is denied",
         "PermissionError",
         "being used by another process",
+        "Permission denied",
+        "[Errno 13]",
+        "EACCES",
+        "Operation not permitted",
     ]
     if any(marker in combined for marker in lock_markers):
         return (
-            "Dependency files appear to be locked by the current QGIS session. "
+            "Dependency files appear to be locked or permission denied. "
             "Please restart QGIS, then retry installation."
         )
     return None
 
 
 def _bundled_pip_root() -> Path | None:
-    """Return bundled pip root (vendor/pip) if present."""
+    """Return path to the bundled pip wheel (.whl) if present."""
     plugin_root = Path(__file__).resolve().parent
-    candidate = plugin_root / "vendor" / "pip"
-    if (candidate / "pip").is_dir():
-        return candidate
+    pip_dir = plugin_root / "vendor" / "pip"
+    if not pip_dir.is_dir():
+        return None
+
+    # Look for a pip wheel file
+    wheels = list(pip_dir.glob("pip-*.whl"))
+    if wheels:
+        return wheels[0]  # Return the wheel path
+
+    # Legacy fallback: check for installed pip package directory
+    if (pip_dir / "pip").is_dir():
+        return pip_dir
+
     return None
 
 
@@ -116,6 +130,24 @@ def _resolve_embedded_python_executable() -> str:
             ]
         )
 
+    # Linux: check common QGIS-bundled Python locations
+    if sys.platform == "linux":
+        candidates.extend(
+            [
+                Path("/usr/bin/python3"),
+                Path("/usr/bin/python"),
+            ]
+        )
+        # Some Linux distros bundle Python inside the QGIS prefix
+        if sys.prefix:
+            candidates.extend(
+                [
+                    Path(sys.prefix) / "bin" / "python3.12",
+                    Path(sys.prefix) / "bin" / "python3.11",
+                    Path(sys.prefix) / "bin" / "python3.10",
+                ]
+            )
+
     if sys.platform == "darwin" and sys.executable:
         exe_path = Path(sys.executable).resolve()
         for parent in exe_path.parents:
@@ -124,11 +156,19 @@ def _resolve_embedded_python_executable() -> str:
                 candidates.extend(
                     [
                         parent / "bin" / "python3",
+                        app_contents / "Frameworks" / "Python.framework" / "Versions" / "Current" / "bin" / "python3",
                         app_contents / "Frameworks" / "bin" / "python3",
                         app_contents / "Resources" / "python" / "bin" / "python3",
                     ]
                 )
                 break
+        # Also check Homebrew QGIS Python on macOS
+        candidates.extend(
+            [
+                Path("/usr/local/bin/python3"),
+                Path("/opt/homebrew/bin/python3"),
+            ]
+        )
 
     if sys.executable:
         candidates.append(Path(sys.executable))
@@ -166,18 +206,22 @@ def _run_pip_inprocess(
     _set_last_install_error(None)
 
     added_path = False
-    if pip_root and str(pip_root) not in sys.path:
-        sys.path.insert(0, str(pip_root))
-        added_path = True
+    pip_path_str = None
+    if pip_root:
+        # pip_root can be either a .whl file or a directory
+        pip_path_str = str(pip_root)
+        if pip_path_str not in sys.path:
+            sys.path.insert(0, pip_path_str)
+            added_path = True
 
     try:
         from pip._internal.cli.main import main as pip_main
     except Exception as exc:
         if progress_callback:
             progress_callback(f"Could not import bundled pip in-process: {exc}")
-        if added_path:
+        if added_path and pip_path_str:
             try:
-                sys.path.remove(str(pip_root))
+                sys.path.remove(pip_path_str)
             except Exception:
                 pass
         return False
@@ -188,12 +232,17 @@ def _run_pip_inprocess(
         "--upgrade",
         "--ignore-installed",
         "--prefer-binary",
-        "--only-binary",
-        "rasterio",
         "--target",
         str(target_dir),
         *package_specs,
     ]
+
+    # On Windows, enforce binary-only for rasterio (avoids needing C compiler).
+    # On Linux/macOS, allow source builds as fallback since pre-built wheels
+    # may not be available for all platform/Python version combinations.
+    if sys.platform == "win32":
+        pip_args.insert(5, "rasterio")
+        pip_args.insert(5, "--only-binary")
 
     if progress_callback:
         progress_callback("Using in-process pip execution")
@@ -228,9 +277,9 @@ def _run_pip_inprocess(
         return False
     finally:
         sys.executable = original_executable
-        if added_path:
+        if added_path and pip_path_str:
             try:
-                sys.path.remove(str(pip_root))
+                sys.path.remove(pip_path_str)
             except Exception:
                 pass
 

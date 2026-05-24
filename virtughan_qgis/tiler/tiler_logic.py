@@ -13,9 +13,19 @@ class TilerLogic:
 
     def _build_query(self, params: dict) -> str:
         from urllib.parse import urlencode, quote
-        clean = {k: v for k, v in params.items() if v is not None and str(v) != ""}
-        
-        return urlencode(clean, doseq=True, quote_via=quote, safe="()*/_-")
+        clean = {}
+        for k, v in params.items():
+            if v is None or str(v) == "":
+                continue
+            # Formula needs special handling: the '+' operator gets mangled
+            # by URL encoding/decoding (treated as space by some HTTP clients).
+            # Replace '+' with '__PLUS__' placeholder, decoded on the server side.
+            if k == "formula" and isinstance(v, str):
+                import re
+                v = re.sub(r'\s*([+\-*/()])\s*', r'\1', v).strip()
+                v = v.replace("+", "__PLUS__")
+            clean[k] = v
+        return urlencode(clean, doseq=True, quote_via=quote, safe="()/_-")
 
 
     def build_xyz_uri(self, backend_url: str, name: str, params: dict) -> str:
