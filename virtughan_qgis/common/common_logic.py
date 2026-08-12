@@ -303,6 +303,22 @@ def extract_kwargs_from_params(params, *, log_file=None, workers=None):
 
 def search_stac_features(collection_id, bbox, start_date, end_date, cloud_cover, extra_query=None):
     collection = normalize_collection(collection_id)
+    try:
+        from virtughan_qgis.bootstrap import activate_runtime_paths, purge_non_runtime_modules
+        activate_runtime_paths()
+        purge_non_runtime_modules((
+            "attr",
+            "attrs",
+            "pystac",
+            "pystac_client",
+            "planetary_computer",
+            "jsonschema",
+            "referencing",
+            "rpds",
+            "matplotlib",
+        ))
+    except Exception:
+        pass
     from virtughan.collections import get_collection
     from virtughan.stac import search_stac
     config = get_collection(collection)

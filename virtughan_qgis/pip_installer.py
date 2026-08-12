@@ -229,6 +229,7 @@ def _run_pip_inprocess(
     pip_args = [
         "install",
         "--disable-pip-version-check",
+        "--no-warn-conflicts",
         "--upgrade",
         "--ignore-installed",
         "--prefer-binary",

@@ -76,6 +76,7 @@ from ..bootstrap import (
     RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
     activate_runtime_paths,
     ensure_runtime_network_ready,
+    purge_non_runtime_modules,
 )
 
 activate_runtime_paths()
@@ -194,6 +195,7 @@ def _run_extractor_inprocess_fallback(params: dict, log_path: str, logf=None, sh
         raise _TaskCancelledError("Download cancelled by user.")
 
     import inspect
+    purge_non_runtime_modules(("attr", "attrs", "pystac", "pystac_client", "planetary_computer", "matplotlib"))
     if _EXTRACTOR_INPROCESS_BACKEND_CLASS is None:
         backend_mod = sys.modules.get("virtughan.extract")
         if backend_mod is None:
@@ -246,6 +248,7 @@ def _run_extractor_inprocess_mac(params: dict, logf=None, should_cancel=None):
         if callable(should_cancel) and should_cancel():
             raise _TaskCancelledError("Download cancelled by user.")
 
+        purge_non_runtime_modules(("attr", "attrs", "pystac", "pystac_client", "planetary_computer", "matplotlib"))
         backend_mod = sys.modules.get("virtughan.extract")
         if backend_mod is None:
             backend_mod = importlib.import_module("virtughan.extract")

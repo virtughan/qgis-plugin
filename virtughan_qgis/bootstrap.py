@@ -183,6 +183,45 @@ def activate_runtime_paths() -> list[str]:
     return _activate_vendor_paths()
 
 
+def purge_non_runtime_modules(module_prefixes: tuple[str, ...] | list[str]) -> list[str]:
+    """Drop already-imported dependency modules that came from outside plugin runtime."""
+    _activate_vendor_paths()
+    purged: list[str] = []
+    prefixes = tuple(module_prefixes or ())
+    if not prefixes:
+        return purged
+
+    plugin_root = os.path.normcase(os.path.normpath(PLUGIN_DIR))
+    for mod_name, module in list(sys.modules.items()):
+        if not (mod_name in prefixes or any(mod_name.startswith(prefix + ".") for prefix in prefixes)):
+            continue
+
+        mod_file = getattr(module, "__file__", "") or ""
+        if not mod_file:
+            continue
+
+        norm_file = os.path.normcase(os.path.normpath(mod_file))
+        try:
+            if os.path.commonpath([norm_file, plugin_root]) == plugin_root:
+                continue
+        except Exception:
+            pass
+
+        if _is_path_loaded_from_runtime(norm_file):
+            continue
+
+        try:
+            del sys.modules[mod_name]
+            purged.append(mod_name)
+        except Exception:
+            pass
+
+    if purged:
+        _log("Purged non-runtime dependency modules: " + ", ".join(purged[:20]), Qgis.Info)
+        importlib.invalidate_caches()
+    return purged
+
+
 def _parse_version_tuple(version_text: str) -> tuple[int, ...]:
     parts: list[int] = []
     for raw in (version_text or "").strip().split("."):
@@ -302,6 +341,14 @@ def _clear_runtime_module_cache():
             mod_name.startswith("virtughan")
             or mod_name.startswith("rasterio")
             or mod_name.startswith("numpy")
+            or mod_name == "attr"
+            or mod_name.startswith("attr.")
+            or mod_name == "attrs"
+            or mod_name.startswith("attrs.")
+            or mod_name.startswith("pystac")
+            or mod_name.startswith("planetary_computer")
+            or mod_name == "matplotlib"
+            or mod_name.startswith("matplotlib.")
         ):
             try:
                 del sys.modules[mod_name]
@@ -542,22 +589,23 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
 
 
 def check_dependencies(preferred_site_packages: str | None = None) -> bool:
-    # Ensure we validate the currently installed files, not a stale in-memory module.
-    for mod_name in list(sys.modules.keys()):
-        if (
-            mod_name == "virtughan"
-            or mod_name.startswith("virtughan.")
-            or mod_name == "rasterio"
-            or mod_name.startswith("rasterio.")
-            or mod_name == "numpy"
-            or mod_name.startswith("numpy.")
-        ):
-            try:
-                del sys.modules[mod_name]
-            except Exception:
-                pass
-
+    # Ensure we validate the currently installed files, not stale modules from
+    # the user site or a previous runtime attempt.
     _activate_vendor_paths(preferred_site_packages)
+    purge_non_runtime_modules((
+        "virtughan",
+        "rasterio",
+        "numpy",
+        "attr",
+        "attrs",
+        "pystac",
+        "pystac_client",
+        "planetary_computer",
+        "jsonschema",
+        "referencing",
+        "rpds",
+        "matplotlib",
+    ))
     importlib.invalidate_caches()
     try:
         virtughan_spec = importlib.util.find_spec("virtughan")
@@ -664,6 +712,53 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             pass
     if not numpy_version:
         details = "numpy version could not be determined"
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    try:
+        attr_spec = importlib.util.find_spec("attr")
+        if attr_spec is None:
+            _set_last_error("attrs package not found")
+            _log("attrs package not found", Qgis.Warning)
+            return False
+    except Exception as exc:
+        _set_last_error(f"attrs discovery failed: {exc}")
+        _log(f"attrs discovery failed: {exc}", Qgis.Warning)
+        return False
+
+    attr_origin = getattr(attr_spec, "origin", "") or ""
+    if attr_origin and not _is_path_loaded_from_runtime(attr_origin):
+        details = (
+            "attrs was discovered from a non-runtime path: "
+            f"{attr_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+        )
+        _set_last_error(details)
+        _log(details, Qgis.Warning)
+        return False
+
+    try:
+        mpl_spec = importlib.util.find_spec("matplotlib")
+        if mpl_spec is None:
+            _set_last_error("matplotlib package not found")
+            _log("matplotlib package not found", Qgis.Warning)
+            return False
+        backend_spec = importlib.util.find_spec("matplotlib.backends.backend_agg")
+        if backend_spec is None:
+            _set_last_error("matplotlib Agg backend not found")
+            _log("matplotlib Agg backend not found", Qgis.Warning)
+            return False
+    except Exception as exc:
+        _set_last_error(f"matplotlib discovery failed: {exc}")
+        _log(f"matplotlib discovery failed: {exc}", Qgis.Warning)
+        return False
+
+    mpl_origin = getattr(mpl_spec, "origin", "") or ""
+    if mpl_origin and not _is_path_loaded_from_runtime(mpl_origin):
+        details = (
+            "matplotlib was discovered from a non-runtime path: "
+            f"{mpl_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
+        )
         _set_last_error(details)
         _log(details, Qgis.Warning)
         return False

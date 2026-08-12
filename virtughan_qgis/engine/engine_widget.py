@@ -73,6 +73,7 @@ from ..bootstrap import (
     RUNTIME_FALLBACK_ROOT,
     RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
     ensure_runtime_network_ready,
+    purge_non_runtime_modules,
 )
 from ..qt_compat import QtCompat
 
@@ -479,6 +480,7 @@ def _engine_compute_fallback_worker(params: dict, log_path: str, result_queue):
                     pass
 
         importlib.invalidate_caches()
+        purge_non_runtime_modules(("attr", "attrs", "pystac", "pystac_client", "planetary_computer", "matplotlib"))
         _backend_mod = importlib.import_module("virtughan.engine")
         backend_cls = getattr(_backend_mod, "VirtughanProcessor")
 
@@ -615,6 +617,7 @@ def _run_engine_inprocess_mac(params: dict, logf=None, should_cancel=None):
         if callable(should_cancel) and should_cancel():
             raise _TaskCancelledError("Compute cancelled by user.")
 
+        purge_non_runtime_modules(("attr", "attrs", "pystac", "pystac_client", "planetary_computer", "matplotlib"))
         backend_mod = sys.modules.get("virtughan.engine")
         if backend_mod is None:
             backend_mod = importlib.import_module("virtughan.engine")
