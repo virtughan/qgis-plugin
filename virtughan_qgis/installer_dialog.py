@@ -74,9 +74,10 @@ class FirstTimeInstallerDialog(QDialog):
         # Description
         description = QLabel(
             "Please wait while required dependencies are downloaded and installed.\n"
+            "Internet connection is required during setup to download Python packages.\n"
             "This can take 2-5 minutes depending on your internet speed.\n"
             "Please do not close this window. It will close automatically when setup is complete.\n"
-            "This is a one-time installation for this QGIS and you will no longer need to wait long to open it after successfull installation."
+            "This is a one-time installation for this QGIS profile."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -192,6 +193,9 @@ class FirstTimeInstallerDialog(QDialog):
         """
         self.log_text.appendPlainText(
             "Please wait while required dependencies are downloaded and installed."
+        )
+        self.log_text.appendPlainText(
+            "Internet connection is required during setup to download Python packages."
         )
         self.log_text.appendPlainText(
             "This can take 2-5 minutes depending on your internet speed."

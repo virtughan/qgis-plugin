@@ -18,6 +18,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsFeature,
     QgsField,
+    QgsWkbTypes,
 )
 from qgis.gui import QgsMapCanvas, QgsMapTool, QgsRubberBand
 
@@ -38,6 +39,83 @@ def geom_to_wgs84_bbox(geom: QgsGeometry, project: QgsProject) -> list[float]:
     r = g.boundingBox()
     return [r.xMinimum(), r.yMinimum(), r.xMaximum(), r.yMaximum()]
 
+
+def bbox_area_km2(bbox: list[float] | tuple[float, float, float, float] | None) -> float:
+    if not bbox or len(bbox) != 4:
+        return 0.0
+    x1, y1, x2, y2 = [float(v) for v in bbox]
+    mid_lat = (y1 + y2) / 2.0
+    km_per_deg_lat = 110.574
+    km_per_deg_lon = 111.320
+    try:
+        import math
+        km_per_deg_lon *= max(0.05, math.cos(math.radians(mid_lat)))
+    except Exception:
+        pass
+    return abs((x2 - x1) * km_per_deg_lon) * abs((y2 - y1) * km_per_deg_lat)
+
+
+def aoi_size_level(bbox, *, large_km2: float = 2500.0, very_large_km2: float = 10000.0) -> tuple[str, float]:
+    area = bbox_area_km2(bbox)
+    if area >= very_large_km2:
+        return "very_large", area
+    if area >= large_km2:
+        return "large", area
+    return "normal", area
+
+
+def polygon_layers(project: QgsProject | None = None):
+    project = project or QgsProject.instance()
+    layers = []
+    try:
+        for layer in project.mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
+                continue
+            try:
+                geom_type = QgsWkbTypes.geometryType(layer.wkbType())
+            except Exception:
+                continue
+            if geom_type == QgsWkbTypes.PolygonGeometry:
+                layers.append(layer)
+    except Exception:
+        pass
+    return layers
+
+
+def feature_geometry_in_project_crs(layer: QgsVectorLayer, feature: QgsFeature, project: QgsProject | None = None):
+    project = project or QgsProject.instance()
+    geom = feature.geometry()
+    if geom is None or geom.isEmpty():
+        return None
+    geom = QgsGeometry(geom)
+    try:
+        src = layer.crs()
+        dst = project.crs()
+        if src.isValid() and dst.isValid() and src.authid() != dst.authid():
+            geom.transform(QgsCoordinateTransform(src, dst, project))
+    except Exception:
+        pass
+    return geom
+
+
+def combined_feature_geometry_in_project_crs(layer: QgsVectorLayer, features, project: QgsProject | None = None):
+    geoms = []
+    for feature in features or []:
+        geom = feature_geometry_in_project_crs(layer, feature, project)
+        if geom is not None and not geom.isEmpty():
+            geoms.append(geom)
+    if not geoms:
+        return None
+    combined = QgsGeometry(geoms[0])
+    for geom in geoms[1:]:
+        try:
+            combined = combined.combine(geom)
+        except Exception:
+            try:
+                combined = combined.combine(QgsGeometry(geom))
+            except Exception:
+                pass
+    return combined
 
 
 class AoiManager:

@@ -40,6 +40,7 @@ from ..bootstrap import (
 activate_runtime_paths()
 
 from ..qt_compat import QtCompat, QSizePolicyCompat
+from ..common.ui_helpers import apply_primary_button_style
 
 CommonParamsWidget = None
 try:
@@ -937,6 +938,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.workersSpin.setEnabled(False)
 
     def _wire_signals(self):
+        apply_primary_button_style(self.addLayerBtn)
         self.addLayerBtn.clicked.connect(self._on_add_layer)
         self.resetBtn.clicked.connect(self._on_reset)
         self.helpBtn.clicked.connect(self._on_help)

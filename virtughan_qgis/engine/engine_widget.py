@@ -48,6 +48,9 @@ from ..common.aoi import (
     AoiManager,
     AoiPolygonTool,
     AoiRectTool,
+    aoi_size_level,
+    combined_feature_geometry_in_project_crs,
+    polygon_layers,
     rect_to_wgs84_bbox,
     geom_to_wgs84_bbox,
 )
@@ -60,9 +63,16 @@ from ..common.common_logic import (
     collection_band_metadata,
     collection_band_names,
     extra_query_for_collection,
+    filter_bands_used_by_formula,
     normalize_collection,
     processor_kwargs_from_params,
     search_stac_features,
+)
+from ..common.ui_helpers import (
+    DynamicBandSelector,
+    apply_primary_button_style,
+    describe_bands_for_formula,
+    hide_single_tab_bar,
 )
 
 from ..common.map_setup import setup_default_map
@@ -75,7 +85,7 @@ from ..bootstrap import (
     ensure_runtime_network_ready,
     purge_non_runtime_modules,
 )
-from ..qt_compat import QtCompat
+from ..qt_compat import QtCompat, QMessageBoxCompat
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -1479,6 +1489,7 @@ class EngineDockWidget(QDockWidget):
         self._form_owner = FORM_CLASS()
         self._form_owner.setupUi(self.ui_root)
         self._set_header_logo()
+        hide_single_tab_bar(self.ui_root)
         self.setWidget(self.ui_root)
 
         f = self.ui_root.findChild
@@ -1543,8 +1554,12 @@ class EngineDockWidget(QDockWidget):
             )
 
         self._init_common_widget()
+        self._shorten_static_notes()
 
         self._init_index_controls()
+        self._init_advanced_band_selector()
+        self._on_formula_mode_toggled()
+        apply_primary_button_style(self.runButton)
 
         self.progressBar.setVisible(False)
         self.workersSpin.setMinimum(1)
@@ -1560,7 +1575,8 @@ class EngineDockWidget(QDockWidget):
 
         # Convert dropdown to 4 options at runtime (no .ui change required)
         self.aoiModeCombo.clear()
-        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon"])
+        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon", "Select layer from Layers Panel"])
+        self._init_aoi_layer_selector()
 
         # Use a single action button; hide the separate 'Use Canvas Extent' button
         self.aoiUseCanvasButton.setVisible(False)
@@ -1588,6 +1604,11 @@ class EngineDockWidget(QDockWidget):
         self._selected_preview_scenes = []
         self._has_successful_run = False
         self._last_output_layer_ids = []
+
+        try:
+            self.ui_root.setMinimumWidth(520)
+        except Exception:
+            pass
 
     def _set_header_logo(self):
         try:
@@ -1661,9 +1682,147 @@ class EngineDockWidget(QDockWidget):
             self._common = None
             _log(self, f"CommonParamsWidget not available: {COMMON_IMPORT_ERROR}", Qgis.Warning)
 
+    def _init_advanced_band_selector(self):
+        self.advancedBandsSelector = DynamicBandSelector(self.ui_root)
+        self.advancedBandsSelector.changed.connect(self._sync_reference_from_advanced)
+        try:
+            grid = self.ui_root.findChild(QWidget, "groupIndex").layout()
+            grid.addWidget(self.advancedBandsSelector, 3, 1, 2, 4)
+        except Exception:
+            self.advancedBandsSelector.setParent(self.ui_root)
+
+        self.labelAdvancedBand1.setText("Bands *")
+        self.labelAdvancedBand2.setVisible(False)
+        self.advancedBand1Combo.setVisible(False)
+        self.advancedBand2Combo.setVisible(False)
+        self._refresh_advanced_band_selector()
+        self.advancedBandsSelector.setVisible(self.advancedModeRadio.isChecked())
+
+    def _refresh_advanced_band_selector(self, selected=None):
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is None:
+            return
+        collection = self._current_collection()
+        bands = collection_band_names(collection)
+        if selected is None:
+            if collection == "sentinel-1-rtc":
+                selected = ["vv", "vh"]
+            elif collection == "landsat-c2-l2":
+                selected = ["red", "nir08"]
+            else:
+                selected = ["red", "nir"]
+        selector.set_bands(bands, selected, min_rows=2)
+
+    def _advanced_bands(self):
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is not None:
+            return selector.selected_bands()
+        return [
+            b for b in (
+                self.advancedBand1Combo.currentText().strip(),
+                self.advancedBand2Combo.currentText().strip(),
+            ) if b
+        ]
+
+    def _init_aoi_layer_selector(self):
+        self.aoiLayerCombo = QComboBox(self.ui_root)
+        self.aoiLayerCombo.setToolTip("Choose a polygon layer from the current project")
+        self.aoiLayerCombo.setVisible(False)
+        self.aoiLayerCombo.activated.connect(lambda *_: self._use_layer_aoi())
+        try:
+            self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerCombo, 0, 2, 1, 2)
+        except Exception:
+            pass
+
+    def _shorten_static_notes(self):
+        tip = self.ui_root.findChild(QLabel, "indexTipLabel")
+        if tip is None:
+            return
+        full = "Tip: If selected band resolutions differ, the compute module resamples and logs a warning."
+        tip.setText("<i>Tip: mixed band resolutions are resampled...</i>")
+        tip.setToolTip(full)
+        tip.setWordWrap(False)
+        try:
+            QgsProject.instance().layersAdded.connect(lambda *_: self._populate_aoi_layer_combo())
+            QgsProject.instance().layersRemoved.connect(lambda *_: self._populate_aoi_layer_combo())
+        except Exception:
+            pass
+        self._populate_aoi_layer_combo()
+
+    def _populate_aoi_layer_combo(self):
+        combo = getattr(self, "aoiLayerCombo", None)
+        if combo is None:
+            return
+        current_id = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        layers = polygon_layers(QgsProject.instance())
+        if not layers:
+            combo.addItem("No polygon layers", "")
+        else:
+            for layer in layers:
+                combo.addItem(layer.name(), layer.id())
+        if current_id:
+            idx = combo.findData(current_id)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+    def _selected_aoi_layer(self):
+        combo = getattr(self, "aoiLayerCombo", None)
+        if combo is None:
+            return None
+        layer_id = combo.currentData()
+        if not layer_id:
+            return None
+        return QgsProject.instance().mapLayer(layer_id)
+
+    def _use_layer_aoi(self):
+        self._populate_aoi_layer_combo()
+        layer = self._selected_aoi_layer()
+        if layer is None or not layer.isValid():
+            self._update_aoi_preview("AOI: select a polygon layer first.")
+            return
+
+        selected = list(layer.selectedFeatures())
+        if selected:
+            features = selected
+        else:
+            feature_count = layer.featureCount()
+            if feature_count == 1:
+                features = list(layer.getFeatures())
+            else:
+                QMessageBox.information(
+                    self,
+                    "VirtuGhan",
+                    "Select one or more polygon features in the layer first.",
+                )
+                return
+
+        if len(features) > 1:
+            reply = QMessageBox.question(
+                self,
+                "VirtuGhan",
+                "Multiple polygon features are selected.\n\nUse their combined AOI for this run?",
+                QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+                QMessageBoxCompat.Yes,
+            )
+            if reply != QMessageBoxCompat.Yes:
+                return
+
+        geom = combined_feature_geometry_in_project_crs(layer, features, QgsProject.instance())
+        if geom is None or geom.isEmpty():
+            QMessageBox.warning(self, "VirtuGhan", "Selected layer feature has no valid polygon geometry.")
+            return
+
+        self._aoi.replace_geometry(geom)
+        self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
+        self._update_aoi_preview()
+
     def _get_common_params(self):
-        band1 = self.advancedBand1Combo.currentText().strip()
-        band2 = self.advancedBand2Combo.currentText().strip()
+        bands = self._advanced_bands()
+        band1 = bands[0] if bands else ""
+        band2 = bands[1] if len(bands) > 1 else None
         formula = self.advancedFormulaEdit.text().strip()
         # Normalize formula: remove spaces around operators for clean eval in backend
         formula = re.sub(r'\s*([+\-*/()])\s*', r'\1', formula).strip() or formula
@@ -1673,6 +1832,7 @@ class EngineDockWidget(QDockWidget):
             collection = normalize_collection(params.get("collection"))
             params["band1"] = band1
             params["band2"] = (band2 or None)
+            params["bands"] = bands
             params["formula"] = formula
             params["collection"] = collection
             params["extra_query"] = extra_query_for_collection(collection)
@@ -1683,6 +1843,7 @@ class EngineDockWidget(QDockWidget):
             "cloud_cover": int(self.fb_cloud.value()),
             "band1": band1,
             "band2": (band2 or None),
+            "bands": bands,
             "formula": formula,
             "collection": "sentinel-2-l2a",
             "extra_query": None,
@@ -1729,6 +1890,8 @@ class EngineDockWidget(QDockWidget):
             self.advancedFormulaEdit.textChanged.connect(self._sync_reference_from_advanced)
             self._index_controls_wired = True
 
+        self._refresh_advanced_band_selector()
+
         current = self._get_common_params()
         matched = match_index_preset(current.get("band1"), current.get("band2"), current.get("formula"), collection)
         if matched:
@@ -1755,6 +1918,7 @@ class EngineDockWidget(QDockWidget):
             self.opCombo.addItems(["mean", "median", "max", "min", "std", "sum", "var", "none"])
             if current:
                 self.opCombo.setCurrentText(current)
+        self._refresh_advanced_band_selector()
 
     def _on_index_changed(self, label):
         if self._index_updating or not self.simpleModeRadio.isChecked():
@@ -1775,8 +1939,12 @@ class EngineDockWidget(QDockWidget):
 
         self.labelAdvancedBand1.setVisible(not is_simple)
         self.advancedBand1Combo.setVisible(not is_simple)
-        self.labelAdvancedBand2.setVisible(not is_simple)
-        self.advancedBand2Combo.setVisible(not is_simple)
+        self.labelAdvancedBand2.setVisible(False)
+        self.advancedBand1Combo.setVisible(False)
+        self.advancedBand2Combo.setVisible(False)
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is not None:
+            selector.setVisible(not is_simple)
         self.labelAdvancedFormula.setVisible(not is_simple)
         self.advancedFormulaEdit.setVisible(not is_simple)
 
@@ -1797,8 +1965,9 @@ class EngineDockWidget(QDockWidget):
             self._sync_reference_from_advanced()
 
     def _sync_reference_from_advanced(self, *_):
-        band1 = self.advancedBand1Combo.currentText().strip()
-        band2 = self.advancedBand2Combo.currentText().strip()
+        bands = self._advanced_bands()
+        band1 = bands[0] if bands else ""
+        band2 = bands[1] if len(bands) > 1 else ""
         formula = self.advancedFormulaEdit.text().strip()
 
         matched = match_index_preset(band1, band2, formula, self._current_collection())
@@ -1809,7 +1978,9 @@ class EngineDockWidget(QDockWidget):
             finally:
                 self._index_updating = False
 
-        self.formulaReferenceLabel.setText(self._format_formula_reference(formula, band1, band2))
+        ref = self._format_formula_reference(formula, band1, band2, bands)
+        self.formulaReferenceLabel.setText(ref)
+        self.formulaReferenceLabel.setToolTip(ref)
 
     def _apply_index_preset(self, label):
         preset = get_index_preset(label, self._current_collection())
@@ -1820,23 +1991,24 @@ class EngineDockWidget(QDockWidget):
         try:
             self.advancedBand1Combo.setCurrentText(preset.get("band1", ""))
             self.advancedBand2Combo.setCurrentText(preset.get("band2", ""))
+            self._refresh_advanced_band_selector([
+                band for band in (preset.get("band1", ""), preset.get("band2", "")) if band
+            ])
             self.advancedFormulaEdit.setText(preset.get("formula", ""))
 
-            self.formulaReferenceLabel.setText(
-                self._format_formula_reference(
-                    preset.get("formula", ""),
-                    preset.get("band1", ""),
-                    preset.get("band2", ""),
-                )
+            ref = self._format_formula_reference(
+                preset.get("formula", ""),
+                preset.get("band1", ""),
+                preset.get("band2", ""),
+                [band for band in (preset.get("band1", ""), preset.get("band2", "")) if band],
             )
+            self.formulaReferenceLabel.setText(ref)
+            self.formulaReferenceLabel.setToolTip(ref)
         finally:
             self._index_updating = False
 
-    def _format_formula_reference(self, formula: str, band1: str, band2: str) -> str:
-        formula_text = (formula or "").strip()
-        if not formula_text:
-            return "(formula will display here)"
-        return f"{formula_text}, band1={band1 or '-'}, band2={band2 or '-'}"
+    def _format_formula_reference(self, formula: str, band1: str, band2: str, bands=None) -> str:
+        return describe_bands_for_formula(formula, list(bands or [b for b in (band1, band2) if b]))
 
     def _aoi_mode_changed(self, text: str):
         """Immediately apply AOI action when mode is selected from dropdown."""
@@ -1844,10 +2016,19 @@ class EngineDockWidget(QDockWidget):
         if "select" in t:
             self.aoiStartDrawButton.setVisible(False)
             self.aoiClearButton.setVisible(False)
+            if "layer" in t:
+                if hasattr(self, "aoiLayerCombo"):
+                    self.aoiLayerCombo.setVisible(True)
+                self.aoiClearButton.setVisible(True)
+                self._use_layer_aoi()
+            elif hasattr(self, "aoiLayerCombo"):
+                self.aoiLayerCombo.setVisible(False)
             return
 
         # Clear previous AOI before applying new mode
         self._clear_aoi()
+        if hasattr(self, "aoiLayerCombo"):
+            self.aoiLayerCombo.setVisible(False)
 
         # Hide the action button for all modes — action is triggered directly
         self.aoiStartDrawButton.setVisible(False)
@@ -1857,6 +2038,10 @@ class EngineDockWidget(QDockWidget):
             self._use_canvas_extent()
         elif "rectangle" in t:
             self._start_draw_rectangle()
+        elif "layer" in t:
+            if hasattr(self, "aoiLayerCombo"):
+                self.aoiLayerCombo.setVisible(True)
+            self._use_layer_aoi()
         else:
             self._start_draw_polygon()
 
@@ -2000,9 +2185,53 @@ class EngineDockWidget(QDockWidget):
     def _update_aoi_preview(self):
         if self._aoi_bbox:
             x1, y1, x2, y2 = self._aoi_bbox
-            self.aoiPreviewLabel.setText(f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f})")
+            _level, area = aoi_size_level(self._aoi_bbox)
+            self.aoiPreviewLabel.setText(
+                f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f}) | approx. {area:,.0f} km2"
+            )
         else:
             self.aoiPreviewLabel.setText("<i>AOI: not set yet. Use smaller aoi and test first.</i>")
+
+    def _warn_for_aoi_size(self, *, interactive: bool) -> bool:
+        level, area = aoi_size_level(self._aoi_bbox)
+        if level == "large":
+            _log(
+                self,
+                f"AOI is large (approx. {area:,.0f} km2). Processing/download may be slow; consider reducing AOI size.",
+                Qgis.Warning,
+            )
+            return True
+        if level == "very_large":
+            message = (
+                f"The selected AOI is very large (approx. {area:,.0f} km2).\n\n"
+                "This can take a long time and may fail because of download size, memory use, or remote service limits.\n\n"
+                "Reduce the AOI size for a more reliable run."
+            )
+            _log(self, message.replace("\n", " "), Qgis.Warning)
+            if not interactive:
+                return True
+            reply = QMessageBox.question(
+                self,
+                "VirtuGhan",
+                message + "\n\nContinue anyway?",
+                QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+                QMessageBoxCompat.No,
+            )
+            return reply == QMessageBoxCompat.Yes
+        return True
+
+    def _show_no_scenes_dialog(self, *, min_count: int = 1, found_count: int = 0):
+        if found_count <= 0:
+            text = (
+                "No matching images were found for the selected AOI, date range, dataset, and filters.\n\n"
+                "Try another AOI, expand the date range, or adjust the cloud/filter settings."
+            )
+        else:
+            text = (
+                f"Only {found_count} matching image(s) were found. This operation needs at least {min_count}.\n\n"
+                "Try expanding the date range or adjusting the filters."
+            )
+        QMessageBox.warning(self, "VirtuGhan", text)
 
 
 
@@ -2061,6 +2290,7 @@ class EngineDockWidget(QDockWidget):
 
         self.advancedBand1Combo.setCurrentText("red")
         self.advancedBand2Combo.setCurrentText("nir")
+        self._refresh_advanced_band_selector(["red", "nir"])
         self.advancedFormulaEdit.setText("(nir-red)/(nir+red)")
         self.simpleModeRadio.setChecked(True)
         self._on_formula_mode_toggled()
@@ -2093,6 +2323,7 @@ class EngineDockWidget(QDockWidget):
                 raise RuntimeError("Please select a valid index preset.")
             p["band1"] = (preset.get("band1") or "").strip()
             p["band2"] = (preset.get("band2") or "").strip() or None
+            p["bands"] = [band for band in (p["band1"], p["band2"]) if band]
             p["formula"] = (preset.get("formula") or "").strip()
 
         sdt = QDate.fromString(p["start_date"], "yyyy-MM-dd")
@@ -2104,9 +2335,23 @@ class EngineDockWidget(QDockWidget):
         if not p.get("formula"):
             raise RuntimeError("Formula is required.")
         if not p.get("band1"):
-            raise RuntimeError("Band 1 is required.")
-        if self.advancedModeRadio.isChecked() and not p.get("band2") and p.get("band2") is not None:
-            raise RuntimeError("Band 2 is required in Advanced mode.")
+            raise RuntimeError("At least one band is required.")
+        if self.advancedModeRadio.isChecked() and not p.get("bands"):
+            raise RuntimeError("Select at least one band in Advanced mode.")
+        if self.advancedModeRadio.isChecked():
+            formula_bands = filter_bands_used_by_formula(p.get("bands"), p.get("formula"))
+            if not formula_bands:
+                raise RuntimeError("Formula must reference at least one selected band.")
+            ignored = [band for band in (p.get("bands") or []) if band not in formula_bands]
+            if ignored:
+                _log(
+                    self,
+                    "Ignoring selected band(s) not used by formula: " + ", ".join(ignored),
+                    Qgis.Warning,
+                )
+            p["bands"] = formula_bands
+            p["band1"] = formula_bands[0]
+            p["band2"] = formula_bands[1] if len(formula_bands) > 1 else None
 
         op_txt = (self.opCombo.currentText() or "").strip()
         operation = None if op_txt == "none" else op_txt
@@ -2126,6 +2371,7 @@ class EngineDockWidget(QDockWidget):
             formula=p["formula"],
             band1=p["band1"],
             band2=p.get("band2") or None,
+            bands=list(p.get("bands") or [b for b in (p["band1"], p.get("band2")) if b]),
             collection=normalize_collection(p.get("collection")),
             extra_query=extra_query_for_collection(p.get("collection")),
             operation=operation,
@@ -2166,6 +2412,8 @@ class EngineDockWidget(QDockWidget):
 
         try:
             _log(self, "Pre-download stage started: checking matching scenes before compute...")
+            if not self._warn_for_aoi_size(interactive=True):
+                return
             self._validate_minimum_matching_scenes(min_count=2, timeout_s=120.0)
             _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
@@ -2179,7 +2427,8 @@ class EngineDockWidget(QDockWidget):
             )
             return
         except Exception as e:
-            QMessageBox.warning(self, "VirtuGhan", str(e))
+            if "matching scene" not in str(e).lower():
+                QMessageBox.warning(self, "VirtuGhan", str(e))
             return
 
         mode_label = "Simple" if self.simpleModeRadio.isChecked() else "Advanced"
@@ -2190,8 +2439,7 @@ class EngineDockWidget(QDockWidget):
             f"mode={mode_label}, "
             f"preset={preset_label}, "
             f"formula={params.get('formula')}, "
-            f"band1={params.get('band1')}, "
-            f"band2={params.get('band2') or '-'}",
+            f"bands={', '.join(params.get('bands') or []) or '-'}",
         )
 
         out_dir = params["output_dir"]
@@ -2348,6 +2596,12 @@ class EngineDockWidget(QDockWidget):
                   self.showSceneFootprintsCheck):
             try:
                 w.setEnabled(not running)
+            except Exception:
+                pass
+        for w in (getattr(self, "aoiLayerCombo", None), getattr(self, "advancedBandsSelector", None)):
+            try:
+                if w is not None:
+                    w.setEnabled(not running)
             except Exception:
                 pass
         try:
@@ -2526,6 +2780,7 @@ class EngineDockWidget(QDockWidget):
         )
         count = len(scenes or [])
         if count < min_count:
+            self._show_no_scenes_dialog(min_count=min_count, found_count=count)
             raise RuntimeError(
                 "Compute requires at least 2 matching scenes for the selected filters. "
                 f"Found {count} scene(s). "
@@ -2612,6 +2867,8 @@ class EngineDockWidget(QDockWidget):
     def _preview_matching_scenes(self):
         try:
             params = self._collect_search_params()
+            if not self._warn_for_aoi_size(interactive=True):
+                return
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -2634,6 +2891,9 @@ class EngineDockWidget(QDockWidget):
                 timeout_s=45.0,
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
+            if not scenes:
+                self._show_no_scenes_dialog(min_count=1, found_count=0)
+                return
 
             aoi_geom, aoi_crs_authid = self._get_current_aoi_geometry_for_preview()
 

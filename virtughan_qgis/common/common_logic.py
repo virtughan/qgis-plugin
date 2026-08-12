@@ -1,4 +1,6 @@
 
+import re
+
 DEFAULT_COLLECTION = "sentinel-2-l2a"
 
 COLLECTION_LABELS = {
@@ -249,23 +251,42 @@ def populate_band_combos(band1_combo, band2_combo, bands_meta=None):
 
 def build_bands_list(band1, band2=None, formula=None):
     bands = []
-    for band in (band1, band2):
+    if isinstance(band1, (list, tuple)):
+        candidates = list(band1)
+    else:
+        candidates = [band1, band2]
+    for band in candidates:
         value = (band or "").strip()
         if value and value not in bands:
             bands.append(value)
     return bands
 
 
+def filter_bands_used_by_formula(bands, formula):
+    """Return selected bands that appear as standalone names in formula."""
+    formula_text = formula or ""
+    used = []
+    for band in bands or []:
+        value = (band or "").strip()
+        if not value or value in used:
+            continue
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(value)}(?![A-Za-z0-9_])"
+        if re.search(pattern, formula_text):
+            used.append(value)
+    return used
+
+
 def processor_kwargs_from_params(params, *, log_file=None, workers=None):
     band1 = params.get("band1")
     band2 = params.get("band2")
+    bands = params.get("bands") or build_bands_list(band1, band2, params.get("formula"))
     kwargs = {
         "bbox": params["bbox"],
         "start_date": params["start_date"],
         "end_date": params["end_date"],
         "cloud_cover": params["cloud_cover"],
         "formula": params["formula"],
-        "bands": build_bands_list(band1, band2, params.get("formula")),
+        "bands": bands,
         "operation": params["operation"],
         "timeseries": params["timeseries"],
         "output_dir": params["output_dir"],

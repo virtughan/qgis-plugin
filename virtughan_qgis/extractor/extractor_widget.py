@@ -58,6 +58,9 @@ from ..common.aoi import (
     AoiManager,
     AoiRectTool,
     AoiPolygonTool,
+    aoi_size_level,
+    combined_feature_geometry_in_project_crs,
+    polygon_layers,
     rect_to_wgs84_bbox,
     geom_to_wgs84_bbox,
 )
@@ -78,10 +81,11 @@ from ..bootstrap import (
     ensure_runtime_network_ready,
     purge_non_runtime_modules,
 )
+from ..common.ui_helpers import apply_primary_button_style, hide_single_tab_bar
 
 activate_runtime_paths()
 
-from ..qt_compat import QtCompat
+from ..qt_compat import QtCompat, QMessageBoxCompat
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -1047,6 +1051,7 @@ class ExtractorDockWidget(QDockWidget):
         self._form_owner = FORM_CLASS()
         self._form_owner.setupUi(self.ui_root)
         self._set_header_logo()
+        hide_single_tab_bar(self.ui_root)
         self.setWidget(self.ui_root)
 
         f = self.ui_root.findChild
@@ -1082,6 +1087,7 @@ class ExtractorDockWidget(QDockWidget):
         self._prev_tool = None
 
         self._init_common_widget()
+        apply_primary_button_style(self.runButton)
         try:
             self.commonWidget.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
         except Exception:
@@ -1093,7 +1099,8 @@ class ExtractorDockWidget(QDockWidget):
 
         # AOI: mode-first flow with hidden actions until a mode is chosen
         self.aoiModeCombo.clear()
-        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon"])
+        self.aoiModeCombo.addItems(["Select mode", "Map extent", "Draw rectangle", "Draw polygon", "Select layer from Layers Panel"])
+        self._init_aoi_layer_selector()
         self.aoiUseCanvasButton.setVisible(False)  # hide legacy button
 
         self.aoiStartDrawButton.clicked.connect(self._aoi_action_clicked)
@@ -1236,6 +1243,91 @@ class ExtractorDockWidget(QDockWidget):
                 pass
         return "sentinel-2-l2a"
 
+    def _init_aoi_layer_selector(self):
+        self.aoiLayerCombo = QComboBox(self.ui_root)
+        self.aoiLayerCombo.setToolTip("Choose a polygon layer from the current project")
+        self.aoiLayerCombo.setVisible(False)
+        self.aoiLayerCombo.activated.connect(lambda *_: self._use_layer_aoi())
+        try:
+            self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerCombo, 0, 2, 1, 2)
+        except Exception:
+            pass
+        try:
+            QgsProject.instance().layersAdded.connect(lambda *_: self._populate_aoi_layer_combo())
+            QgsProject.instance().layersRemoved.connect(lambda *_: self._populate_aoi_layer_combo())
+        except Exception:
+            pass
+        self._populate_aoi_layer_combo()
+
+    def _populate_aoi_layer_combo(self):
+        combo = getattr(self, "aoiLayerCombo", None)
+        if combo is None:
+            return
+        current_id = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        layers = polygon_layers(QgsProject.instance())
+        if not layers:
+            combo.addItem("No polygon layers", "")
+        else:
+            for layer in layers:
+                combo.addItem(layer.name(), layer.id())
+        if current_id:
+            idx = combo.findData(current_id)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+    def _selected_aoi_layer(self):
+        combo = getattr(self, "aoiLayerCombo", None)
+        if combo is None:
+            return None
+        layer_id = combo.currentData()
+        if not layer_id:
+            return None
+        return QgsProject.instance().mapLayer(layer_id)
+
+    def _use_layer_aoi(self):
+        self._populate_aoi_layer_combo()
+        layer = self._selected_aoi_layer()
+        if layer is None or not layer.isValid():
+            self._update_aoi_preview("AOI: select a polygon layer first.")
+            return
+
+        selected = list(layer.selectedFeatures())
+        if selected:
+            features = selected
+        elif layer.featureCount() == 1:
+            features = list(layer.getFeatures())
+        else:
+            QMessageBox.information(
+                self,
+                "VirtuGhan",
+                "Select one or more polygon features in the layer first.",
+            )
+            return
+
+        if len(features) > 1:
+            reply = QMessageBox.question(
+                self,
+                "VirtuGhan",
+                "Multiple polygon features are selected.\n\nUse their combined AOI for this download?",
+                QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+                QMessageBoxCompat.Yes,
+            )
+            if reply != QMessageBoxCompat.Yes:
+                return
+
+        geom = combined_feature_geometry_in_project_crs(layer, features, QgsProject.instance())
+        if geom is None or geom.isEmpty():
+            QMessageBox.warning(self, "VirtuGhan", "Selected layer feature has no valid polygon geometry.")
+            return
+
+        self._aoi.replace_geometry(geom)
+        self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
+        self._aoi_polygon_wgs84 = self._compute_polygon_wgs84_coords(geom)
+        self._update_aoi_preview()
+
     def _on_collection_changed(self, *_):
         collection = self._current_collection()
         self._selected_preview_scenes = []
@@ -1257,10 +1349,19 @@ class ExtractorDockWidget(QDockWidget):
         if "select" in t:
             self.aoiStartDrawButton.setVisible(False)
             self.aoiClearButton.setVisible(False)
+            if "layer" in t:
+                if hasattr(self, "aoiLayerCombo"):
+                    self.aoiLayerCombo.setVisible(True)
+                self.aoiClearButton.setVisible(True)
+                self._use_layer_aoi()
+            elif hasattr(self, "aoiLayerCombo"):
+                self.aoiLayerCombo.setVisible(False)
             return
 
         # Clear previous AOI before applying new mode
         self._clear_aoi()
+        if hasattr(self, "aoiLayerCombo"):
+            self.aoiLayerCombo.setVisible(False)
 
         # Hide the action button — action is triggered directly from dropdown
         self.aoiStartDrawButton.setVisible(False)
@@ -1270,6 +1371,10 @@ class ExtractorDockWidget(QDockWidget):
             self._use_canvas_extent()
         elif "rectangle" in t:
             self._start_draw_rectangle()
+        elif "layer" in t:
+            if hasattr(self, "aoiLayerCombo"):
+                self.aoiLayerCombo.setVisible(True)
+            self._use_layer_aoi()
         else:
             self._start_draw_polygon()
 
@@ -1432,11 +1537,53 @@ class ExtractorDockWidget(QDockWidget):
             return
         if self._aoi_bbox:
             x1, y1, x2, y2 = self._aoi_bbox
+            _level, area = aoi_size_level(self._aoi_bbox)
             self.aoiPreviewLabel.setText(
-                f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f})"
+                f"AOI (EPSG:4326): ({x1:.6f}, {y1:.6f}, {x2:.6f}, {y2:.6f}) | approx. {area:,.0f} km2"
             )
         else:
             self.aoiPreviewLabel.setText("<i>AOI: not set yet. Use smaller aoi and test first.</i>")
+
+    def _warn_for_aoi_size(self, *, interactive: bool) -> bool:
+        level, area = aoi_size_level(self._aoi_bbox)
+        if level == "large":
+            _log(
+                self,
+                f"AOI is large (approx. {area:,.0f} km2). Download may be slow; consider reducing AOI size.",
+                Qgis.Warning,
+            )
+            return True
+        if level == "very_large":
+            message = (
+                f"The selected AOI is very large (approx. {area:,.0f} km2).\n\n"
+                "This can take a long time and may fail because of download size, memory use, or remote service limits.\n\n"
+                "Reduce the AOI size for a more reliable download."
+            )
+            _log(self, message.replace("\n", " "), Qgis.Warning)
+            if not interactive:
+                return True
+            reply = QMessageBox.question(
+                self,
+                "VirtuGhan",
+                message + "\n\nContinue anyway?",
+                QMessageBoxCompat.Yes | QMessageBoxCompat.No,
+                QMessageBoxCompat.No,
+            )
+            return reply == QMessageBoxCompat.Yes
+        return True
+
+    def _show_no_scenes_dialog(self, *, min_count: int = 1, found_count: int = 0):
+        if found_count <= 0:
+            text = (
+                "No matching images were found for the selected AOI, date range, dataset, and filters.\n\n"
+                "Try another AOI, expand the date range, or adjust the cloud/filter settings."
+            )
+        else:
+            text = (
+                f"Only {found_count} matching image(s) were found. This operation needs at least {min_count}.\n\n"
+                "Try expanding the date range or adjusting the filters."
+            )
+        QMessageBox.warning(self, "VirtuGhan", text)
 
     def _open_help(self):
         host = self.window()
@@ -1541,6 +1688,8 @@ class ExtractorDockWidget(QDockWidget):
 
         try:
             _log(self, "Pre-download stage started: checking matching scenes before download...")
+            if not self._warn_for_aoi_size(interactive=True):
+                return
             self._validate_minimum_matching_scenes(min_count=1, timeout_s=120.0)
             _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
@@ -1554,7 +1703,8 @@ class ExtractorDockWidget(QDockWidget):
             )
             return
         except Exception as e:
-            QMessageBox.warning(self, "VirtuGhan", str(e))
+            if "matching scene" not in str(e).lower():
+                QMessageBox.warning(self, "VirtuGhan", str(e))
             return
 
         out_dir = params["output_dir"]
@@ -1696,6 +1846,11 @@ class ExtractorDockWidget(QDockWidget):
                 w.setEnabled(not running)
             except Exception:
                 pass
+        try:
+            if getattr(self, "aoiLayerCombo", None) is not None:
+                self.aoiLayerCombo.setEnabled(not running)
+        except Exception:
+            pass
         try:
             self.previewScenesButton.setEnabled(True)
         except Exception:
@@ -1872,6 +2027,7 @@ class ExtractorDockWidget(QDockWidget):
         )
         count = len(scenes or [])
         if count < min_count:
+            self._show_no_scenes_dialog(min_count=min_count, found_count=count)
             raise RuntimeError(
                 "Extractor requires at least 1 matching scene for the selected filters. "
                 f"Found {count} scene(s). "
@@ -1958,6 +2114,8 @@ class ExtractorDockWidget(QDockWidget):
     def _preview_matching_scenes(self):
         try:
             params = self._collect_search_params()
+            if not self._warn_for_aoi_size(interactive=True):
+                return
         except Exception as e:
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -1979,6 +2137,9 @@ class ExtractorDockWidget(QDockWidget):
                 extra_query=params.get("extra_query"),
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
+            if not scenes:
+                self._show_no_scenes_dialog(min_count=1, found_count=0)
+                return
 
             aoi_geom, aoi_crs_authid = self._get_current_aoi_geometry_for_preview()
 
