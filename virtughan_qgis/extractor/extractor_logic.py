@@ -115,7 +115,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
     def displayName(self): return "VirtuGhan Extractor"
     def group(self): return "VirtuGhan"
     def groupId(self): return "virtughan"
-    def shortHelpString(self): return "Extract Sentinel-2 bands from STAC API via ExtractProcessor."
+    def shortHelpString(self): return "Extract Sentinel-2, Landsat 8/9, or Sentinel-1 (Experimental) bands from STAC API via ExtractProcessor."
     def createInstance(self): return VirtuGhanExtractorAlgorithm()
 
     def processAlgorithm(self, parameters, context, feedback):
