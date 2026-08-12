@@ -186,14 +186,6 @@ class VirtuGhanPlugin:
         except Exception:
             return
 
-        # Always clear the install state flag immediately so that if the runtime
-        # folder survives (locked files), the next install will still show the
-        # installer dialog rather than silently skipping it.
-        try:
-            clear_install_state()
-        except Exception:
-            pass
-
         iface = self.iface
 
         def _emit_info(msg: str):

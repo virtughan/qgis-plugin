@@ -62,6 +62,13 @@ from ..common.aoi import (
     geom_to_wgs84_bbox,
 )
 from ..common.scene_preview_dialog import ScenePreviewDialog
+from ..common.common_logic import (
+    collection_band_names,
+    extra_query_for_collection,
+    extract_kwargs_from_params,
+    normalize_collection,
+    search_stac_features,
+)
 from ..bootstrap import (
     RUNTIME_ROOT,
     RUNTIME_SITE_PACKAGES_DIR,
@@ -101,6 +108,15 @@ def _resolve_extractor_search_stac_api():
                 extractor_search_stac_api = candidate
                 return candidate
     return None
+
+
+def _filter_backend_kwargs(backend_cls, kwargs: dict) -> dict:
+    sig = inspect.signature(backend_cls.__init__)
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if accepts_kwargs:
+        return kwargs
+    allowed = {name for name in sig.parameters.keys() if name != "self"}
+    return {k: v for k, v in kwargs.items() if k in allowed}
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "extractor_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
@@ -185,28 +201,10 @@ def _run_extractor_inprocess_fallback(params: dict, log_path: str, logf=None, sh
         _EXTRACTOR_INPROCESS_BACKEND_CLASS = getattr(backend_mod, "ExtractProcessor")
     ExtractorBackend = _EXTRACTOR_INPROCESS_BACKEND_CLASS
 
-    backend_args = {
-        "bbox": params["bbox"],
-        "start_date": params["start_date"],
-        "end_date": params["end_date"],
-        "cloud_cover": params["cloud_cover"],
-        "bands_list": params["bands_list"],
-        "output_dir": params["output_dir"],
-        "workers": int(params.get("workers", 1) or 1),
-        "zip_output": params.get("zip_output", False),
-        "smart_filter": params.get("smart_filter", True),
-        "log_file": logf,
-    }
-    if params.get("polygon_wgs84"):
-        backend_args["polygon_wgs84"] = params["polygon_wgs84"]
-
-    sig = inspect.signature(ExtractorBackend.__init__)
-    accepts_kwargs = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    backend_args = _filter_backend_kwargs(
+        ExtractorBackend,
+        extract_kwargs_from_params(params, log_file=logf),
     )
-    if not accepts_kwargs:
-        allowed = {name for name in sig.parameters.keys() if name != "self"}
-        backend_args = {k: v for k, v in backend_args.items() if k in allowed}
 
     extr = ExtractorBackend(**backend_args)
     extr.extract()
@@ -263,29 +261,10 @@ def _run_extractor_inprocess_mac(params: dict, logf=None, should_cancel=None):
                 )
             workers = 1
 
-        import inspect
-        backend_args = {
-            "bbox": params["bbox"],
-            "start_date": params["start_date"],
-            "end_date": params["end_date"],
-            "cloud_cover": params["cloud_cover"],
-            "bands_list": params["bands_list"],
-            "output_dir": params["output_dir"],
-            "workers": workers,
-            "zip_output": params.get("zip_output", False),
-            "smart_filter": params.get("smart_filter", True),
-            "log_file": logf,
-        }
-        if params.get("polygon_wgs84"):
-            backend_args["polygon_wgs84"] = params["polygon_wgs84"]
-
-        sig = inspect.signature(ExtractorBackend.__init__)
-        accepts_kwargs = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        backend_args = _filter_backend_kwargs(
+            ExtractorBackend,
+            extract_kwargs_from_params(params, log_file=logf, workers=workers),
         )
-        if not accepts_kwargs:
-            allowed = {name for name in sig.parameters.keys() if name != "self"}
-            backend_args = {k: v for k, v in backend_args.items() if k in allowed}
 
         extr = ExtractorBackend(**backend_args)
         extr.extract()
@@ -323,6 +302,8 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
         "workers": int(params.get("workers", 1) or 1),
         "zip_output": params.get("zip_output", False),
         "smart_filter": params.get("smart_filter", True),
+        "collection": normalize_collection(params.get("collection")),
+        "extra_query": params.get("extra_query"),
         "runtime_site_packages_dir": RUNTIME_SITE_PACKAGES_DIR,
         "runtime_root": RUNTIME_ROOT,
         "runtime_fallback_site_packages_dir": RUNTIME_FALLBACK_SITE_PACKAGES_DIR,
@@ -1098,6 +1079,11 @@ class ExtractorDockWidget(QDockWidget):
         self._prev_tool = None
 
         self._init_common_widget()
+        try:
+            self.commonWidget.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
+        except Exception:
+            pass
+        self._on_collection_changed()
         self.progressBar.setVisible(False)
         self.workersSpin.setMinimum(1)
         self.workersSpin.setValue(self._recommended_default_workers())
@@ -1238,6 +1224,30 @@ class ExtractorDockWidget(QDockWidget):
         if self.commonWidget:
             return self.commonWidget.get_params()
         return {}
+
+    def _current_collection(self):
+        if self.commonWidget:
+            try:
+                return normalize_collection(self.commonWidget.get_params().get("collection"))
+            except Exception:
+                pass
+        return "sentinel-2-l2a"
+
+    def _on_collection_changed(self, *_):
+        collection = self._current_collection()
+        self._selected_preview_scenes = []
+        bands = collection_band_names(collection)
+        selected_defaults = {
+            "sentinel-2-l2a": {"red", "green", "blue", "nir"},
+            "landsat-c2-l2": {"red", "green", "blue", "nir08"},
+            "sentinel-1-rtc": {"vv", "vh"},
+        }.get(collection, set(bands[:2]))
+        self.bandsListWidget.clear()
+        for band in bands:
+            self.bandsListWidget.addItem(band)
+            item = self.bandsListWidget.item(self.bandsListWidget.count() - 1)
+            if band in selected_defaults:
+                item.setSelected(True)
 
     def _aoi_mode_changed(self, text):
         t = (text or "").lower()
@@ -1498,6 +1508,8 @@ class ExtractorDockWidget(QDockWidget):
             start_date=p["start_date"],
             end_date=p["end_date"],
             cloud_cover=int(p["cloud_cover"]),
+            collection=normalize_collection(p.get("collection")),
+            extra_query=extra_query_for_collection(p.get("collection")),
             bands_list=bands_list,
             zip_output=zip_out,
             smart_filter=smart,
@@ -1717,18 +1729,15 @@ class ExtractorDockWidget(QDockWidget):
         if scenes:
             return scenes
 
-        search_fn = _resolve_extractor_search_stac_api()
-        if search_fn is None:
-            _log(self, "Cannot load scene footprints: search_stac_api is not available.", Qgis.Warning)
-            return []
-
         try:
             params = self._collect_search_params()
-            scenes = search_fn(
+            scenes = search_stac_features(
+                params["collection"],
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
                 params["cloud_cover"],
+                extra_query=params.get("extra_query"),
             )
             self._selected_preview_scenes = scenes or []
             _log(self, f"Loaded {len(self._selected_preview_scenes)} scenes from current filters for main-map footprints.")
@@ -1786,6 +1795,8 @@ class ExtractorDockWidget(QDockWidget):
             "start_date": p["start_date"],
             "end_date": p["end_date"],
             "cloud_cover": int(p.get("cloud_cover", 30)),
+            "collection": normalize_collection(p.get("collection")),
+            "extra_query": extra_query_for_collection(p.get("collection")),
         }
 
     def _search_scenes_with_timeout(
@@ -1794,21 +1805,21 @@ class ExtractorDockWidget(QDockWidget):
         start_date,
         end_date,
         cloud_cover,
+        collection="sentinel-2-l2a",
+        extra_query=None,
         timeout_s: float = 30.0,
     ):
-        search_fn = _resolve_extractor_search_stac_api()
-        if search_fn is None:
-            raise RuntimeError("search_stac_api is not available in virtughan.extract.")
-
         result = {"scenes": None, "error": None}
 
         def _worker():
             try:
-                result["scenes"] = search_fn(
+                result["scenes"] = search_stac_features(
+                    collection,
                     bbox,
                     start_date,
                     end_date,
                     cloud_cover,
+                    extra_query=extra_query,
                 )
             except Exception as exc:
                 result["error"] = exc
@@ -1846,19 +1857,14 @@ class ExtractorDockWidget(QDockWidget):
         return list(result["scenes"] or [])
 
     def _validate_minimum_matching_scenes(self, min_count: int = 1, timeout_s: float = 30.0):
-        if _resolve_extractor_search_stac_api() is None:
-            _log(self, "Pre-download STAC validation skipped because in-process resolver is unavailable.", Qgis.Warning)
-            return
-        search_fn = _resolve_extractor_search_stac_api()
-        if search_fn is None:
-            raise RuntimeError("search_stac_api is not available in virtughan.extract.")
-
         params = self._collect_search_params()
         scenes = self._search_scenes_with_timeout(
             params["bbox"],
             params["start_date"],
             params["end_date"],
             params["cloud_cover"],
+            params["collection"],
+            params.get("extra_query"),
             timeout_s=timeout_s,
         )
         count = len(scenes or [])
@@ -1947,10 +1953,6 @@ class ExtractorDockWidget(QDockWidget):
         return len(feats)
 
     def _preview_matching_scenes(self):
-        search_fn = _resolve_extractor_search_stac_api()
-        if search_fn is None:
-            QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in virtughan.extract.")
-            return
         try:
             params = self._collect_search_params()
         except Exception as e:
@@ -1965,11 +1967,13 @@ class ExtractorDockWidget(QDockWidget):
         QgsApplication.processEvents()
         _log(self, "Searching matching scenes...")
         try:
-            scenes = search_fn(
+            scenes = search_stac_features(
+                params["collection"],
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
                 params["cloud_cover"],
+                extra_query=params.get("extra_query"),
             )
             _log(self, f"Matching scenes found: {len(scenes)}")
 

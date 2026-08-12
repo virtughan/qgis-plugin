@@ -1,4 +1,16 @@
 
+## v1.1.1 (2026-05-28)
+
+### Fix
+
+- **installer-dialog-repeat**: fixed installer dialog showing on every QGIS restart; now checks dependency health directly and only shows when deps are actually missing
+- **subprocess-stuck-fallback**: subprocess stuck detection reduced to 90 seconds; automatically falls back to in-process execution and remembers the failure for the rest of the session
+- **proj-conflict**: fixes intermittent subprocess hangs caused by PostgreSQL/PostGIS shipping an older PROJ database that conflicts with QGIS's PROJ; subprocess now explicitly sets PROJ_LIB and removes PostgreSQL from PATH
+- **tiler-formula-plus**: fixes tiler SyntaxError where `+` operator was decoded as space by QGIS 4.x XYZ tile fetcher; uses `__PLUS__` placeholder for safe URL transport
+- **security-urlopen**: replaces `urllib.request.urlopen` with `QgsBlockingNetworkRequest` to pass QGIS plugin store Bandit security scan
+- **aoi-immediate**: AOI mode dropdown now triggers action immediately (map extent, draw rectangle, draw polygon) without extra button clicks; clears previous AOI on switch; re-selecting same mode works
+- **log-autoscroll**: log panels in Compute, Download, and Tiler auto-scroll to latest line; outer page scrolls to show log section when run starts
+
 ## v1.1.0 (2026-05-24)
 
 ### Feat

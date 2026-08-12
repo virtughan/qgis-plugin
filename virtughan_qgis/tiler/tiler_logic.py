@@ -63,6 +63,7 @@ class TilerLogic:
         formula: str,
         timeseries: bool = False,
         operation: Optional[str] = None,
+        collection: str = "sentinel-2-l2a",
     ) -> dict:
         base = {
             "start_date": start_date,
@@ -71,6 +72,7 @@ class TilerLogic:
             "band1": band1,
             "band2": band2 or "",
             "formula": formula,
+            "collection": collection,
         }
         if timeseries:
             base["timeseries"] = True

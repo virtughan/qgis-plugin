@@ -1020,20 +1020,18 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
     # For repair action, force_reinstall=True bypasses this shortcut.
     _activate_vendor_paths()
     if not force_reinstall:
-        # If the install state flag is missing, always show the installer
-        # (even if deps happen to exist from a previous session).
-        if not is_already_installed():
-            _log("No install state flag found; will show installer dialog.", Qgis.Info)
-        else:
-            deps_ok = check_dependencies()
-            imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
-            if deps_ok and imports_ok:
-                _log("Dependencies already properly installed, skipping installer dialog")
-                return True
-            if deps_ok and not imports_ok and import_err:
-                _set_last_error(import_err)
-                _log(import_err, Qgis.Warning)
-                return False
+        deps_ok = check_dependencies()
+        imports_ok, import_err = _check_plugin_import_health() if deps_ok else (False, None)
+        if deps_ok and imports_ok:
+            # Dependencies are healthy — mark as installed and skip dialog
+            if not is_already_installed():
+                mark_as_installed()
+            _log("Dependencies already properly installed, skipping installer dialog")
+            return True
+        if deps_ok and not imports_ok and import_err:
+            _set_last_error(import_err)
+            _log(import_err, Qgis.Warning)
+            return False
     else:
         _log("Force reinstall requested: bypassing healthy-dependencies shortcut", Qgis.Info)
 

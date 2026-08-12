@@ -57,6 +57,12 @@ from ..common.common_logic import (
     match_index_preset,
     load_bands_meta,
     populate_band_combos,
+    collection_band_metadata,
+    collection_band_names,
+    extra_query_for_collection,
+    normalize_collection,
+    processor_kwargs_from_params,
+    search_stac_features,
 )
 
 from ..common.map_setup import setup_default_map
@@ -101,6 +107,35 @@ def _resolve_engine_search_stac_api():
                 engine_search_stac_api = candidate
                 return candidate
     return None
+
+
+def _engine_backend_kwargs(backend_cls, params: dict, *, log_file=None, workers=None):
+    import inspect
+    sig = inspect.signature(backend_cls.__init__)
+    allowed = {name for name in sig.parameters.keys() if name != "self"}
+    if "bands" in allowed:
+        kwargs = processor_kwargs_from_params(params, log_file=log_file, workers=workers)
+    else:
+        kwargs = {
+            "bbox": params["bbox"],
+            "start_date": params["start_date"],
+            "end_date": params["end_date"],
+            "cloud_cover": params["cloud_cover"],
+            "formula": params["formula"],
+            "band1": params["band1"],
+            "band2": params["band2"],
+            "operation": params["operation"],
+            "timeseries": params["timeseries"],
+            "output_dir": params["output_dir"],
+            "log_file": log_file,
+            "cmap": "RdYlGn",
+            "workers": int(workers if workers is not None else params.get("workers", 1) or 1),
+            "smart_filter": params["smart_filter"],
+        }
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if not accepts_kwargs:
+        kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+    return kwargs
 
 UI_PATH = os.path.join(os.path.dirname(__file__), "engine_form.ui")
 FORM_CLASS, _ = uic.loadUiType(UI_PATH)
@@ -453,22 +488,7 @@ def _engine_compute_fallback_worker(params: dict, log_path: str, result_queue):
 
         with open(log_path, "a", encoding="utf-8", buffering=1) as worker_log:
             worker_log.write("[WARNING] macOS fallback: running compute in forked process because external Python preflight failed.\n")
-            proc = backend_cls(
-                bbox=params["bbox"],
-                start_date=params["start_date"],
-                end_date=params["end_date"],
-                cloud_cover=params["cloud_cover"],
-                formula=params["formula"],
-                band1=params["band1"],
-                band2=params["band2"],
-                operation=params["operation"],
-                timeseries=params["timeseries"],
-                output_dir=params["output_dir"],
-                log_file=worker_log,
-                cmap="RdYlGn",
-                workers=params["workers"],
-                smart_filter=params["smart_filter"],
-            )
+            proc = backend_cls(**_engine_backend_kwargs(backend_cls, params, log_file=worker_log))
             proc.compute()
         result_queue.put({"ok": True})
     except Exception:
@@ -610,22 +630,7 @@ def _run_engine_inprocess_mac(params: dict, logf=None, should_cancel=None):
                 )
             workers = 1
 
-        proc = backend_cls(
-            bbox=params["bbox"],
-            start_date=params["start_date"],
-            end_date=params["end_date"],
-            cloud_cover=params["cloud_cover"],
-            formula=params["formula"],
-            band1=params["band1"],
-            band2=params["band2"],
-            operation=params["operation"],
-            timeseries=params["timeseries"],
-            output_dir=params["output_dir"],
-            log_file=logf,
-            cmap="RdYlGn",
-            workers=workers,
-            smart_filter=params["smart_filter"],
-        )
+        proc = backend_cls(**_engine_backend_kwargs(backend_cls, params, log_file=logf, workers=workers))
         proc.compute()
 
 
@@ -727,18 +732,19 @@ def _run_engine_in_subprocess(params: dict, log_path: str, logf=None, should_can
         ],
     }
 
-    runner_code = '''import json
+    runner_code = '''import inspect
+import json
 import os
 import sys
 import time
 import traceback
 
 
-def _check_stac_connectivity(logf, timeout=15):
+def _check_stac_connectivity(logf, collection="sentinel-2-l2a", timeout=15):
     """Quick check if STAC API is reachable before starting compute."""
     import urllib.request
     import ssl
-    url = "https://earth-search.aws.element84.com/v1"
+    url = "https://planetarycomputer.microsoft.com/api/stac/v1" if collection in ("landsat-c2-l2", "sentinel-1-rtc") else "https://earth-search.aws.element84.com/v1"
     logf.write(f"Connectivity check: {url}\\n")
     try:
         # Try with default SSL first
@@ -821,6 +827,54 @@ def _is_transient_read_error(message, details):
     return any(n in message for n in needles) or any(n in details for n in needles)
 
 
+def _backend_kwargs(backend_cls, params, logf):
+    sig = inspect.signature(backend_cls.__init__)
+    allowed = {name for name in sig.parameters.keys() if name != "self"}
+    if "bands" in allowed:
+        bands = []
+        for band in (params.get("band1"), params.get("band2")):
+            if band and band not in bands:
+                bands.append(band)
+        kwargs = {
+            "bbox": params["bbox"],
+            "start_date": params["start_date"],
+            "end_date": params["end_date"],
+            "cloud_cover": params["cloud_cover"],
+            "formula": params["formula"],
+            "bands": bands,
+            "operation": params["operation"],
+            "timeseries": params["timeseries"],
+            "output_dir": params["output_dir"],
+            "log_file": logf,
+            "cmap": "RdYlGn",
+            "workers": params["workers"],
+            "smart_filter": params["smart_filter"],
+            "collection": params.get("collection", "sentinel-2-l2a"),
+            "extra_query": params.get("extra_query"),
+        }
+    else:
+        kwargs = {
+            "bbox": params["bbox"],
+            "start_date": params["start_date"],
+            "end_date": params["end_date"],
+            "cloud_cover": params["cloud_cover"],
+            "formula": params["formula"],
+            "band1": params["band1"],
+            "band2": params["band2"],
+            "operation": params["operation"],
+            "timeseries": params["timeseries"],
+            "output_dir": params["output_dir"],
+            "log_file": logf,
+            "cmap": "RdYlGn",
+            "workers": params["workers"],
+            "smart_filter": params["smart_filter"],
+        }
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    if not accepts_kwargs:
+        kwargs = {k: v for k, v in kwargs.items() if k in allowed}
+    return kwargs
+
+
 def main():
     if len(sys.argv) < 2:
         return 2
@@ -840,10 +894,10 @@ def main():
         logf.write(f"GDAL CPL_LOG: {cpl_log_path}\\n")
 
         # Pre-flight: check if STAC API is reachable before starting compute
-        if not _check_stac_connectivity(logf, timeout=15):
+        if not _check_stac_connectivity(logf, collection=params.get("collection", "sentinel-2-l2a"), timeout=15):
             logf.write("[FATAL] Cannot reach satellite data service. Aborting compute.\\n")
             logf.write("Check your internet connection, VPN, or proxy settings.\\n")
-            logf.write("The service URL is: https://earth-search.aws.element84.com/v1\\n")
+            logf.write("The service URL depends on the selected dataset.\\n")
             return 1
 
         logf.write(f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] Starting VirtughanProcessor\\n")
@@ -866,22 +920,7 @@ def main():
                 logf.write("Imported VirtughanProcessor successfully.\\n")
 
                 logf.write("Creating VirtughanProcessor instance...\\n")
-                proc = VirtughanProcessor(
-                    bbox=params["bbox"],
-                    start_date=params["start_date"],
-                    end_date=params["end_date"],
-                    cloud_cover=params["cloud_cover"],
-                    formula=params["formula"],
-                    band1=params["band1"],
-                    band2=params["band2"],
-                    operation=params["operation"],
-                    timeseries=params["timeseries"],
-                    output_dir=params["output_dir"],
-                    log_file=logf,
-                    cmap="RdYlGn",
-                    workers=params["workers"],
-                    smart_filter=params["smart_filter"],
-                )
+                proc = VirtughanProcessor(**_backend_kwargs(VirtughanProcessor, params, logf))
                 logf.write("Starting compute()...\\n")
                 proc.compute()
                 logf.write("compute() finished.\\n")
@@ -1590,11 +1629,15 @@ class EngineDockWidget(QDockWidget):
                     cloud=80,
                     band1="red",
                     band2="nir",
-                    formula="(band2-band1)/(band2+band1)",
+                    formula="(nir-red)/(nir+red)",
                 )
             except Exception:
                 pass
             v.addWidget(self._common)
+            try:
+                self._common.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
+            except Exception:
+                pass
             _log(self, "Using CommonParamsWidget.", Qgis.Info)
         else:
             fb = QWidget(host)
@@ -1602,7 +1645,7 @@ class EngineDockWidget(QDockWidget):
             self.fb_start = QDateEdit(fb); self.fb_start.setCalendarPopup(True); self.fb_start.setDate(QDate.currentDate().addMonths(-1))
             self.fb_end   = QDateEdit(fb); self.fb_end.setCalendarPopup(True);   self.fb_end.setDate(QDate.currentDate())
             self.fb_cloud = QSpinBox(fb);  self.fb_cloud.setRange(0,100); self.fb_cloud.setValue(30)
-            self.fb_formula = QLineEdit("(band2-band1)/(band2+band1)", fb)
+            self.fb_formula = QLineEdit("(nir-red)/(nir+red)", fb)
             self.fb_band1 = QLineEdit("red", fb)
             self.fb_band2 = QLineEdit("nir", fb)
             form.addRow("Start date", self.fb_start)
@@ -1624,9 +1667,12 @@ class EngineDockWidget(QDockWidget):
 
         if self._common is not None:
             params = self._common.get_params()
+            collection = normalize_collection(params.get("collection"))
             params["band1"] = band1
             params["band2"] = (band2 or None)
             params["formula"] = formula
+            params["collection"] = collection
+            params["extra_query"] = extra_query_for_collection(collection)
             return params
         return {
             "start_date": self.fb_start.date().toString("yyyy-MM-dd"),
@@ -1635,37 +1681,77 @@ class EngineDockWidget(QDockWidget):
             "band1": band1,
             "band2": (band2 or None),
             "formula": formula,
+            "collection": "sentinel-2-l2a",
+            "extra_query": None,
         }
 
+    def _current_collection(self):
+        if self._common is not None:
+            try:
+                return normalize_collection(self._common.get_params().get("collection"))
+            except Exception:
+                pass
+        return "sentinel-2-l2a"
+
     def _init_index_controls(self):
-        self._index_presets = index_presets_two_band()
+        collection = self._current_collection()
+        self._index_presets = index_presets_two_band(collection)
         self._index_updating = False
 
-        bands_meta = load_bands_meta()
+        bands_meta = load_bands_meta(collection)
         populate_band_combos(self.advancedBand1Combo, self.advancedBand2Combo, bands_meta)
-        self.advancedBand1Combo.setCurrentText("red")
-        self.advancedBand2Combo.setCurrentText("nir")
-        self.advancedFormulaEdit.setText("(band2-band1)/(band2+band1)")
+        if collection == "sentinel-1-rtc":
+            self.advancedBand1Combo.setCurrentText("vv")
+            self.advancedBand2Combo.setCurrentText("vh")
+            self.advancedFormulaEdit.setText("10*log10(vv/vh)")
+        elif collection == "landsat-c2-l2":
+            self.advancedBand1Combo.setCurrentText("red")
+            self.advancedBand2Combo.setCurrentText("nir08")
+            self.advancedFormulaEdit.setText("(nir08-red)/(nir08+red)")
+        else:
+            self.advancedBand1Combo.setCurrentText("red")
+            self.advancedBand2Combo.setCurrentText("nir")
+            self.advancedFormulaEdit.setText("(nir-red)/(nir+red)")
 
         self.indexCombo.clear()
         self.indexCombo.addItems([preset.get("label", "") for preset in self._index_presets])
 
-        self.indexCombo.currentTextChanged.connect(self._on_index_changed)
-        self.simpleModeRadio.toggled.connect(self._on_formula_mode_toggled)
-        self.advancedModeRadio.toggled.connect(self._on_formula_mode_toggled)
+        if not getattr(self, "_index_controls_wired", False):
+            self.indexCombo.currentTextChanged.connect(self._on_index_changed)
+            self.simpleModeRadio.toggled.connect(self._on_formula_mode_toggled)
+            self.advancedModeRadio.toggled.connect(self._on_formula_mode_toggled)
 
-        self.advancedBand1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
-        self.advancedBand2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
-        self.advancedFormulaEdit.textChanged.connect(self._sync_reference_from_advanced)
+            self.advancedBand1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+            self.advancedBand2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+            self.advancedFormulaEdit.textChanged.connect(self._sync_reference_from_advanced)
+            self._index_controls_wired = True
 
         current = self._get_common_params()
-        matched = match_index_preset(current.get("band1"), current.get("band2"), current.get("formula"))
+        matched = match_index_preset(current.get("band1"), current.get("band2"), current.get("formula"), collection)
         if matched:
             self.indexCombo.setCurrentText(matched)
         elif self.indexCombo.count() > 0:
             self.indexCombo.setCurrentIndex(0)
 
         self._on_formula_mode_toggled()
+
+    def _on_collection_changed(self, *_):
+        setattr(self, "_selected_preview_scenes", [])
+        self._init_index_controls()
+        collection = self._current_collection()
+        if collection == "sentinel-1-rtc":
+            self.opCombo.clear()
+            self.opCombo.addItems(["median", "mean", "min", "max"])
+            try:
+                self.opCombo.setCurrentText("median")
+            except Exception:
+                pass
+        else:
+            current = self.opCombo.currentText()
+            self.opCombo.clear()
+            self.opCombo.addItems(["mean", "median", "max", "min", "std", "sum", "var", "none"])
+            if current:
+                self.opCombo.setCurrentText(current)
 
     def _on_index_changed(self, label):
         if self._index_updating or not self.simpleModeRadio.isChecked():
@@ -1712,7 +1798,7 @@ class EngineDockWidget(QDockWidget):
         band2 = self.advancedBand2Combo.currentText().strip()
         formula = self.advancedFormulaEdit.text().strip()
 
-        matched = match_index_preset(band1, band2, formula)
+        matched = match_index_preset(band1, band2, formula, self._current_collection())
         if matched:
             self._index_updating = True
             try:
@@ -1723,7 +1809,7 @@ class EngineDockWidget(QDockWidget):
         self.formulaReferenceLabel.setText(self._format_formula_reference(formula, band1, band2))
 
     def _apply_index_preset(self, label):
-        preset = get_index_preset(label)
+        preset = get_index_preset(label, self._current_collection())
         if not preset:
             return
 
@@ -1938,7 +2024,8 @@ class EngineDockWidget(QDockWidget):
                     cloud=30,
                     band1="red",
                     band2="nir",
-                    formula="(band2-band1)/(band2+band1)",
+                    formula="(nir-red)/(nir+red)",
+                    collection="sentinel-2-l2a",
                 )
             except Exception:
                 pass
@@ -1947,7 +2034,7 @@ class EngineDockWidget(QDockWidget):
                 self.fb_start.setDate(QDate.currentDate().addMonths(-1))
                 self.fb_end.setDate(QDate.currentDate())
                 self.fb_cloud.setValue(30)
-                self.fb_formula.setText("(band2-band1)/(band2+band1)")
+                self.fb_formula.setText("(nir-red)/(nir+red)")
                 self.fb_band1.setText("red")
                 self.fb_band2.setText("nir")
             except Exception:
@@ -1958,7 +2045,10 @@ class EngineDockWidget(QDockWidget):
         self._update_aoi_preview()
         self._aoi.clear()
 
-        self.opCombo.setCurrentIndex(7)
+        if self._current_collection() == "sentinel-1-rtc":
+            self.opCombo.setCurrentText("median")
+        else:
+            self.opCombo.setCurrentText("none")
         self.timeseriesCheck.setChecked(False)
         self.smartFilterCheck.setChecked(False)
         self.workersSpin.setMinimum(1)
@@ -1968,7 +2058,7 @@ class EngineDockWidget(QDockWidget):
 
         self.advancedBand1Combo.setCurrentText("red")
         self.advancedBand2Combo.setCurrentText("nir")
-        self.advancedFormulaEdit.setText("(band2-band1)/(band2+band1)")
+        self.advancedFormulaEdit.setText("(nir-red)/(nir+red)")
         self.simpleModeRadio.setChecked(True)
         self._on_formula_mode_toggled()
 
@@ -1995,7 +2085,7 @@ class EngineDockWidget(QDockWidget):
         # In Simple mode, the dropdown selection is authoritative at run time.
         # This prevents stale advanced-field values from leaking into compute params.
         if self.simpleModeRadio.isChecked():
-            preset = get_index_preset(self.indexCombo.currentText())
+            preset = get_index_preset(self.indexCombo.currentText(), self._current_collection())
             if not preset:
                 raise RuntimeError("Please select a valid index preset.")
             p["band1"] = (preset.get("band1") or "").strip()
@@ -2012,7 +2102,7 @@ class EngineDockWidget(QDockWidget):
             raise RuntimeError("Formula is required.")
         if not p.get("band1"):
             raise RuntimeError("Band 1 is required.")
-        if self.advancedModeRadio.isChecked() and not p.get("band2"):
+        if self.advancedModeRadio.isChecked() and not p.get("band2") and p.get("band2") is not None:
             raise RuntimeError("Band 2 is required in Advanced mode.")
 
         op_txt = (self.opCombo.currentText() or "").strip()
@@ -2033,6 +2123,8 @@ class EngineDockWidget(QDockWidget):
             formula=p["formula"],
             band1=p["band1"],
             band2=p.get("band2") or None,
+            collection=normalize_collection(p.get("collection")),
+            extra_query=extra_query_for_collection(p.get("collection")),
             operation=operation,
             timeseries=self.timeseriesCheck.isChecked(),
             smart_filter=self.smartFilterCheck.isChecked(),
@@ -2291,18 +2383,15 @@ class EngineDockWidget(QDockWidget):
         if scenes:
             return scenes
 
-        search_fn = _resolve_engine_search_stac_api()
-        if search_fn is None:
-            _log(self, "Cannot load scene footprints: search_stac_api is not available.", Qgis.Warning)
-            return []
-
         try:
             params = self._collect_search_params()
-            scenes = search_fn(
+            scenes = search_stac_features(
+                params["collection"],
                 params["bbox"],
                 params["start_date"],
                 params["end_date"],
                 params["cloud_cover"],
+                extra_query=params.get("extra_query"),
             )
             self._selected_preview_scenes = scenes or []
             _log(self, f"Loaded {len(self._selected_preview_scenes)} scenes from current filters for main-map footprints.")
@@ -2360,6 +2449,8 @@ class EngineDockWidget(QDockWidget):
             "start_date": p["start_date"],
             "end_date": p["end_date"],
             "cloud_cover": int(p.get("cloud_cover", 30)),
+            "collection": normalize_collection(p.get("collection")),
+            "extra_query": extra_query_for_collection(p.get("collection")),
         }
 
     def _search_scenes_with_timeout(
@@ -2368,21 +2459,21 @@ class EngineDockWidget(QDockWidget):
         start_date,
         end_date,
         cloud_cover,
+        collection="sentinel-2-l2a",
+        extra_query=None,
         timeout_s: float = 30.0,
     ):
-        search_fn = _resolve_engine_search_stac_api()
-        if search_fn is None:
-            raise RuntimeError("search_stac_api is not available in the compute backend.")
-
         result = {"scenes": None, "error": None}
 
         def _worker():
             try:
-                result["scenes"] = search_fn(
+                result["scenes"] = search_stac_features(
+                    collection,
                     bbox,
                     start_date,
                     end_date,
                     cloud_cover,
+                    extra_query=extra_query,
                 )
             except Exception as exc:
                 result["error"] = exc
@@ -2420,15 +2511,14 @@ class EngineDockWidget(QDockWidget):
         return list(result["scenes"] or [])
 
     def _validate_minimum_matching_scenes(self, min_count: int = 2, timeout_s: float = 30.0):
-        if _resolve_engine_search_stac_api() is None:
-            _log(self, "Pre-compute STAC validation skipped because in-process resolver is unavailable.", Qgis.Warning)
-            return
         params = self._collect_search_params()
         scenes = self._search_scenes_with_timeout(
             params["bbox"],
             params["start_date"],
             params["end_date"],
             params["cloud_cover"],
+            params["collection"],
+            params.get("extra_query"),
             timeout_s=timeout_s,
         )
         count = len(scenes or [])
@@ -2517,9 +2607,6 @@ class EngineDockWidget(QDockWidget):
         return len(feats)
 
     def _preview_matching_scenes(self):
-        if _resolve_engine_search_stac_api() is None:
-            QMessageBox.warning(self, "VirtuGhan", "search_stac_api is not available in the compute backend.")
-            return
         try:
             params = self._collect_search_params()
         except Exception as e:
@@ -2539,6 +2626,8 @@ class EngineDockWidget(QDockWidget):
                 params["start_date"],
                 params["end_date"],
                 params["cloud_cover"],
+                params["collection"],
+                params.get("extra_query"),
                 timeout_s=45.0,
             )
             _log(self, f"Matching scenes found: {len(scenes)}")

@@ -467,6 +467,7 @@ def _tile_compute_key(
     colormap_str: str,
     operation: str,
     timeseries: bool,
+    collection: str,
 ) -> str:
     return "|".join(
         [
@@ -482,6 +483,7 @@ def _tile_compute_key(
             str(colormap_str or ""),
             str(operation or ""),
             "1" if bool(timeseries) else "0",
+            str(collection or ""),
         ]
     )
 
@@ -1327,7 +1329,7 @@ def _sanitize_formula(formula: str) -> str:
     - Extra whitespace causes issues
     """
     if not formula:
-        return "band1"
+        return "visual"
 
     f = formula.strip()
 
@@ -1341,7 +1343,7 @@ def _sanitize_formula(formula: str) -> str:
     f = re.sub(r'\s*([+\-*/()])\s*', r'\1', f)
 
     f = f.strip()
-    return f if f else "band1"
+    return f if f else "visual"
 
 
 @app.get("/tile/{z}/{x}/{y}")
@@ -1355,10 +1357,11 @@ async def get_tile(
     cloud_cover: int = Query(30),
     band1: str = Query("visual", description="visual, red, green, blue, nir, swir1, swir2"),
     band2: Optional[str] = Query(None),
-    formula: str = Query("band1", description="(band2 - band1)/(band2 + band1) or 'band1' for visual"),
+    formula: str = Query("visual", description="Named-band expression, e.g. (nir-red)/(nir+red), or 'visual' for true color"),
     colormap_str: str = Query("RdYlGn"),
     operation: str = Query("median"),
     timeseries: bool = Query(False),
+    collection: str = Query("sentinel-2-l2a"),
 ):
     global _ACTIVE_TILE_REQUESTS, _LAST_OUTSIDE_VIEWPORT_LOG_MONOTONIC, _OUTSIDE_VIEWPORT_SUPPRESSED
     # Keep compatibility patches current in long-lived QGIS sessions.
@@ -1484,6 +1487,7 @@ async def get_tile(
             colormap_str=colormap_str,
             operation=operation,
             timeseries=timeseries,
+            collection=collection,
         )
         existing_task = _INFLIGHT_TILE_TASKS.get(compute_key)
         if existing_task is not None and not existing_task.done():
@@ -1499,11 +1503,12 @@ async def get_tile(
                     start_date=start_date,
                     end_date=end_date,
                     cloud_cover=cloud_cover,
-                    band1=band1,
-                    band2=(band2 or ""),
+                    bands=tuple(b for b in (band1, band2) if b),
                     formula=formula,
                     colormap_str=colormap_str,
                     operation=operation,
+                    collection=collection,
+                    mode="IW" if collection == "sentinel-1-rtc" else None,
                     latest=not timeseries,
                 )
             )
@@ -1557,11 +1562,12 @@ async def get_tile(
                         start_date=start_date,
                         end_date=end_date,
                         cloud_cover=cloud_cover,
-                        band1=band1,
-                        band2=(band2 or ""),
+                        bands=tuple(b for b in (band1, band2) if b),
                         formula=formula,
                         colormap_str=colormap_str,
                         operation=operation,
+                        collection=collection,
+                        mode="IW" if collection == "sentinel-1-rtc" else None,
                         latest=not timeseries,
                     ),
                     timeout=_TILE_COMPUTE_TIMEOUT_SEC,
@@ -1624,11 +1630,12 @@ async def get_tile(
                         start_date=start_date,
                         end_date=end_date,
                         cloud_cover=cloud_cover,
-                        band1=band1,
-                        band2=(band2 or ""),
+                        bands=tuple(b for b in (band1, band2) if b),
                         formula=formula,
                         colormap_str=colormap_str,
                         operation=operation,
+                        collection=collection,
+                        mode="IW" if collection == "sentinel-1-rtc" else None,
                         latest=not timeseries,
                     ),
                     timeout=_TILE_COMPUTE_TIMEOUT_SEC,
@@ -1663,6 +1670,7 @@ async def get_tile(
                 "band1": band1,
                 "band2": band2,
                 "formula": formula,
+                "collection": collection,
                 "colormap_str": colormap_str,
                 "operation": operation,
                 "timeseries": timeseries,

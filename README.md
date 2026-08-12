@@ -15,7 +15,7 @@ A QGIS plugin that integrates [VirtuGhan](https://pypi.org/project/virtughan/) c
 Use Tiler when you want a quick visual check before downloading data.
 
 - **What it does**: Shows satellite imagery as map tiles in QGIS.
-- **Data used**: Sentinel-2 imagery filtered by map area, date range, cloud cover, and your chosen bands/formula.
+- **Data used**: Sentinel-2, Landsat, or Sentinel-1 imagery filtered by map area, date range, cloud cover where applicable, and your chosen bands/formula.
 - **Best for**: Fast preview and comparison.
 - **Output**: Visual map tiles in QGIS (preview only, not full download files).
 
@@ -23,8 +23,8 @@ Use Tiler when you want a quick visual check before downloading data.
 
 Use Extractor when you need actual files you can keep and reuse.
 
-- **What it does**: Downloads selected Sentinel-2 bands for your chosen area and dates.
-- **Data used**: Sentinel-2 scenes filtered by date range, cloud cover, and selected band list.
+- **What it does**: Downloads selected Sentinel-2, Landsat, or Sentinel-1 bands for your chosen area and dates.
+- **Data used**: Scenes filtered by dataset, date range, cloud cover where applicable, and selected band list.
 - **Best for**: Creating local datasets for later analysis.
 - **Output**: GeoTIFF/VRT files (optionally zipped), with valid rasters added back into QGIS.
 
@@ -33,7 +33,7 @@ Use Extractor when you need actual files you can keep and reuse.
 Use Engine when you want derived analysis layers instead of raw bands.
 
 - **What it does**: Applies formulas (for example NDVI-style expressions) to selected bands.
-- **Data used**: Sentinel-2 imagery filtered by map area, date range, cloud cover, and selected band/formula options.
+- **Data used**: Sentinel-2, Landsat, or Sentinel-1 imagery filtered by map area, date range, cloud cover where applicable, and selected band/formula options.
 - **Best for**: Index generation, summary statistics over time (mean/median/max/min/etc.), and optional timeseries output.
 - **Output**: Processed rasters (and timeseries outputs when enabled), loaded into QGIS.
 
@@ -109,7 +109,7 @@ cz changelog
 The plugin uses a **pip-bundled runtime install** strategy.
 
 - Bundle only `pip` in `virtughan_qgis/vendor/pip/`
-- On first QGIS load, bootstrap auto-installs `virtughan==1.0.2` + dependencies into `vendor/site-packages/`
+- On first QGIS load, bootstrap auto-installs `virtughan[api]==1.1.1` + dependencies into `vendor/site-packages/`
 - Keeps plugin ZIP small for QGIS store uploads
 - Requires internet connection on first run
 - No separate OS folders needed for pip itself (pip is Python code); OS-specific wheels are resolved during runtime install

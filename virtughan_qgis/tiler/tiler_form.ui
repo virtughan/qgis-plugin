@@ -338,7 +338,7 @@
       <item row="8" column="1" colspan="2">
        <widget class="QLineEdit" name="formulaLine">
         <property name="placeholderText">
-         <string>(band2 - band1) / (band2 + band1)</string>
+         <string>(nir - red) / (nir + red)</string>
         </property>
         <property name="visible"><bool>false</bool></property>
        </widget>
@@ -389,7 +389,18 @@
        </widget>
       </item>
 
-      <item row="12" column="0" colspan="3">
+      <item row="12" column="0">
+       <widget class="QLabel" name="labelCollection">
+        <property name="text">
+         <string>Dataset *</string>
+        </property>
+       </widget>
+      </item>
+      <item row="12" column="1" colspan="2">
+       <widget class="QComboBox" name="collectionCombo"/>
+      </item>
+
+      <item row="13" column="0" colspan="3">
        <spacer name="paramsStretch">
         <property name="orientation"><enum>Qt::Vertical</enum></property>
         <property name="sizeHint" stdset="0">

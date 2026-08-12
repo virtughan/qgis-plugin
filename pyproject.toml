@@ -1,7 +1,7 @@
 [project]
 name = "virtughan-satellite-data-tools"
-version = "1.1.0"
-description = "QGIS plugin for satellite data workflows with STAC search, scene preview, image download, tile basemap creation, and spectral analysis. Currently supports Sentinel-2. It includes Compute, Download, and Tiles tools from VirtuGhan."
+version = "1.1.1"
+description = "QGIS plugin for satellite data workflows with STAC search, scene preview, image download, tile basemap creation, and spectral analysis. Supports Sentinel-2, Landsat, and Sentinel-1. It includes Compute, Download, and Tiles tools from VirtuGhan."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "GPL-3.0"}
@@ -10,7 +10,7 @@ authors = [
     {name = "Kshitij Raj Sharma"},
     {name = "Sahar Mohamed"},
 ]
-keywords = ["qgis", "plugin", "sentinel-2", "stac", "ndvi", "remote-sensing", "geospatial", "raster", "timeseries"]
+keywords = ["qgis", "plugin", "sentinel-2", "sentinel-1", "landsat", "stac", "ndvi", "remote-sensing", "geospatial", "raster", "timeseries"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "virtughan==1.0.2",
+    "virtughan[api]==1.1.1",
 ]
 
 [project.urls]
@@ -41,8 +41,8 @@ test = [
 
 [tool.qgis-plugin]
 name = "VirtuGhan - Satellite Data Tools"
-description = "Satellite data search, preview, download, tile basemap creation, and spectral analysis in QGIS. Currently supports Sentinel-2."
-about = "VirtuGhan helps you discover and process satellite imagery directly in QGIS. Use Tiles to add fast map previews, Download to save selected bands for your AOI/date/cloud filters, and Compute to run spectral formulas such as NDVI and generate analysis rasters. Matching scene footprints can be previewed before processing, and outputs are saved locally and loaded into your QGIS project. For more information and the web version, visit https://virtughan.com/"
+description = "Satellite data search, preview, download, tile basemap creation, and spectral analysis in QGIS. Supports Sentinel-2, Landsat, and Sentinel-1."
+about = "VirtuGhan helps you discover and process satellite imagery directly in QGIS. Use Tiles to add fast map previews, Download to save selected bands for your AOI/date/cloud filters, and Compute to run spectral formulas such as NDVI or Sentinel-1 SAR ratios and generate analysis rasters. Matching scene footprints can be previewed before processing, and outputs are saved locally and loaded into your QGIS project. For more information and the web version, visit https://virtughan.com/"
 qgis_minimum_version = "3.22"
 qgis_maximum_version = "4.99"
 category = "Analysis"

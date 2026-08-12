@@ -12,6 +12,12 @@ from qgis.core import (
 
 from ..bootstrap import activate_runtime_paths
 from ..qt_compat import QtCompat
+from ..common.common_logic import (
+    build_bands_list,
+    collection_choices,
+    extra_query_for_collection,
+    normalize_collection,
+)
 
 activate_runtime_paths()
 
@@ -84,6 +90,9 @@ class _FeedbackTee(io.TextIOBase):
 class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterExtent("EXTENT", "Area of interest (any CRS)"))
+        self.addParameter(QgsProcessingParameterEnum(
+            "COLLECTION", "Dataset",
+            options=[label for _cid, label in collection_choices()], defaultValue=0))
 
         if HAVE_DATE_PARAM:
             self.addParameter(QgsProcessingParameterString(
@@ -106,7 +115,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             "CLOUD_COVER", "Max cloud cover (%)",
             type=QgsProcessingParameterNumber.Integer, defaultValue=30, minValue=0, maxValue=100))
         self.addParameter(QgsProcessingParameterString("FORMULA", "Formula",
-            defaultValue="(band2-band1)/(band2+band1)"))
+            defaultValue="(nir-red)/(nir+red)"))
         self.addParameter(QgsProcessingParameterString("BAND1", "Band 1", defaultValue="red"))
         self.addParameter(QgsProcessingParameterString("BAND2", "Band 2 (optional)",
             defaultValue="nir", optional=True))
@@ -204,14 +213,16 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             with redirect_stdout(tee), redirect_stderr(tee):
                 try:
                     print("Starting compute() …", flush=True)
-                    proc = VirtughanProcessor(
+                    collection_ids = [cid for cid, _label in collection_choices()]
+                    collection_idx = self.parameterAsEnum(parameters, "COLLECTION", context)
+                    collection = normalize_collection(collection_ids[collection_idx] if 0 <= collection_idx < len(collection_ids) else None)
+                    kwargs = dict(
                         bbox=bbox,
                         start_date=s,
                         end_date=e,
                         cloud_cover=cloud,
                         formula=formula,
-                        band1=band1,
-                        band2=band2,
+                        bands=build_bands_list(band1, band2, formula),
                         operation=operation,
                         timeseries=ts,
                         output_dir=out_dir,
@@ -219,7 +230,10 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
                         cmap="RdYlGn",
                         workers=workers,
                         smart_filter=smart,
+                        collection=collection,
+                        extra_query=extra_query_for_collection(collection),
                     )
+                    proc = VirtughanProcessor(**kwargs)
                     print("[checkpoint] entering VirtughanProcessor.compute()", flush=True)
                     proc.compute()
                     print("[checkpoint] exited VirtughanProcessor.compute()", flush=True)

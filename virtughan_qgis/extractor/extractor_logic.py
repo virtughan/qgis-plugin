@@ -6,11 +6,16 @@ from qgis.PyQt.QtCore import QDate, Qt
 from qgis.core import (
     QgsProcessingAlgorithm, QgsProcessingParameterExtent,
     QgsProcessingParameterNumber, QgsProcessingParameterString, QgsProcessingParameterBoolean,
-    QgsProcessingParameterFolderDestination, QgsProcessingUtils,
+    QgsProcessingParameterEnum, QgsProcessingParameterFolderDestination, QgsProcessingUtils,
     QgsProcessingException, QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsRasterLayer)
 
-from ..common.common_logic import default_band_list
+from ..common.common_logic import (
+    collection_band_names,
+    collection_choices,
+    extra_query_for_collection,
+    normalize_collection,
+)
 from ..bootstrap import activate_runtime_paths
 from ..qt_compat import QtCompat
 
@@ -30,7 +35,7 @@ except Exception as e:
     ExtractProcessor = None
     EXTRACTOR_IMPORT_ERROR = e
 
-VALID_BANDS = default_band_list()
+VALID_BANDS = collection_band_names()
 
 def _coerce_to_qdate(val) -> QDate:
     if isinstance(val, QDate):
@@ -75,6 +80,9 @@ class _FeedbackTee(io.TextIOBase):
 class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
         self.addParameter(QgsProcessingParameterExtent("EXTENT", "Area of interest (any CRS)"))
+        self.addParameter(QgsProcessingParameterEnum(
+            "COLLECTION", "Dataset",
+            options=[label for _cid, label in collection_choices()], defaultValue=0))
 
         self.addParameter(QgsProcessingParameterString(
             "START_DATE", "Start date (YYYY-MM-DD)",
@@ -89,7 +97,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
 
         
         self.addParameter(QgsProcessingParameterString(
-            "BANDS_LIST", "Bands to download (comma-separated from VALID_BANDS)",
+            "BANDS_LIST", "Bands to download (comma-separated)",
             defaultValue="red,nir"))
 
         self.addParameter(QgsProcessingParameterBoolean(
@@ -134,11 +142,15 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
 
         
         cloud = max(0, min(100, int(self.parameterAsDouble(parameters, "CLOUD_COVER", context))))
+        collection_ids = [cid for cid, _label in collection_choices()]
+        collection_idx = self.parameterAsEnum(parameters, "COLLECTION", context)
+        collection = normalize_collection(collection_ids[collection_idx] if 0 <= collection_idx < len(collection_ids) else None)
+        valid_bands = collection_band_names(collection)
         bands_csv = (self.parameterAsString(parameters, "BANDS_LIST", context) or "").strip()
         bands_list = [b.strip() for b in bands_csv.split(",") if b.strip()]
         for b in bands_list:
-            if b not in VALID_BANDS:
-                raise QgsProcessingException(f"Invalid band: {b}. Valid: {', '.join(VALID_BANDS)}")
+            if b not in valid_bands:
+                raise QgsProcessingException(f"Invalid band: {b}. Valid: {', '.join(valid_bands)}")
 
         zip_out = self.parameterAsBool(parameters, "ZIP_OUTPUT", context)
         smart = self.parameterAsBool(parameters, "SMART_FILTER", context)
@@ -173,7 +185,9 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
                         log_file=lf,
                         workers=workers,
                         zip_output=zip_out,
-                        smart_filter=smart
+                        smart_filter=smart,
+                        collection=collection,
+                        extra_query=extra_query_for_collection(collection),
                     )
                     proc.extract()
                     print("Extraction finished.", flush=True)

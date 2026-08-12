@@ -172,7 +172,7 @@
          </item>
          <item row="5" column="1" colspan="4">
           <widget class="QLineEdit" name="advancedFormulaEdit">
-           <property name="placeholderText"><string>(band2-band1)/(band2+band1)</string></property>
+           <property name="placeholderText"><string>(nir-red)/(nir+red)</string></property>
            <property name="visible"><bool>false</bool></property>
           </widget>
          </item>

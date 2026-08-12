@@ -6,7 +6,8 @@ import zipfile
 
 from .common_logic import (
     load_bands_meta, populate_band_combos, check_resolution_warning,
-    auto_workers, qdate_to_iso
+    auto_workers, qdate_to_iso, collection_choices, normalize_collection,
+    collection_label, extra_query_for_collection
 )
 
 FORM_PATH = os.path.join(os.path.dirname(__file__), "common_form.ui")
@@ -24,20 +25,51 @@ class CommonParamsWidget(QtWidgets.QWidget):
         self.ui = uic.loadUi(FORM_PATH, self)
         self._bands_meta = load_bands_meta()
 
-        
+        self.collectionCombo.clear()
+        for collection_id, label in collection_choices():
+            self.collectionCombo.addItem(label, collection_id)
+
         self.startDate.setDate(QDate.currentDate().addMonths(-1))
         self.endDate.setDate(QDate.currentDate())
         self.cloudSpin.setRange(0, 100)
         self.cloudSpin.setValue(80)
-        self.formulaEdit.setText("(band2-band1)/(band2+band1)")
+        self.formulaEdit.setText("(nir-red)/(nir+red)")
 
         populate_band_combos(self.band1Combo, self.band2Combo, self._bands_meta)
 
-        
+        self.collectionCombo.currentIndexChanged.connect(self._on_collection_change)
         self.band1Combo.currentTextChanged.connect(self._on_band_change)
         self.band2Combo.currentTextChanged.connect(self._on_band_change)
 
         self._warn_callback = None
+
+    def current_collection(self):
+        idx = self.collectionCombo.currentIndex()
+        return normalize_collection(self.collectionCombo.itemData(idx))
+
+    def _on_collection_change(self, *_):
+        collection = self.current_collection()
+        self._bands_meta = load_bands_meta(collection)
+        populate_band_combos(self.band1Combo, self.band2Combo, self._bands_meta)
+        if collection == "sentinel-1-rtc":
+            self.band1Combo.setCurrentText("vv")
+            self.band2Combo.setCurrentText("vh")
+            self.formulaEdit.setText("10*log10(vv/vh)")
+            self.cloudSpin.setEnabled(False)
+            self.cloudSpin.setToolTip("Cloud cover is ignored for Sentinel-1 RTC.")
+        elif collection == "landsat-c2-l2":
+            self.band1Combo.setCurrentText("red")
+            self.band2Combo.setCurrentText("nir08")
+            self.formulaEdit.setText("(nir08-red)/(nir08+red)")
+            self.cloudSpin.setEnabled(True)
+            self.cloudSpin.setToolTip("")
+        else:
+            self.band1Combo.setCurrentText("red")
+            self.band2Combo.setCurrentText("nir")
+            self.formulaEdit.setText("(nir-red)/(nir+red)")
+            self.cloudSpin.setEnabled(True)
+            self.cloudSpin.setToolTip("")
+        self._on_band_change()
 
     def _on_band_change(self, *_):
         if not self._warn_callback:
@@ -57,15 +89,24 @@ class CommonParamsWidget(QtWidgets.QWidget):
 
     def get_params(self):
         return {
+            "collection": self.current_collection(),
+            "collection_label": collection_label(self.current_collection()),
             "start_date": qdate_to_iso(self.startDate.date()),
             "end_date": qdate_to_iso(self.endDate.date()),
             "cloud_cover": int(self.cloudSpin.value()),
             "band1": self.band1Combo.currentText().strip(),
             "band2": (self.band2Combo.currentText().strip() or None),
             "formula": self.formulaEdit.text().strip(),
+            "extra_query": extra_query_for_collection(self.current_collection()),
         }
 
-    def set_defaults(self, *, start_date=None, end_date=None, cloud=None, band1=None, band2=None, formula=None):
+    def set_defaults(self, *, start_date=None, end_date=None, cloud=None, band1=None, band2=None, formula=None, collection=None):
+        if collection:
+            collection = normalize_collection(collection)
+            for idx in range(self.collectionCombo.count()):
+                if self.collectionCombo.itemData(idx) == collection:
+                    self.collectionCombo.setCurrentIndex(idx)
+                    break
         if start_date: self.startDate.setDate(start_date)
         if end_date: self.endDate.setDate(end_date)
         if cloud is not None: self.cloudSpin.setValue(int(cloud))
