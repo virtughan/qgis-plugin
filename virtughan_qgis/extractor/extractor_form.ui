@@ -112,7 +112,7 @@
           <item row="1" column="0">
            <widget class="QCheckBox" name="smartFilterCheck">
             <property name="text"><string>Apply smart filter</string></property>
-            <property name="checked"><bool>true</bool></property>
+            <property name="checked"><bool>false</bool></property>
            </widget>
           </item>
          </layout>
@@ -196,7 +196,9 @@
           <item row="0" column="3" colspan="2">
            <layout class="QHBoxLayout" name="outLayout">
             <item>
-             <widget class="QLineEdit" name="outputPathEdit"/>
+             <widget class="QLineEdit" name="outputPathEdit">
+              <property name="placeholderText"><string>Blank = QGIS temp</string></property>
+             </widget>
             </item>
             <item>
              <widget class="QPushButton" name="outputBrowseButton">

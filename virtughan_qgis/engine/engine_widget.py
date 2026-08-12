@@ -1555,6 +1555,12 @@ class EngineDockWidget(QDockWidget):
 
         self._init_common_widget()
         self._shorten_static_notes()
+        self.smartFilterCheck.setChecked(False)
+        self.smartFilterCheck.setToolTip(
+            "Optional: reduce matching scenes by selecting representative images over time."
+        )
+        self._smart_filter_warning_key = None
+        self._wire_smart_filter_warning()
 
         self._init_index_controls()
         self._init_advanced_band_selector()
@@ -1591,6 +1597,7 @@ class EngineDockWidget(QDockWidget):
         self.helpButton.clicked.connect(self._open_help)
         self.previewScenesButton.clicked.connect(self._preview_matching_scenes)
         self.showSceneFootprintsCheck.toggled.connect(self._on_show_scene_footprints_toggled)
+        self.smartFilterCheck.toggled.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
 
         # Initialize AOI preview and action button label
         self._update_aoi_preview()
@@ -1733,6 +1740,12 @@ class EngineDockWidget(QDockWidget):
             self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerCombo, 0, 2, 1, 2)
         except Exception:
             pass
+        try:
+            QgsProject.instance().layersAdded.connect(lambda *_: self._populate_aoi_layer_combo())
+            QgsProject.instance().layersRemoved.connect(lambda *_: self._populate_aoi_layer_combo())
+        except Exception:
+            pass
+        self._populate_aoi_layer_combo()
 
     def _shorten_static_notes(self):
         tip = self.ui_root.findChild(QLabel, "indexTipLabel")
@@ -1742,12 +1755,56 @@ class EngineDockWidget(QDockWidget):
         tip.setText("<i>Tip: mixed band resolutions are resampled...</i>")
         tip.setToolTip(full)
         tip.setWordWrap(False)
+
+    def _wire_smart_filter_warning(self):
         try:
-            QgsProject.instance().layersAdded.connect(lambda *_: self._populate_aoi_layer_combo())
-            QgsProject.instance().layersRemoved.connect(lambda *_: self._populate_aoi_layer_combo())
+            if self._common is not None:
+                self._common.startDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
+                self._common.endDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
+            else:
+                self.fb_start.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
+                self.fb_end.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
         except Exception:
             pass
-        self._populate_aoi_layer_combo()
+
+    def _smart_filter_dates(self):
+        if self._common is not None:
+            return self._common.startDate.date(), self._common.endDate.date()
+        return self.fb_start.date(), self.fb_end.date()
+
+    def _maybe_warn_smart_filter_timeframe(self):
+        try:
+            start_date, end_date = self._smart_filter_dates()
+            if not start_date.isValid() or not end_date.isValid() or start_date > end_date:
+                return
+            days = start_date.daysTo(end_date)
+            if days <= 365:
+                self._smart_filter_warning_key = None
+                return
+
+            enabled = bool(self.smartFilterCheck.isChecked())
+            key = (start_date.toString("yyyy-MM-dd"), end_date.toString("yyyy-MM-dd"), enabled)
+            if key == self._smart_filter_warning_key:
+                return
+            self._smart_filter_warning_key = key
+
+            if enabled:
+                msg = (
+                    "Smart filter is enabled for a date range longer than 1 year; "
+                    "it may reduce the number of scenes used for compute by selecting representative scenes."
+                )
+            else:
+                msg = (
+                    "Date range is longer than 1 year. If you enable Smart filter, "
+                    "it may reduce the number of scenes used for compute by selecting representative scenes."
+                )
+            _log(self, msg, Qgis.Warning)
+            try:
+                self.iface.messageBar().pushWarning("VirtuGhan", msg)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _populate_aoi_layer_combo(self):
         combo = getattr(self, "aoiLayerCombo", None)

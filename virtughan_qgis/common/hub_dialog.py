@@ -142,28 +142,31 @@ class VirtughanHubDialog(QDialog):
         self._help_by_key = {
             "engine": """
 <h3>Compute</h3>
-<p>Compute fetches matching scenes inside your AOI and date range, applies your formula, and combines results into one analysis layer. You can combine values over time using methods like mean, max, min, or median. If you enable timeseries, it also generates time-series outputs from the matching scenes in your selected date range. This is useful when you want both a summary output and a time-based view, such as NDVI over time.</p>
+<p>Compute fetches matching scenes inside your AOI and date range, applies a preset or manual formula, and combines results into one analysis layer. You can combine values over time using methods like mean, max, min, or median. If you enable timeseries, it also generates time-series outputs from the matching scenes in your selected date range. This is useful when you want both a summary output and a time-based view, such as NDVI over time.</p>
 <p><b>Purpose:</b> Create layers after computing on the satellite images eg. create and download NDVI layer in a map.</p>
 <p><b>Use Compute when:</b> you want derived outputs, not only raw band/image downloads.</p>
-<p><b>Data source:</b> Registry of Open Data on AWS.</p>
+<p><b>Datasets:</b> Sentinel-2, Landsat 8/9, and Sentinel-1 (Experimental).</p>
 <h4>Main fields</h4>
 <ul>
+    <li><b>Dataset *</b>: choose Sentinel-2, Landsat 8/9, or Sentinel-1 (Experimental). Cloud cover is not used for Sentinel-1.</li>
     <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
     <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
-    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula. Eg. NDVI = (Red - NIR)/(Red + NIR)</li>
-    <li><b>Area of Interest *</b>: Bounding box of the area where you want to work on computation. Choose AOI mode, then use the <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
+    <li><b>Simple (Presets)</b>: choose a ready-made index or SAR formula for the selected dataset.</li>
+    <li><b>Advanced (Manual)</b>: add one or more band dropdowns with <b>+</b>, then write a formula using those band names. Bands selected but not used in the formula are ignored before processing.</li>
+    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. If several polygon features are selected, Compute can use their combined AOI.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
     <li><b>Aggregation</b>: aggregate multiple scenes with mean/median/min/max/etc.</li>
     <li><b>Generate timeseries</b>: export intermediate frames and GIF animation. The GIF file can be found in the project folder after the computation is complete.</li>
-    <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
+    <li><b>Apply smart filter</b>: optional and off by default. If enabled, it selects representative scenes over time and can reduce the number of images used, especially for date ranges longer than 1 year.</li>
     <li><b>Workers</b>: parallel processing count. Increase for faster runs on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
     <li><b>Output folder</b>: destination directory (blank uses temporary location).</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
-    <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
+    <li><b>Preview Matching Scenes</b>: review matching scenes before running. If no images match the selected AOI, date range, dataset, and filters, a message explains that no matching images were found.</li>
     <li><b>Run Compute</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
 </ul>
+<p><i>Large AOIs are logged as warnings. Very large AOIs show a confirmation dialog before processing.</i></p>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
 """,
@@ -172,24 +175,25 @@ class VirtughanHubDialog(QDialog):
 <p>Download saves source imagery for your AOI using the bands you choose. Each downloaded image includes all selected bands in one multi-band file. If multiple scenes match the selected date range, multiple files are downloaded.</p>
 <p><b>Purpose:</b> Download satellite image bands as raster layers to your local machine.</p>
 <p><b>Use Download when:</b> you want original band/image downloads instead of computed outputs.</p>
-<p><b>Data source:</b> Registry of Open Data on AWS.</p>
+<p><b>Datasets:</b> Sentinel-2, Landsat 8/9, and Sentinel-1 (Experimental).</p>
 <h4>Main fields</h4>
 <ul>
+    <li><b>Dataset *</b>: choose Sentinel-2, Landsat 8/9, or Sentinel-1 (Experimental). Cloud cover is not used for Sentinel-1.</li>
     <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
     <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
-    <li><b>Band 1</b>, <b>Band 2</b>, <b>Formula</b>: shared Common Parameters used for consistent scene preview/filter context.</li>
     <li><b>Bands to download *</b>: select one or more bands that you want to download as images.</li>
-    <li><b>Area of Interest *</b>: Bounding box of the area where you want to download images. Choose AOI mode, then use the <b>Use Canvas Extent</b> or <b>Draw AOI</b>; <b>Clear</b> resets AOI.</li>
+    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. If several polygon features are selected, Download can use their combined AOI.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
-    <li><b>Apply smart filter</b>: if enabled chooses weekly image for frequency upto 2 months, monthly for up to 1 year , quarterly up to 3 years and semi-annually for more than 3 years. For each period it selects least cloud cover image.</li>
+    <li><b>Apply smart filter</b>: optional and off by default. If enabled, it selects representative scenes over time and can reduce the number of downloaded images, especially for date ranges longer than 1 year.</li>
     <li><b>Workers</b>: parallel download/processing count. Increase for faster runs on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
     <li><b>Output folder</b>: destination directory for downloaded rasters.</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
-    <li><b>Preview Matching Scenes</b>: review matching scenes before running.</li>
+    <li><b>Preview Matching Scenes</b>: review matching scenes before running. If no images match the selected AOI, date range, dataset, and filters, a message explains that no matching images were found.</li>
     <li><b>Download Images</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
 </ul>
+<p><i>Large AOIs are logged as warnings. Very large AOIs show a confirmation dialog before downloading.</i></p>
 <p><i>Note: ZIP output option is removed in this version.</i></p>
 <p><i>* Required fields</i></p>
 <p>To learn more about VirtuGhan, visit <a href="https://github.com/virtughan">GitHub</a> or <a href="https://virtughan.com">virtughan.com</a>.</p>
@@ -199,14 +203,16 @@ class VirtughanHubDialog(QDialog):
 <p>Tiles creates a fast layer for visual exploration and can be used as a basemap in QGIS. Choose your formula or index first, then create the tile layer. You can create multiple tile layers with different indices and blend them later using layer opacity in QGIS. Tiles uses the best available imagery in your selected date range and applies your selected formula while keeping pan and zoom responsive.</p>
 <p><b>Purpose:</b> Create and add map tiles for quick visual exploration of satellite imagery in QGIS.</p>
 <p><b>Use Tiles when:</b> you want a fast basemap-like layer to inspect coverage and patterns before Download or Compute.</p>
-<p><b>Data source:</b> Registry of Open Data on AWS rendered through the VirtuGhan tile backend.</p>
+<p><b>Datasets:</b> Sentinel-2, Landsat 8/9, and Sentinel-1 (Experimental).</p>
 <h4>Main fields</h4>
 <ul>
     <li><b>Backend URL *</b>: tile service endpoint.</li>
     <li><b>Layer Name *</b>: name shown in the QGIS Layers panel.</li>
+    <li><b>Dataset *</b>: choose Sentinel-2, Landsat 8/9, or Sentinel-1 (Experimental). Cloud cover is not used for Sentinel-1.</li>
     <li><b>Start Date *</b>, <b>End Date *</b>: search period for source imagery.</li>
     <li><b>Cloud cover (%) *</b>: Search Images with cloud cover less than this value.</li>
-    <li><b>Band 1 *</b>, <b>Band 2 (optional)</b>, <b>Formula *</b>: expression inputs and calculation formula used for tile rendering.</li>
+    <li><b>Simple (Presets)</b>: choose a ready-made index or SAR formula for the selected dataset.</li>
+    <li><b>Advanced (Manual)</b>: choose bands and write the formula used for tile rendering.</li>
     <li><b>Time series (aggregate)</b>: if enabled creates aggregated tile output across dates; choose <b>Aggregation</b> method.</li>
 </ul>
 <h4>Options and output</h4>
@@ -263,8 +269,9 @@ class VirtughanHubDialog(QDialog):
 """,
     "dependencies": """
 <h3>Dependencies</h3>
-<p><b>Repair Dependencies</b> checks core runtime packages (<b>virtughan</b>, <b>rasterio</b>, <b>numpy</b>). If healthy, it leaves them unchanged; if broken/missing, it repairs automatically.</p>
+<p><b>Repair Dependencies</b> checks core runtime packages including <b>virtughan</b>, <b>rasterio</b>, <b>numpy</b>, <b>attrs</b>, and <b>matplotlib</b>. If healthy, it leaves them unchanged; if broken/missing, it repairs automatically.</p>
 <p><b>Reinstall Dependencies</b> force-clears plugin-managed runtime folders and reinstalls dependencies from scratch.</p>
+<p>An internet connection is required when packages need to be downloaded or reinstalled.</p>
 <p>If one runtime folder is locked, installer automatically retries in the alternate runtime folder. If both are locked, restart QGIS and try again.</p>
 <p><b>Uninstall dependencies during plugin uninstall</b>: when enabled, dependencies are removed when plugin files are removed from QGIS Plugin Manager.</p>
 <p><i>After successful reinstall, restart QGIS for a clean runtime reload.</i></p>

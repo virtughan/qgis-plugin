@@ -158,15 +158,8 @@ def _apply_pyproj_windows_guard(logger=None):
     except Exception:
         pass
 
-    if selected_proj_path:
-        try:
-            from pyproj import datadir as _pyproj_datadir
-            _pyproj_datadir.set_data_dir(selected_proj_path)
-            if logger:
-                logger(f"Pinned pyproj data dir: {selected_proj_path}")
-        except Exception as datadir_exc:
-            if logger:
-                logger(f"Could not pin pyproj data dir: {datadir_exc}")
+    if selected_proj_path and logger:
+        logger(f"Using PROJ data path from environment: {selected_proj_path}")
 
     _PYPROJ_GUARD_APPLIED = True
     if logger:
@@ -901,11 +894,6 @@ class _ExtractorTask(QgsTask):
                 _reload_pyproj_modules(logger=lambda m: logf.write(f"[INFO] {m}\n"))
                 logf.write(f"[INFO] PROJ_LIB={os.environ.get('PROJ_LIB', '')}\n")
                 logf.write(f"[INFO] PROJ_DATA={os.environ.get('PROJ_DATA', '')}\n")
-                try:
-                    from pyproj import datadir as _pyproj_datadir
-                    logf.write(f"[INFO] pyproj_data_dir={_pyproj_datadir.get_data_dir()}\n")
-                except Exception as datadir_exc:
-                    logf.write(f"[INFO] pyproj_data_dir=unavailable ({datadir_exc})\n")
                 logf.write(
                     f"[{datetime.now().isoformat(timespec='seconds')}] Starting Extractor\n"
                 )
@@ -1088,10 +1076,16 @@ class ExtractorDockWidget(QDockWidget):
 
         self._init_common_widget()
         apply_primary_button_style(self.runButton)
+        self.smartFilterCheck.setChecked(False)
+        self.smartFilterCheck.setToolTip(
+            "Optional: reduce matching scenes by selecting representative images over time."
+        )
         try:
             self.commonWidget.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
         except Exception:
             pass
+        self._smart_filter_warning_key = None
+        self._wire_smart_filter_warning()
         self._on_collection_changed()
         self.progressBar.setVisible(False)
         self.workersSpin.setMinimum(1)
@@ -1113,6 +1107,7 @@ class ExtractorDockWidget(QDockWidget):
         self.helpButton.clicked.connect(self._open_help)
         self.previewScenesButton.clicked.connect(self._preview_matching_scenes)
         self.showSceneFootprintsCheck.toggled.connect(self._on_show_scene_footprints_toggled)
+        self.smartFilterCheck.toggled.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
 
         self._update_aoi_preview()
         self._aoi_mode_changed(self.aoiModeCombo.currentText())
@@ -1131,6 +1126,50 @@ class ExtractorDockWidget(QDockWidget):
         self._selected_preview_scenes = []
         self._has_successful_run = False
         self._last_output_layer_ids = []
+
+    def _wire_smart_filter_warning(self):
+        try:
+            self.commonWidget.startDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
+            self.commonWidget.endDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
+        except Exception:
+            pass
+
+    def _maybe_warn_smart_filter_timeframe(self):
+        try:
+            if not self.commonWidget:
+                return
+            start_date = self.commonWidget.startDate.date()
+            end_date = self.commonWidget.endDate.date()
+            if not start_date.isValid() or not end_date.isValid() or start_date > end_date:
+                return
+            days = start_date.daysTo(end_date)
+            if days <= 365:
+                self._smart_filter_warning_key = None
+                return
+
+            enabled = bool(self.smartFilterCheck.isChecked())
+            key = (start_date.toString("yyyy-MM-dd"), end_date.toString("yyyy-MM-dd"), enabled)
+            if key == self._smart_filter_warning_key:
+                return
+            self._smart_filter_warning_key = key
+
+            if enabled:
+                msg = (
+                    "Smart filter is enabled for a date range longer than 1 year; "
+                    "it may reduce the number of downloaded images by selecting representative scenes."
+                )
+            else:
+                msg = (
+                    "Date range is longer than 1 year. If you enable Smart filter, "
+                    "it may reduce the number of downloaded images by selecting representative scenes."
+                )
+            _log(self, msg, Qgis.Warning)
+            try:
+                self.iface.messageBar().pushWarning("VirtuGhan", msg)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _set_header_logo(self):
         try:
@@ -1609,6 +1648,7 @@ class ExtractorDockWidget(QDockWidget):
                 self.commonWidget.reset()
             except Exception:
                 pass
+        self.smartFilterCheck.setChecked(False)
         self.workersSpin.setValue(self._recommended_default_workers())
 
     def _recommended_default_workers(self) -> int:
