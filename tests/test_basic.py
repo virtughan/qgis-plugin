@@ -79,7 +79,7 @@ def test_metadata_generation():
     assert metadata_file.exists()
 
     content = metadata_file.read_text()
-    assert "name=VirtuGhan QGIS Plugin" in content
+    assert "name=VirtuGhan - Satellite Data Tools" in content
     assert "version=" in content
     assert "qgisMinimumVersion=" in content
 

@@ -21,7 +21,7 @@ def test_metadata_content():
         assert 'author' in general
         assert 'email' in general
         
-        assert general['name'] == 'VirtuGhan QGIS Plugin'
+        assert general['name'] == 'VirtuGhan - Satellite Data Tools'
         assert general['qgisMinimumVersion'] == '3.22'
         
         version = general['version']
