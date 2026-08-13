@@ -1279,6 +1279,7 @@ class ExtractorDockWidget(QDockWidget):
         return "sentinel-2-l2a"
 
     def _init_aoi_layer_selector(self):
+        self._last_aoi_layer_id = None
         self.aoiLayerCombo = QComboBox(self.ui_root)
         self.aoiLayerCombo.setToolTip("Choose a polygon layer from the current project")
         self.aoiLayerCombo.setVisible(False)
@@ -1298,7 +1299,7 @@ class ExtractorDockWidget(QDockWidget):
         combo = getattr(self, "aoiLayerCombo", None)
         if combo is None:
             return
-        current_id = combo.currentData()
+        current_id = combo.currentData() or getattr(self, "_last_aoi_layer_id", None)
         combo.blockSignals(True)
         combo.clear()
         layers = polygon_layers(QgsProject.instance())
@@ -1311,6 +1312,8 @@ class ExtractorDockWidget(QDockWidget):
             idx = combo.findData(current_id)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
+            elif getattr(self, "_last_aoi_layer_id", None) == current_id:
+                self._last_aoi_layer_id = None
         combo.blockSignals(False)
 
     def _selected_aoi_layer(self):
@@ -1328,6 +1331,7 @@ class ExtractorDockWidget(QDockWidget):
         if layer is None or not layer.isValid():
             self._update_aoi_preview("AOI: select a polygon layer first.")
             return
+        self._last_aoi_layer_id = layer.id()
 
         selected_fids = {f.id() for f in layer.selectedFeatures()}
         try:
@@ -1459,6 +1463,11 @@ class ExtractorDockWidget(QDockWidget):
             if "layer" in t:
                 if hasattr(self, "aoiLayerCombo"):
                     self.aoiLayerCombo.setVisible(True)
+                    self._populate_aoi_layer_combo()
+                    layer_id = self.aoiLayerCombo.currentData()
+                    if layer_id and layer_id == getattr(self, "_last_aoi_layer_id", None) and self._aoi_bbox:
+                        self.aoiClearButton.setVisible(True)
+                        return
                 self.aoiClearButton.setVisible(True)
                 self._use_layer_aoi()
             elif hasattr(self, "aoiLayerCombo"):
