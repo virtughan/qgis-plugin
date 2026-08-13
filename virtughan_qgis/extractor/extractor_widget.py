@@ -92,7 +92,6 @@ from ..qt_compat import QtCompat, QMessageBoxCompat
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
-_EXTRACTOR_SUBPROCESS_DISABLED = False  # Set True after subprocess fails; use in-process for rest of session
 try:
     from ..common.common_widget import CommonParamsWidget
 except Exception as _e:
@@ -610,7 +609,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                             pass
                     raise RuntimeError(
                         "Extractor subprocess appears stuck (no progress for 90 seconds).\n\n"
-                        "Falling back to in-process execution."
+                        "This usually means the satellite data service is unreachable or very slow."
                     )
 
                 if now > deadline:
@@ -649,12 +648,15 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
+            stdout_tail = (stdout_data or "").strip()
             stderr_tail = (stderr_data or "").strip()
+            if stdout_tail:
+                stdout_tail = stdout_tail[-1200:]
             if stderr_tail:
                 stderr_tail = stderr_tail[-800:]
             raise RuntimeError(
                 f"Extractor subprocess failed (exit code {proc.returncode}). "
-                f"python={python_exe}. stderr_tail={stderr_tail}"
+                f"python={python_exe}. stdout_tail={stdout_tail} stderr_tail={stderr_tail}"
             )
     finally:
         try:
@@ -889,7 +891,6 @@ class _ExtractorTask(QgsTask):
         return super().cancel()
 
     def run(self):
-        global _EXTRACTOR_SUBPROCESS_DISABLED
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
@@ -908,33 +909,42 @@ class _ExtractorTask(QgsTask):
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
-                elif _EXTRACTOR_SUBPROCESS_DISABLED:
-                    raise RuntimeError(
-                        "Download subprocess was disabled earlier in this QGIS session. "
-                        "Restart QGIS and try again. In-process download fallback is disabled on this platform "
-                        "to avoid native PROJ/pyproj crashes."
-                    )
                 else:
-                    try:
-                        _run_extractor_in_subprocess(
-                            self.params,
-                            self.log_path,
-                            logf=logf,
-                            should_cancel=self.isCanceled,
-                        )
-                    except RuntimeError as sub_err:
-                        err_msg = str(sub_err)
-                        is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
-                        is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
-                        if is_stuck or is_env_issue:
-                            _EXTRACTOR_SUBPROCESS_DISABLED = True
-                            logf.write(
-                                f"\n[WARNING] Subprocess failed: {err_msg}\n"
-                                "[INFO] In-process download fallback is disabled on this platform to avoid native crashes.\n"
-                                "[INFO] Restart QGIS and try again, or reduce AOI/date range if the subprocess timed out.\n"
+                    max_attempts = 2
+                    for attempt in range(1, max_attempts + 1):
+                        try:
+                            if attempt > 1:
+                                logf.write(f"[INFO] Retrying download in a fresh subprocess (attempt {attempt}/{max_attempts}).\n")
+                            _run_extractor_in_subprocess(
+                                self.params,
+                                self.log_path,
+                                logf=logf,
+                                should_cancel=self.isCanceled,
                             )
-                            raise
-                        else:
+                            break
+                        except RuntimeError as sub_err:
+                            err_msg = str(sub_err)
+                            is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
+                            is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
+                            retryable = is_stuck or is_env_issue
+                            if retryable and attempt < max_attempts:
+                                logf.write(
+                                    f"\n[WARNING] Subprocess attempt {attempt}/{max_attempts} failed: {err_msg}\n"
+                                )
+                                continue
+                            if retryable:
+                                logf.write(
+                                    f"\n[WARNING] Subprocess failed: {err_msg}\n"
+                                    "[INFO] Falling back to single-process download (workers=1).\n"
+                                )
+                                fallback_params = dict(self.params)
+                                fallback_params["workers"] = 1
+                                _run_extractor_inprocess_mac(
+                                    fallback_params,
+                                    logf=logf,
+                                    should_cancel=self.isCanceled,
+                                )
+                                break
                             raise
             return True
         except _TaskCancelledError as e:

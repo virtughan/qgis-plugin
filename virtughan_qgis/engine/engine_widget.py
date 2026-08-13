@@ -104,8 +104,6 @@ except Exception as _e:
 
 engine_search_stac_api = None
 _COMPUTE_SUBPROCESS_RUN_COUNT = 0
-_SUBPROCESS_DISABLED = False  # Set True after subprocess fails; use in-process for rest of session
-
 
 def _resolve_engine_search_stac_api():
     global engine_search_stac_api
@@ -197,7 +195,7 @@ def _build_engine_failure_message(exc, log_path: str | None = None) -> str:
 
     if "appears stuck" in text or "no progress for" in text:
         return (
-            "Compute backend appears stuck — no progress was detected for 3 minutes.\n\n"
+            "Compute backend appears stuck — no progress was detected for 90 seconds.\n\n"
             "This usually means the satellite data service (STAC API) is unreachable "
             "or responding very slowly.\n\n"
             "Things to try:\n"
@@ -792,8 +790,8 @@ def _check_stac_connectivity(logf, collection="sentinel-2-l2a", timeout=15):
 
 
 def _configure_runtime(payload, logf):
-    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "20")
-    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "3")
+    os.environ.setdefault("GDAL_HTTP_TIMEOUT", "30")
+    os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "8")
     os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
     os.environ.setdefault("GDAL_HTTP_MULTIRANGE", "NO")
     os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
@@ -926,9 +924,15 @@ def main():
 
         max_attempts = 4
         fallback_applied = False
+        single_worker_retry = False
         for attempt in range(1, max_attempts + 1):
             try:
+                attempt_params = dict(params)
+                if single_worker_retry:
+                    attempt_params["workers"] = 1
                 logf.write(f"Compute attempt {attempt}/{max_attempts}\\n")
+                if single_worker_retry:
+                    logf.write("Using workers=1 for transient raster read retry.\\n")
                 if attempt == 1:
                     logf.write("Please wait: preparing scenes and computing output (this may take few minutes depending on your area and time range).\\n")
                 logf.write("Importing backend module virtughan.engine...\\n")
@@ -936,7 +940,7 @@ def main():
                 logf.write("Imported VirtughanProcessor successfully.\\n")
 
                 logf.write("Creating VirtughanProcessor instance...\\n")
-                proc = VirtughanProcessor(**_backend_kwargs(VirtughanProcessor, params, logf))
+                proc = VirtughanProcessor(**_backend_kwargs(VirtughanProcessor, attempt_params, logf))
                 logf.write("Starting compute()...\\n")
                 proc.compute()
                 logf.write("compute() finished.\\n")
@@ -948,6 +952,7 @@ def main():
                     if not fallback_applied:
                         _apply_transient_read_fallback(logf)
                         fallback_applied = True
+                    single_worker_retry = True
                     wait_s = 2 * attempt
                     logf.write(
                         f"Transient raster read error detected (attempt {attempt}/{max_attempts}); retrying in {wait_s}s...\\n"
@@ -1216,7 +1221,7 @@ if __name__ == "__main__":
                         except Exception:
                             pass
                     raise RuntimeError(
-                        "Compute backend appears stuck (no progress for 3 minutes).\n\n"
+                        "Compute backend appears stuck (no progress for 90 seconds).\n\n"
                         "This usually means the satellite data service is unreachable or very slow.\n"
                         "Try again later, or use a smaller AOI/date range."
                     )
@@ -1290,12 +1295,15 @@ if __name__ == "__main__":
             logf.write(stderr_data.strip() + "\n")
 
         if proc.returncode != 0:
+            stdout_tail = (stdout_data or "").strip()
             stderr_tail = (stderr_data or "").strip()
+            if stdout_tail:
+                stdout_tail = stdout_tail[-1200:]
             if stderr_tail:
                 stderr_tail = stderr_tail[-800:]
             raise RuntimeError(
                 f"Engine subprocess failed (exit code {proc.returncode}). "
-                f"python={python_exe}. stderr_tail={stderr_tail}"
+                f"python={python_exe}. stdout_tail={stdout_tail} stderr_tail={stderr_tail}"
             )
     finally:
         try:
@@ -1322,7 +1330,6 @@ class _VirtughanTask(QgsTask):
         return super().cancel()
 
     def run(self):
-        global _SUBPROCESS_DISABLED
         managed_env_keys = (
             "CPL_LOG",
             "GDAL_HTTP_TIMEOUT",
@@ -1351,33 +1358,42 @@ class _VirtughanTask(QgsTask):
                         logf=logf,
                         should_cancel=self.isCanceled,
                     )
-                elif _SUBPROCESS_DISABLED:
-                    raise RuntimeError(
-                        "Compute subprocess was disabled earlier in this QGIS session. "
-                        "Restart QGIS and try again. In-process compute fallback is disabled on this platform "
-                        "to avoid native PROJ/pyproj crashes."
-                    )
                 else:
-                    try:
-                        _run_engine_in_subprocess(
-                            self.params,
-                            self.log_path,
-                            logf=logf,
-                            should_cancel=self.isCanceled,
-                        )
-                    except RuntimeError as sub_err:
-                        err_msg = str(sub_err)
-                        is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
-                        is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
-                        if is_stuck or is_env_issue:
-                            _SUBPROCESS_DISABLED = True
-                            logf.write(
-                                f"\n[WARNING] Subprocess failed: {err_msg}\n"
-                                "[INFO] In-process compute fallback is disabled on this platform to avoid native crashes.\n"
-                                "[INFO] Restart QGIS and try again, or reduce AOI/date range if the subprocess timed out.\n"
+                    max_attempts = 2
+                    for attempt in range(1, max_attempts + 1):
+                        try:
+                            if attempt > 1:
+                                logf.write(f"[INFO] Retrying compute in a fresh subprocess (attempt {attempt}/{max_attempts}).\n")
+                            _run_engine_in_subprocess(
+                                self.params,
+                                self.log_path,
+                                logf=logf,
+                                should_cancel=self.isCanceled,
                             )
-                            raise
-                        else:
+                            break
+                        except RuntimeError as sub_err:
+                            err_msg = str(sub_err)
+                            is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
+                            is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
+                            retryable = is_stuck or is_env_issue
+                            if retryable and attempt < max_attempts:
+                                logf.write(
+                                    f"\n[WARNING] Subprocess attempt {attempt}/{max_attempts} failed: {err_msg}\n"
+                                )
+                                continue
+                            if retryable:
+                                logf.write(
+                                    f"\n[WARNING] Subprocess failed: {err_msg}\n"
+                                    "[INFO] Falling back to single-process compute (workers=1).\n"
+                                )
+                                fallback_params = dict(self.params)
+                                fallback_params["workers"] = 1
+                                _run_engine_inprocess_mac(
+                                    fallback_params,
+                                    logf=logf,
+                                    should_cancel=self.isCanceled,
+                                )
+                                break
                             raise
             return True
         except _TaskCancelledError as e:
@@ -2312,7 +2328,10 @@ class EngineDockWidget(QDockWidget):
         self._update_aoi_preview()
         self._aoi.clear()
 
-    def _update_aoi_preview(self):
+    def _update_aoi_preview(self, text=None):
+        if text:
+            self.aoiPreviewLabel.setText(text)
+            return
         if self._aoi_bbox:
             x1, y1, x2, y2 = self._aoi_bbox
             _level, area = aoi_size_level(self._aoi_bbox)
