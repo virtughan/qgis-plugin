@@ -1,4 +1,21 @@
 
+## v1.2.0 (2026-08-13)
+
+### Feat
+
+- **dataset-support**: adds VirtuGhan 1.1.1 runtime support for Sentinel-2, Landsat 8/9, and Sentinel-1 (Experimental) workflows
+- **multi-polygon-aoi**: adds layer-based AOI selection with combined bbox or per-polygon batch processing for Compute and Download
+- **advanced-formulas**: supports multi-band Advanced formula selection in Compute and Tiler with automatic filtering of unused selected bands
+- **tiler-palettes**: adds palette selection for XYZ tiles with visual swatches and cache-safe refresh behavior
+- **about-page**: adds an About tab with plugin, VirtuGhan, GitHub, PyPI, and web links
+
+### Fix
+
+- **qgis4-compat**: improves Qt 6 compatibility for dynamic controls, palette roles, and layout resizing
+- **runtime-stability**: improves subprocess timeout recovery with in-process fallback for Compute and Download
+- **aoi-ux**: improves AOI layer reuse, current/previous AOI naming, symbology, and no-image-found messaging
+- **help-texts**: updates help content for new datasets, AOI layer selection, batch behavior, and Advanced options
+
 ## v1.1.1 (2026-05-28)
 
 ### Fix
