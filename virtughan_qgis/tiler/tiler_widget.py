@@ -6,6 +6,7 @@ import threading
 import importlib
 import logging
 import json
+import time
 from collections import deque
 
 from qgis.PyQt import uic
@@ -22,6 +23,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QComboBox,
+    QScrollArea,
 )
 from qgis.core import QgsMessageLog, Qgis, QgsProject, QgsBlockingNetworkRequest
 from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform
@@ -978,7 +980,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.paletteCombo.setMinimumWidth(132)
         for name, colors in self._palette_definitions():
             self.paletteCombo.addItem(self._palette_icon(colors, width=96, height=18), "", name)
-            self.paletteCombo.setItemData(self.paletteCombo.count() - 1, name, Qt.ToolTipRole)
+            self.paletteCombo.setItemData(self.paletteCombo.count() - 1, name, QtCompat.ToolTipRole)
         self._update_palette_tooltip()
 
     def _update_palette_tooltip(self, *_):
@@ -1009,10 +1011,12 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _init_advanced_band_selector(self):
         self.advancedBandsSelector = DynamicBandSelector(self)
+        self.advancedBandsSelector.setSizePolicy(QSizePolicyCompat.Expanding, QSizePolicyCompat.Minimum)
         self.advancedBandsSelector.changed.connect(self._sync_reference_from_advanced)
+        self.advancedBandsSelector.changed.connect(self._resize_advanced_band_selector_row)
         try:
             grid = self.findChild(QWidget, "groupBoxParams").layout()
-            grid.addWidget(self.advancedBandsSelector, 7, 1, 2, 2)
+            grid.addWidget(self.advancedBandsSelector, 7, 1, 1, 2)
         except Exception:
             self.advancedBandsSelector.setParent(self)
 
@@ -1022,6 +1026,38 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.band2Combo.setVisible(False)
         self._refresh_advanced_band_selector()
         self.advancedBandsSelector.setVisible(self.advancedModeRadio.isChecked())
+        self._resize_advanced_band_selector_row()
+
+    def _resize_advanced_band_selector_row(self):
+        try:
+            selector = getattr(self, "advancedBandsSelector", None)
+            if selector is None:
+                return
+            grid = self.findChild(QWidget, "groupBoxParams").layout()
+            grid.setRowMinimumHeight(7, selector.minimumSizeHint().height())
+            self.findChild(QWidget, "groupBoxParams").updateGeometry()
+            self.updateGeometry()
+        except Exception:
+            pass
+
+    def _scroll_to_tiler_log(self):
+        try:
+            if hasattr(self, "_tilerLogText") and self._tilerLogText is not None:
+                self._tilerLogText.setFocus(QtCompat.OtherFocusReason)
+                sb = self._tilerLogText.verticalScrollBar()
+                sb.setValue(sb.maximum())
+        except Exception:
+            pass
+        try:
+            parent = self.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QScrollArea):
+                    vsb = parent.verticalScrollBar()
+                    vsb.setValue(vsb.maximum())
+                    break
+                parent = parent.parentWidget()
+        except Exception:
+            pass
 
     def _default_advanced_bands(self, collection=None):
         collection = collection or self._current_collection()
@@ -1417,11 +1453,13 @@ class TilerWidget(QWidget, FORM_CLASS):
                 collection=collection,
                 colormap_str=palette,
             )
+            params["cache_token"] = str(int(time.time() * 1000))
             layer = self.logic.add_xyz_layer(backend_url, layer_name, params)
             self._tiler_layer_id = layer.id()   # remember the exact layer we just added
             self._tiler_layer_temporarily_hidden = False
             self._tiler_layer_prev_visibility = None
             self._log(f"Added layer '{layer_name}' with source: {layer.source()}")
+            self._scroll_to_tiler_log()
             QMessageBox.information(self, "Layer Added", f"'{layer_name}' added successfully.")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

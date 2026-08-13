@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from qgis.PyQt.QtCore import pyqtSignal
+from qgis.PyQt.QtCore import QSize, pyqtSignal
 from qgis.PyQt.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -65,11 +65,14 @@ class DynamicBandSelector(QWidget):
 
     def __init__(self, parent=None, *, add_text: str = "+"):
         super().__init__(parent)
+        self._row_height = 28
+        self._footer_height = 24
+        self._spacing = 4
         self._bands: list[str] = []
         self._rows: list[tuple[QWidget, QComboBox, QToolButton]] = []
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(4)
+        self._layout.setSpacing(self._spacing)
 
         footer = QHBoxLayout()
         footer.setContentsMargins(0, 0, 0, 0)
@@ -77,9 +80,31 @@ class DynamicBandSelector(QWidget):
         self.addButton = QToolButton(self)
         self.addButton.setText(add_text)
         self.addButton.setToolTip("Add band")
+        self.addButton.setFixedSize(24, 24)
         self.addButton.clicked.connect(lambda: self.add_band())
         footer.addWidget(self.addButton)
         self._layout.addLayout(footer)
+        self._refresh_minimum_height()
+
+    def _preferred_height(self) -> int:
+        row_count = max(1, len(self._rows))
+        return (
+            row_count * self._row_height
+            + self._footer_height
+            + row_count * self._spacing
+        )
+
+    def _refresh_minimum_height(self):
+        self.setMinimumHeight(self._preferred_height())
+        self.updateGeometry()
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        return QSize(max(hint.width(), 160), max(hint.height(), self._preferred_height()))
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        return QSize(max(hint.width(), 220), max(hint.height(), self._preferred_height()))
 
     def set_bands(self, bands, selected=None, *, min_rows: int = 1):
         self._bands = [str(b).strip() for b in (bands or []) if str(b).strip()]
@@ -92,16 +117,19 @@ class DynamicBandSelector(QWidget):
             self.add_band(value, emit=False)
         while len(self._rows) < max(1, int(min_rows or 1)):
             self.add_band(emit=False)
+        self._refresh_minimum_height()
         self.changed.emit()
 
     def add_band(self, value: str | None = None, *, emit: bool = True):
         row = QWidget(self)
+        row.setMinimumHeight(28)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
         combo = QComboBox(row)
         combo.setSizePolicy(QSizePolicyCompat.Expanding, QSizePolicyCompat.Fixed)
+        combo.setMinimumHeight(24)
         combo.addItems(self._bands)
         if value:
             combo.setCurrentText(value)
@@ -111,6 +139,7 @@ class DynamicBandSelector(QWidget):
         remove_btn = QToolButton(row)
         remove_btn.setText("x")
         remove_btn.setToolTip("Remove band")
+        remove_btn.setFixedSize(24, 24)
         layout.addWidget(remove_btn)
 
         insert_at = max(0, self._layout.count() - 1)
@@ -118,6 +147,12 @@ class DynamicBandSelector(QWidget):
         self._rows.append((row, combo, remove_btn))
         remove_btn.clicked.connect(lambda *_: self._remove_row_by_widget(row))
         self._refresh_remove_buttons()
+        row.updateGeometry()
+        self._refresh_minimum_height()
+        try:
+            self.parentWidget().updateGeometry()
+        except Exception:
+            pass
         if emit:
             self.changed.emit()
 
@@ -142,6 +177,11 @@ class DynamicBandSelector(QWidget):
         self._layout.removeWidget(row)
         row.deleteLater()
         self._refresh_remove_buttons()
+        self._refresh_minimum_height()
+        try:
+            self.parentWidget().updateGeometry()
+        except Exception:
+            pass
         if emit:
             self.changed.emit()
 

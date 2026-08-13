@@ -46,6 +46,7 @@ class QtCompat:
 
     # Item data roles
     UserRole = _resolve(Qt, "UserRole", "ItemDataRole.UserRole")
+    ToolTipRole = _resolve(Qt, "ToolTipRole", "ItemDataRole.ToolTipRole")
 
     # Alignment
     AlignCenter = _resolve(Qt, "AlignCenter", "AlignmentFlag.AlignCenter")
