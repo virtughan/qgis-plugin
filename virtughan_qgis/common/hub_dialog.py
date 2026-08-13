@@ -213,6 +213,7 @@ class VirtughanHubDialog(QDialog):
     <li><b>Cloud cover (%) *</b>: Search Images with cloud cover less than this value.</li>
     <li><b>Simple (Presets)</b>: choose a ready-made index or SAR formula for the selected dataset.</li>
     <li><b>Advanced (Manual)</b>: choose bands and write the formula used for tile rendering.</li>
+    <li><b>Palette</b>: choose the color palette used to render formula tiles.</li>
     <li><b>Time series (aggregate)</b>: if enabled creates aggregated tile output across dates; choose <b>Aggregation</b> method.</li>
 </ul>
 <h4>Options and output</h4>
@@ -275,6 +276,19 @@ class VirtughanHubDialog(QDialog):
 <p>If one runtime folder is locked, installer automatically retries in the alternate runtime folder. If both are locked, restart QGIS and try again.</p>
 <p><b>Uninstall dependencies during plugin uninstall</b>: when enabled, dependencies are removed when plugin files are removed from QGIS Plugin Manager.</p>
 <p><i>After successful reinstall, restart QGIS for a clean runtime reload.</i></p>
+""",
+    "about": """
+<h3>About VirtuGhan QGIS Plugin</h3>
+<p>VirtuGhan QGIS Plugin brings VirtuGhan remote-sensing workflows into QGIS for tile preview, image download, and computed outputs such as spectral indices and time-series summaries.</p>
+<p>It is most useful for smaller areas of interest, especially AOIs smaller than a single satellite scene. Instead of downloading or processing whole scenes first, VirtuGhan searches matching STAC imagery, reads only the needed cloud-optimized raster parts for the selected AOI, bands, dates, and filters, then renders tiles, downloads bands, or computes formula outputs.</p>
+<p>Supported datasets include Sentinel-2, Landsat 8/9, and Sentinel-1 (Experimental).</p>
+<h4>Links</h4>
+<ul>
+    <li><a href="https://virtughan.com/">virtughan.com</a></li>
+    <li><a href="https://github.com/virtughan/qgis-plugin">QGIS plugin on GitHub</a></li>
+    <li><a href="https://github.com/virtughan/virtughan">VirtuGhan on GitHub</a></li>
+    <li><a href="https://pypi.org/project/virtughan/">VirtuGhan Python package on PyPI</a></li>
+</ul>
 """,
         }
 
@@ -394,6 +408,12 @@ class VirtughanHubDialog(QDialog):
             load_icon("static/images/icons/dependencies.svg", QStyleCompat.SP_FileDialogInfoView),
             key="dependencies",
         )
+        self._add_page(
+            "About",
+            self._build_about_page(),
+            load_icon("static/images/icons/about.svg", QStyleCompat.SP_FileDialogInfoView),
+            key="about",
+        )
 
         self.nav.currentRowChanged.connect(self._on_nav_changed)
         QTimer.singleShot(0, self._update_dependencies_spacer)
@@ -498,6 +518,20 @@ class VirtughanHubDialog(QDialog):
         layout.addWidget(self._cleanup_help_label)
 
         layout.addStretch(1)
+        return page
+
+    def _build_about_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        text = QTextBrowser(page)
+        text.setOpenExternalLinks(True)
+        text.setReadOnly(True)
+        text.setHtml(self._help_by_key.get("about", ""))
+
+        layout.addWidget(text, 1)
         return page
 
     def _on_toggle_uninstall_with_plugin(self, checked: bool):

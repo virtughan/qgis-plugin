@@ -918,6 +918,22 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.timeseriesCheck.setChecked(False)
         self.operationCombo.clear()
         self.operationCombo.addItems(["median", "mean", "min", "max"])
+        self.paletteCombo.clear()
+        self.paletteCombo.addItems([
+            "RdYlGn",
+            "viridis",
+            "plasma",
+            "inferno",
+            "magma",
+            "cividis",
+            "turbo",
+            "terrain",
+            "Spectral",
+            "coolwarm",
+            "BrBG",
+            "PiYG",
+            "Greys",
+        ])
 
         # Backend defaults
         if not self.backendUrlLine.text():
@@ -1184,7 +1200,8 @@ class TilerWidget(QWidget, FORM_CLASS):
 
         timeseries = self.timeseriesCheck.isChecked()
         operation = self.operationCombo.currentText().strip() if timeseries else None
-        return (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, self._current_collection())
+        palette = self.paletteCombo.currentText().strip() or "RdYlGn"
+        return (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, self._current_collection(), palette)
 
     def _on_start_server(self):
         try:
@@ -1272,7 +1289,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                     raise RuntimeError("Local server did not start. Check App Path / port.")
             backend_url = self.backendUrlLine.text().strip()
             layer_name = self.layerNameLine.text().strip()
-            (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, collection) = self._collect_params()
+            (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, collection, palette) = self._collect_params()
 
             mode_label = "Simple" if self.simpleModeRadio.isChecked() else "Advanced"
             preset_label = (self.indexCombo.currentText() or "").strip() if self.simpleModeRadio.isChecked() else "(custom)"
@@ -1283,7 +1300,8 @@ class TilerWidget(QWidget, FORM_CLASS):
                 f"formula={formula}, "
                 f"band1={band1}, "
                 f"band2={band2 or '-'}, "
-                f"collection={collection}"
+                f"collection={collection}, "
+                f"palette={palette}"
             )
 
             params = self.logic.default_params(
@@ -1296,6 +1314,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 timeseries=timeseries,
                 operation=operation,
                 collection=collection,
+                colormap_str=palette,
             )
             layer = self.logic.add_xyz_layer(backend_url, layer_name, params)
             self._tiler_layer_id = layer.id()   # remember the exact layer we just added
