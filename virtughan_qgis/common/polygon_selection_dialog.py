@@ -149,7 +149,7 @@ class PolygonSelectionDialog(QDialog):
             selected_sym = base.clone()
             selected_sym.setColor(QColor(0, 188, 212, 105))
             selected_sym.symbolLayer(0).setStrokeColor(QColor(0, 77, 96, 255))
-            selected_sym.symbolLayer(0).setStrokeWidth(1.5)
+            selected_sym.symbolLayer(0).setStrokeWidth(1.0)
 
             unselected_sym = base.clone()
             unselected_sym.setColor(QColor(176, 190, 197, 35))
