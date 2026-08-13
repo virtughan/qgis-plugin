@@ -1376,7 +1376,6 @@ class ExtractorDockWidget(QDockWidget):
         return QgsProject.instance().mapLayer(layer_id)
 
     def _use_layer_aoi(self):
-        self._populate_aoi_layer_combo()
         layer = self._selected_aoi_layer()
         if layer is None or not layer.isValid():
             self._update_aoi_preview("AOI: select a polygon layer first.")
@@ -1514,10 +1513,6 @@ class ExtractorDockWidget(QDockWidget):
                 if hasattr(self, "aoiLayerCombo"):
                     self.aoiLayerCombo.setVisible(True)
                     self._populate_aoi_layer_combo()
-                    layer_id = self.aoiLayerCombo.currentData()
-                    if layer_id and layer_id == getattr(self, "_last_aoi_layer_id", None) and self._aoi_bbox:
-                        self.aoiClearButton.setVisible(True)
-                        return
                 self.aoiClearButton.setVisible(True)
                 self._use_layer_aoi()
             elif hasattr(self, "aoiLayerCombo"):
@@ -1697,6 +1692,14 @@ class ExtractorDockWidget(QDockWidget):
             self._aoi.clear()
         except Exception:
             pass
+
+    def _archive_current_aoi(self):
+        self._aoi.archive_current()
+        self._aoi_bbox = None
+        self._aoi_polygon_wgs84 = None
+        self._batch_aoi_specs = []
+        self._update_aoi_preview("AOI used for download. Select or draw a new AOI to continue.")
+        self._populate_aoi_layer_combo()
 
     def _update_aoi_preview(self, text=None):
         if text:
@@ -1958,6 +1961,7 @@ class ExtractorDockWidget(QDockWidget):
                 else:
                     self._clear_scene_footprints_layer()
 
+                self._archive_current_aoi()
                 QMessageBox.information(
                     self, "VirtuGhan", f"Extractor finished.\nOutput: {out_dir}"
                 )
@@ -2081,6 +2085,8 @@ class ExtractorDockWidget(QDockWidget):
         self._current_task = None
         self._stop_tailing()
         self._set_running(False)
+        if state.get("completed", 0) > 0:
+            self._archive_current_aoi()
         msg = (
             f"Batch download {'cancelled' if cancelled else 'finished'}.\n\n"
             f"Completed: {state.get('completed', 0)}\n"

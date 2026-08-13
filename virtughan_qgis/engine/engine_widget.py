@@ -1889,7 +1889,6 @@ class EngineDockWidget(QDockWidget):
         return QgsProject.instance().mapLayer(layer_id)
 
     def _use_layer_aoi(self):
-        self._populate_aoi_layer_combo()
         layer = self._selected_aoi_layer()
         if layer is None or not layer.isValid():
             self._update_aoi_preview("AOI: select a polygon layer first.")
@@ -2200,10 +2199,6 @@ class EngineDockWidget(QDockWidget):
                 if hasattr(self, "aoiLayerCombo"):
                     self.aoiLayerCombo.setVisible(True)
                     self._populate_aoi_layer_combo()
-                    layer_id = self.aoiLayerCombo.currentData()
-                    if layer_id and layer_id == getattr(self, "_last_aoi_layer_id", None) and self._aoi_bbox:
-                        self.aoiClearButton.setVisible(True)
-                        return
                 self.aoiClearButton.setVisible(True)
                 self._use_layer_aoi()
             elif hasattr(self, "aoiLayerCombo"):
@@ -2367,6 +2362,13 @@ class EngineDockWidget(QDockWidget):
         self._batch_aoi_specs = []
         self._update_aoi_preview()
         self._aoi.clear()
+
+    def _archive_current_aoi(self):
+        self._aoi.archive_current()
+        self._aoi_bbox = None
+        self._batch_aoi_specs = []
+        self._update_aoi_preview("AOI used for compute. Select or draw a new AOI to continue.")
+        self._populate_aoi_layer_combo()
 
     def _update_aoi_preview(self, text=None):
         if text:
@@ -2747,6 +2749,7 @@ class EngineDockWidget(QDockWidget):
                     else:
                         msg += "\n\nTimeseries was requested, but no timeseries image frames were found in output."
 
+                self._archive_current_aoi()
                 QMessageBox.information(self, "VirtuGhan", msg)
 
         self._current_task = _VirtughanTask("VirtuGhan Compute", params, log_path, on_done=_on_done)
@@ -2917,6 +2920,8 @@ class EngineDockWidget(QDockWidget):
         )
         if results_added:
             msg += f"\n\nResults tab updated with {results_added} batch result(s)."
+        if self._has_successful_run:
+            self._archive_current_aoi()
         _log(self, msg.replace("\n", " "))
         QMessageBox.information(self, "VirtuGhan", msg)
 

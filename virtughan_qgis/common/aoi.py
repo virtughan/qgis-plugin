@@ -121,7 +121,7 @@ def combined_feature_geometry_in_project_crs(layer: QgsVectorLayer, features, pr
 class AoiManager:
     """
     Tracks the current AOI feature in a temporary memory layer.
-    Previous preview layers are left in the project so users can compare AOIs.
+    The active preview is replaced when users switch AOI sources.
     """
     def __init__(self, iface, layer_name: str = "AOI (drawn)", fill_color: QColor = None, stroke_color: QColor = None):
         self.iface = iface
@@ -196,9 +196,11 @@ class AoiManager:
 
     def replace_geometry(self, geom_map: QgsGeometry):
         self._prepare_next_layer_style()
-        self.layer = None
         lyr = self.ensure_layer()
         prov = lyr.dataProvider()
+        ids = [f.id() for f in lyr.getFeatures()]
+        if ids:
+            prov.deleteFeatures(ids)
         feat = QgsFeature(lyr.fields())
         feat.setGeometry(geom_map)
         feat.setAttributes([1, "AOI"])
@@ -206,6 +208,14 @@ class AoiManager:
         lyr.updateExtents()
         self._apply_style()
         lyr.triggerRepaint()
+
+    def archive_current(self):
+        """Keep the current preview in the project, but stop treating it as active."""
+        self.layer = None
+        try:
+            self.iface.mapCanvas().refresh()
+        except Exception:
+            pass
 
     def clear(self):
         if self.layer and self.layer.isValid():
