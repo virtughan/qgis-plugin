@@ -195,16 +195,29 @@ class AoiManager:
         return self.layer
 
     def replace_geometry(self, geom_map: QgsGeometry):
+        self.replace_geometries([(geom_map, "AOI")])
+
+    def replace_geometries(self, geometries):
         self._prepare_next_layer_style()
         lyr = self.ensure_layer()
         prov = lyr.dataProvider()
         ids = [f.id() for f in lyr.getFeatures()]
         if ids:
             prov.deleteFeatures(ids)
-        feat = QgsFeature(lyr.fields())
-        feat.setGeometry(geom_map)
-        feat.setAttributes([1, "AOI"])
-        prov.addFeatures([feat])
+        feats = []
+        for idx, item in enumerate(geometries or [], start=1):
+            if isinstance(item, tuple):
+                geom_map, label = item
+            else:
+                geom_map, label = item, "AOI"
+            if geom_map is None or geom_map.isEmpty():
+                continue
+            feat = QgsFeature(lyr.fields())
+            feat.setGeometry(geom_map)
+            feat.setAttributes([idx, str(label or f"AOI {idx}")])
+            feats.append(feat)
+        if feats:
+            prov.addFeatures(feats)
         lyr.updateExtents()
         self._apply_style()
         lyr.triggerRepaint()

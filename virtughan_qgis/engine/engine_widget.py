@@ -2004,7 +2004,10 @@ class EngineDockWidget(QDockWidget):
         self._batch_aoi_specs = list(specs or [])
         geom = combined_geometry(self._batch_aoi_specs)
         if geom is not None and not geom.isEmpty():
-            self._aoi.replace_geometry(geom)
+            self._aoi.replace_geometries([
+                (spec.get("geometry_project"), spec.get("label") or f"AOI {idx}")
+                for idx, spec in enumerate(self._batch_aoi_specs, start=1)
+            ])
             try:
                 self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
             except Exception as exc:
