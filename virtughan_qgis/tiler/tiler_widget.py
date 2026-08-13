@@ -40,7 +40,7 @@ from ..bootstrap import (
 activate_runtime_paths()
 
 from ..qt_compat import QtCompat, QSizePolicyCompat
-from ..common.ui_helpers import apply_primary_button_style
+from ..common.ui_helpers import DynamicBandSelector, apply_primary_button_style, describe_bands_for_formula
 
 CommonParamsWidget = None
 try:
@@ -52,6 +52,7 @@ try:
         match_index_preset,
         collection_choices,
         collection_band_names,
+        filter_bands_used_by_formula,
         normalize_collection,
     )
 except Exception:
@@ -62,6 +63,7 @@ except Exception:
     match_index_preset = lambda _b1, _b2, _fx, _collection=None: None
     collection_choices = lambda: [("sentinel-2-l2a", "Sentinel-2"), ("landsat-c2-l2", "Landsat 8/9"), ("sentinel-1-rtc", "Sentinel-1 (Experimental)")]
     collection_band_names = lambda _collection="sentinel-2-l2a": default_band_list()
+    filter_bands_used_by_formula = lambda bands, formula: [b for b in (bands or []) if b and b in (formula or "")]
     normalize_collection = lambda collection=None: collection or "sentinel-2-l2a"
 
 FORM_CLASS, _ = uic.loadUiType(os.path.join(os.path.dirname(__file__), "tiler_form.ui"))
@@ -289,6 +291,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self._view_event_seq = 0
 
         self._init_defaults()
+        self._init_advanced_band_selector()
         self._init_index_controls()
         self._init_log_panel()
         self._wire_signals()
@@ -971,9 +974,16 @@ class TilerWidget(QWidget, FORM_CLASS):
 
     def _init_palette_combo(self):
         self.paletteCombo.clear()
-        self.paletteCombo.setIconSize(QSize(72, 16))
+        self.paletteCombo.setIconSize(QSize(96, 18))
+        self.paletteCombo.setMinimumWidth(132)
         for name, colors in self._palette_definitions():
-            self.paletteCombo.addItem(self._palette_icon(colors), name, name)
+            self.paletteCombo.addItem(self._palette_icon(colors, width=96, height=18), "", name)
+            self.paletteCombo.setItemData(self.paletteCombo.count() - 1, name, Qt.ToolTipRole)
+        self._update_palette_tooltip()
+
+    def _update_palette_tooltip(self, *_):
+        palette = self.paletteCombo.currentData() or self.paletteCombo.currentText().strip() or "RdYlGn"
+        self.paletteCombo.setToolTip(f"Palette: {palette}")
 
     def _wire_signals(self):
         apply_primary_button_style(self.addLayerBtn)
@@ -988,10 +998,56 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.simpleModeRadio.toggled.connect(self._on_formula_mode_toggled)
         self.advancedModeRadio.toggled.connect(self._on_formula_mode_toggled)
         self.indexCombo.currentTextChanged.connect(self._on_index_changed)
-        self.band1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
-        self.band2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        try:
+            self.band1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+            self.band2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
+        except RuntimeError:
+            pass
         self.formulaLine.textChanged.connect(self._sync_reference_from_advanced)
         self.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
+        self.paletteCombo.currentIndexChanged.connect(self._update_palette_tooltip)
+
+    def _init_advanced_band_selector(self):
+        self.advancedBandsSelector = DynamicBandSelector(self)
+        self.advancedBandsSelector.changed.connect(self._sync_reference_from_advanced)
+        try:
+            grid = self.findChild(QWidget, "groupBoxParams").layout()
+            grid.addWidget(self.advancedBandsSelector, 7, 1, 2, 2)
+        except Exception:
+            self.advancedBandsSelector.setParent(self)
+
+        self.labelBand1.setText("Bands *")
+        self.labelBand2.setVisible(False)
+        self.band1Combo.setVisible(False)
+        self.band2Combo.setVisible(False)
+        self._refresh_advanced_band_selector()
+        self.advancedBandsSelector.setVisible(self.advancedModeRadio.isChecked())
+
+    def _default_advanced_bands(self, collection=None):
+        collection = collection or self._current_collection()
+        if collection == "sentinel-1-rtc":
+            return ["vv", "vh"]
+        if collection == "landsat-c2-l2":
+            return ["red", "nir08"]
+        return ["red", "nir"]
+
+    def _refresh_advanced_band_selector(self, selected=None):
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is None:
+            return
+        collection = self._current_collection()
+        selector.set_bands(collection_band_names(collection), selected or self._default_advanced_bands(collection), min_rows=2)
+
+    def _advanced_bands(self):
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is not None:
+            return selector.selected_bands()
+        return [
+            b for b in (
+                self.band1Combo.currentText().strip(),
+                self.band2Combo.currentText().strip(),
+            ) if b
+        ]
 
     def _init_index_controls(self):
         collection = self._current_collection()
@@ -1027,10 +1083,12 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.band2Combo.clear()
         self.band1Combo.addItems(bands)
         self.band2Combo.addItems([""] + bands)
+        selected = None
         if collection == "sentinel-1-rtc":
             self.band1Combo.setCurrentText("vv")
             self.band2Combo.setCurrentText("vh")
             self.formulaLine.setText("10 * log10(vv / vh)")
+            selected = ["vv", "vh"]
             self.cloudSpin.setEnabled(False)
             self.operationCombo.clear()
             self.operationCombo.addItems(["median", "mean", "min", "max"])
@@ -1038,6 +1096,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.band1Combo.setCurrentText("red" if "red" in bands else (current_b1 or bands[0]))
             self.band2Combo.setCurrentText("nir08" if "nir08" in bands else (current_b2 or ""))
             self.formulaLine.setText("(nir08 - red) / (nir08 + red)")
+            selected = ["red", "nir08"]
             self.cloudSpin.setEnabled(True)
             self.operationCombo.clear()
             self.operationCombo.addItems(["median", "mean", "min", "max"])
@@ -1045,9 +1104,11 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.band1Combo.setCurrentText("red")
             self.band2Combo.setCurrentText("nir")
             self.formulaLine.setText("(nir - red) / (nir + red)")
+            selected = ["red", "nir"]
             self.cloudSpin.setEnabled(True)
             self.operationCombo.clear()
             self.operationCombo.addItems(["median", "mean", "min", "max"])
+        self._refresh_advanced_band_selector(selected)
         self._init_index_controls()
 
     def _on_index_changed(self, label):
@@ -1064,9 +1125,12 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.formulaReferenceLabel.setVisible(is_simple)
 
         self.labelBand1.setVisible(not is_simple)
-        self.band1Combo.setVisible(not is_simple)
-        self.labelBand2.setVisible(not is_simple)
-        self.band2Combo.setVisible(not is_simple)
+        self.band1Combo.setVisible(False)
+        self.labelBand2.setVisible(False)
+        self.band2Combo.setVisible(False)
+        selector = getattr(self, "advancedBandsSelector", None)
+        if selector is not None:
+            selector.setVisible(not is_simple)
         self.labelFormula.setVisible(not is_simple)
         self.formulaLine.setVisible(not is_simple)
 
@@ -1083,8 +1147,9 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._sync_reference_from_advanced()
 
     def _sync_reference_from_advanced(self, *_):
-        band1 = self.band1Combo.currentText().strip()
-        band2 = self.band2Combo.currentText().strip()
+        bands = self._advanced_bands()
+        band1 = bands[0] if bands else ""
+        band2 = bands[1] if len(bands) > 1 else ""
         formula = self.formulaLine.text().strip()
 
         matched = match_index_preset(band1, band2, formula, self._current_collection())
@@ -1095,7 +1160,9 @@ class TilerWidget(QWidget, FORM_CLASS):
             finally:
                 self._index_updating = False
 
-        self.formulaReferenceLabel.setText(self._format_formula_reference(formula, band1, band2))
+        ref = self._format_formula_reference(formula, band1, band2, bands)
+        self.formulaReferenceLabel.setText(ref)
+        self.formulaReferenceLabel.setToolTip(ref)
 
     def _apply_index_preset(self, label):
         preset = get_index_preset(label, self._current_collection())
@@ -1106,22 +1173,22 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             self.band1Combo.setCurrentText(preset.get("band1", ""))
             self.band2Combo.setCurrentText(preset.get("band2", ""))
+            preset_bands = [band for band in (preset.get("band1", ""), preset.get("band2", "")) if band]
+            self._refresh_advanced_band_selector(preset_bands)
             self.formulaLine.setText(preset.get("formula", ""))
-            self.formulaReferenceLabel.setText(
-                self._format_formula_reference(
-                    preset.get("formula", ""),
-                    preset.get("band1", ""),
-                    preset.get("band2", ""),
-                )
+            ref = self._format_formula_reference(
+                preset.get("formula", ""),
+                preset.get("band1", ""),
+                preset.get("band2", ""),
+                preset_bands,
             )
+            self.formulaReferenceLabel.setText(ref)
+            self.formulaReferenceLabel.setToolTip(ref)
         finally:
             self._index_updating = False
 
-    def _format_formula_reference(self, formula: str, band1: str, band2: str) -> str:
-        formula_text = (formula or "").strip()
-        if not formula_text:
-            return "(formula will display here)"
-        return f"{formula_text}, band1={band1 or '-'}, band2={band2 or '-'}"
+    def _format_formula_reference(self, formula: str, band1: str, band2: str, bands=None) -> str:
+        return describe_bands_for_formula(formula, list(bands or [b for b in (band1, band2) if b]))
 
     def _apply_timeseries_visibility(self):
         show = self.timeseriesCheck.isChecked()
@@ -1207,8 +1274,9 @@ class TilerWidget(QWidget, FORM_CLASS):
         start_date = self.startDateEdit.date().toString("yyyy-MM-dd")
         end_date = self.endDateEdit.date().toString("yyyy-MM-dd")
         cloud_cover = int(self.cloudSpin.value())
-        band1 = self.band1Combo.currentText().strip()
-        band2 = self.band2Combo.currentText().strip()
+        bands = self._advanced_bands()
+        band1 = bands[0] if bands else ""
+        band2 = bands[1] if len(bands) > 1 else ""
         formula = self.formulaLine.text().strip()
 
         # In Simple mode, selected index preset is authoritative at run time.
@@ -1219,11 +1287,22 @@ class TilerWidget(QWidget, FORM_CLASS):
             band1 = (preset.get("band1") or "").strip()
             band2 = (preset.get("band2") or "").strip()
             formula = (preset.get("formula") or "").strip()
+            bands = [band for band in (band1, band2) if band]
+        else:
+            formula_bands = filter_bands_used_by_formula(bands, formula)
+            if not formula_bands:
+                raise ValueError("Formula must reference at least one selected band.")
+            ignored = [band for band in bands if band not in formula_bands]
+            if ignored:
+                self._log(f"[INFO] Ignoring selected bands not used by formula: {', '.join(ignored)}")
+            bands = formula_bands
+            band1 = bands[0]
+            band2 = bands[1] if len(bands) > 1 else ""
 
         timeseries = self.timeseriesCheck.isChecked()
         operation = self.operationCombo.currentText().strip() if timeseries else None
         palette = self.paletteCombo.currentData() or self.paletteCombo.currentText().strip() or "RdYlGn"
-        return (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, self._current_collection(), palette)
+        return (start_date, end_date, cloud_cover, band1, band2, bands, formula, timeseries, operation, self._current_collection(), palette)
 
     def _on_start_server(self):
         try:
@@ -1311,7 +1390,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                     raise RuntimeError("Local server did not start. Check App Path / port.")
             backend_url = self.backendUrlLine.text().strip()
             layer_name = self.layerNameLine.text().strip()
-            (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, collection, palette) = self._collect_params()
+            (start_date, end_date, cloud_cover, band1, band2, bands, formula, timeseries, operation, collection, palette) = self._collect_params()
 
             mode_label = "Simple" if self.simpleModeRadio.isChecked() else "Advanced"
             preset_label = (self.indexCombo.currentText() or "").strip() if self.simpleModeRadio.isChecked() else "(custom)"
@@ -1320,8 +1399,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 f"mode={mode_label}, "
                 f"preset={preset_label}, "
                 f"formula={formula}, "
-                f"band1={band1}, "
-                f"band2={band2 or '-'}, "
+                f"bands={', '.join(bands) if bands else '-'}, "
                 f"collection={collection}, "
                 f"palette={palette}"
             )
@@ -1332,6 +1410,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 cloud_cover=cloud_cover,
                 band1=band1,
                 band2=band2,
+                bands=bands,
                 formula=formula,
                 timeseries=timeseries,
                 operation=operation,

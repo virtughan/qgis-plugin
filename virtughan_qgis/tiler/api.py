@@ -16,7 +16,7 @@ import json
 import tempfile
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
@@ -463,6 +463,7 @@ def _tile_compute_key(
     cloud_cover: int,
     band1: str,
     band2: str,
+    bands: Tuple[str, ...],
     formula: str,
     colormap_str: str,
     operation: str,
@@ -479,6 +480,7 @@ def _tile_compute_key(
             str(int(cloud_cover)),
             str(band1 or ""),
             str(band2 or ""),
+            ",".join(str(b or "") for b in (bands or ())),
             str(formula or ""),
             str(colormap_str or ""),
             str(operation or ""),
@@ -1357,6 +1359,7 @@ async def get_tile(
     cloud_cover: int = Query(30),
     band1: str = Query("visual", description="visual, red, green, blue, nir, swir1, swir2"),
     band2: Optional[str] = Query(None),
+    bands: Optional[List[str]] = Query(None),
     formula: str = Query("visual", description="Named-band expression, e.g. (nir-red)/(nir+red), or 'visual' for true color"),
     colormap_str: str = Query("RdYlGn"),
     operation: str = Query("median"),
@@ -1370,6 +1373,16 @@ async def get_tile(
     # Sanitize formula: strip whitespace and normalize to avoid SyntaxError in
     # Python 3.13+ when the backend uses compile()/eval() on the formula string.
     formula = _sanitize_formula(formula)
+    selected_bands = tuple(
+        b for b in (
+            str(band).strip()
+            for band in (bands or [band1, band2])
+        )
+        if b
+    )
+    if selected_bands:
+        band1 = selected_bands[0]
+        band2 = selected_bands[1] if len(selected_bands) > 1 else ""
 
     if z < 10 or z > 23:
         return JSONResponse(content={"error": "Zoom level must be between 10 and 23"}, status_code=400)
@@ -1483,6 +1496,7 @@ async def get_tile(
             cloud_cover=cloud_cover,
             band1=band1,
             band2=(band2 or ""),
+            bands=selected_bands,
             formula=formula,
             colormap_str=colormap_str,
             operation=operation,
@@ -1503,7 +1517,7 @@ async def get_tile(
                     start_date=start_date,
                     end_date=end_date,
                     cloud_cover=cloud_cover,
-                    bands=tuple(b for b in (band1, band2) if b),
+                    bands=selected_bands,
                     formula=formula,
                     colormap_str=colormap_str,
                     operation=operation,
@@ -1562,7 +1576,7 @@ async def get_tile(
                         start_date=start_date,
                         end_date=end_date,
                         cloud_cover=cloud_cover,
-                        bands=tuple(b for b in (band1, band2) if b),
+                        bands=selected_bands,
                         formula=formula,
                         colormap_str=colormap_str,
                         operation=operation,
@@ -1630,7 +1644,7 @@ async def get_tile(
                         start_date=start_date,
                         end_date=end_date,
                         cloud_cover=cloud_cover,
-                        bands=tuple(b for b in (band1, band2) if b),
+                        bands=selected_bands,
                         formula=formula,
                         colormap_str=colormap_str,
                         operation=operation,
@@ -1669,6 +1683,7 @@ async def get_tile(
                 "cloud_cover": cloud_cover,
                 "band1": band1,
                 "band2": band2,
+                "bands": list(selected_bands),
                 "formula": formula,
                 "collection": collection,
                 "colormap_str": colormap_str,
