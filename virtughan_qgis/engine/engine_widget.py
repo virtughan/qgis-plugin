@@ -1845,6 +1845,13 @@ class EngineDockWidget(QDockWidget):
             return
         try:
             current_id = combo.currentData() or getattr(self, "_last_aoi_layer_id", None)
+            helper_layer_id = None
+            try:
+                helper_layer = getattr(getattr(self, "_aoi", None), "layer", None)
+                if helper_layer is not None and helper_layer.isValid():
+                    helper_layer_id = helper_layer.id()
+            except Exception:
+                helper_layer_id = None
             combo.blockSignals(True)
             combo.clear()
             layers = polygon_layers(QgsProject.instance())
@@ -1852,7 +1859,11 @@ class EngineDockWidget(QDockWidget):
                 combo.addItem("No polygon layers", "")
             else:
                 for layer in layers:
+                    if helper_layer_id and layer.id() == helper_layer_id:
+                        continue
                     combo.addItem(layer.name(), layer.id())
+                if combo.count() == 0:
+                    combo.addItem("No polygon layers", "")
             if current_id:
                 idx = combo.findData(current_id)
                 if idx >= 0:
@@ -1883,10 +1894,6 @@ class EngineDockWidget(QDockWidget):
         if layer is None or not layer.isValid():
             self._update_aoi_preview("AOI: select a polygon layer first.")
             return
-        try:
-            self._aoi.clear()
-        except Exception:
-            pass
         self._last_aoi_layer_id = layer.id()
 
         selected_fids = {f.id() for f in layer.selectedFeatures()}
@@ -1947,6 +1954,7 @@ class EngineDockWidget(QDockWidget):
                             f"Could not transform combined AOI to WGS84 (EPSG:4326): {exc}",
                         )
                         return
+                    self._aoi.replace_geometry(QgsGeometry.fromRect(geom.boundingBox()))
                     self.aoiPreviewLabel.setText(f"Combined AOI: {len(combined_specs)} polygon features.")
                     return
             else:
@@ -1968,6 +1976,7 @@ class EngineDockWidget(QDockWidget):
             QMessageBox.warning(self, "VirtuGhan", "Selected layer feature has no valid polygon geometry.")
             return
 
+        self._aoi.replace_geometry(geom)
         self._aoi_bbox = specs[0].get("bbox")
         self._update_aoi_preview()
 
@@ -1975,6 +1984,7 @@ class EngineDockWidget(QDockWidget):
         self._batch_aoi_specs = list(specs or [])
         geom = combined_geometry(self._batch_aoi_specs)
         if geom is not None and not geom.isEmpty():
+            self._aoi.replace_geometry(geom)
             try:
                 self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
             except Exception as exc:

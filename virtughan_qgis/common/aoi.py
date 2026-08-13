@@ -1,6 +1,6 @@
 """
 Reusable AOI (Area of Interest) helpers:
-- AoiManager: creates/persists a single-feature memory layer for the AOI
+- AoiManager: creates styled single-feature memory layers for AOI previews
 - AoiPolygonTool: freehand polygon draw tool (left-click add, right/double/Enter finish)
 - AoiRectTool: press-drag-release rectangle tool
 - rect_to_wgs84_bbox / geom_to_wgs84_bbox: utilities to get WGS84 bbox
@@ -120,8 +120,8 @@ def combined_feature_geometry_in_project_crs(layer: QgsVectorLayer, features, pr
 
 class AoiManager:
     """
-    Keeps exactly one AOI feature in a temporary memory layer.
-    Use replace_geometry() on every draw. Use clear() to remove the layer.
+    Tracks the current AOI feature in a temporary memory layer.
+    Previous preview layers are left in the project so users can compare AOIs.
     """
     def __init__(self, iface, layer_name: str = "AOI (drawn)", fill_color: QColor = None, stroke_color: QColor = None):
         self.iface = iface
@@ -130,40 +130,81 @@ class AoiManager:
         # Default colors (blue)
         self.fill_color = fill_color or QColor(0, 102, 255, 60)
         self.stroke_color = stroke_color or QColor(0, 102, 255, 200)
+        self._generation = 0
+        self._active_fill_color = QColor(self.fill_color)
+        self._active_stroke_color = QColor(self.stroke_color)
+
+    def _variant_color(self, color: QColor, generation: int) -> QColor:
+        try:
+            hue, saturation, value, alpha = color.getHsv()
+            if hue < 0:
+                out = QColor(color)
+                out.setAlpha(color.alpha())
+                return out
+            hue = (hue + (generation * 18)) % 360
+            if generation % 3 == 1:
+                value = min(255, int(value * 1.15))
+                saturation = max(70, int(saturation * 0.9))
+            elif generation % 3 == 2:
+                value = max(70, int(value * 0.85))
+                saturation = min(255, int(saturation * 1.1))
+            out = QColor.fromHsv(hue, saturation, value, alpha)
+            out.setAlpha(color.alpha())
+            return out
+        except Exception:
+            out = QColor(color)
+            out.setAlpha(color.alpha())
+            return out
+
+    def _prepare_next_layer_style(self):
+        self._active_fill_color = self._variant_color(self.fill_color, self._generation)
+        self._active_stroke_color = self._variant_color(self.stroke_color, self._generation)
+        self._generation += 1
+
+    def _apply_style(self):
+        if not self.layer or not self.layer.isValid():
+            return
+        try:
+            sym = self.layer.renderer().symbol()
+            sym.setColor(self._active_fill_color)
+            sym.symbolLayer(0).setStrokeColor(self._active_stroke_color)
+            sym.symbolLayer(0).setStrokeWidth(0.5)  # Final AOI layer stroke thickness
+            self.layer.triggerRepaint()
+            self.layer.emitStyleChanged()
+            try:
+                self.iface.layerTreeView().refreshLayerSymbology(self.layer.id())
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def ensure_layer(self):
         if self.layer and self.layer.isValid():
+            self._apply_style()
             return self.layer
         crs = self.iface.mapCanvas().mapSettings().destinationCrs()
         self.layer = QgsVectorLayer(f"Polygon?crs={crs.authid()}", self.layer_name, "memory")
         prov = self.layer.dataProvider()
         prov.addAttributes([QgsField("id", QVariant.Int), QgsField("label", QVariant.String)])
         self.layer.updateFields()
+        # Apply styling before adding to the project so the Layers panel legend
+        # does not cache QGIS's default random symbol.
+        self._apply_style()
         QgsProject.instance().addMapLayer(self.layer)
-        # Apply stored colors to symbol
-        try:
-            sym = self.layer.renderer().symbol()
-            sym.setColor(self.fill_color)
-            sym.symbolLayer(0).setStrokeColor(self.stroke_color)
-            sym.symbolLayer(0).setStrokeWidth(0.5)  # Final AOI layer stroke thickness
-            self.layer.triggerRepaint()
-            # Force legend refresh
-            self.layer.emitStyleChanged()
-        except Exception:
-            pass
+        self._apply_style()
         return self.layer
 
     def replace_geometry(self, geom_map: QgsGeometry):
+        self._prepare_next_layer_style()
+        self.layer = None
         lyr = self.ensure_layer()
         prov = lyr.dataProvider()
-        ids = [f.id() for f in lyr.getFeatures()]
-        if ids:
-            prov.deleteFeatures(ids)
         feat = QgsFeature(lyr.fields())
         feat.setGeometry(geom_map)
         feat.setAttributes([1, "AOI"])
         prov.addFeatures([feat])
         lyr.updateExtents()
+        self._apply_style()
         lyr.triggerRepaint()
 
     def clear(self):
