@@ -2715,6 +2715,7 @@ class EngineDockWidget(QDockWidget):
             "failed": 0,
             "cancelled": False,
             "root_dir": root_dir,
+            "results": [],
         }
         self._set_running(True)
         self._focus_log_section()
@@ -2797,6 +2798,13 @@ class EngineDockWidget(QDockWidget):
                 state["completed"] += 1
                 extract_zipfiles(params["output_dir"], logger=lambda m, lvl=Qgis.Info: _log(self, m, lvl), delete_archives=True)
                 self._load_rasters_from_dir(params["output_dir"])
+                state.setdefault("results", []).append({
+                    "output_dir": params["output_dir"],
+                    "label": label,
+                    "index": state["index"],
+                    "total": len(state["specs"]),
+                    "params": dict(params),
+                })
                 _log(self, f"[Batch {state['index']}] Compute completed for {label}.")
             self._start_next_batch_compute(base_params)
 
@@ -2810,6 +2818,37 @@ class EngineDockWidget(QDockWidget):
         self._stop_tailing()
         self._set_running(False)
         self._has_successful_run = state.get("completed", 0) > 0
+        results_added = 0
+        host = self.window()
+        batch_results = list(state.get("results") or [])
+        if batch_results and host and hasattr(host, "show_results_for_output"):
+            try:
+                for entry in reversed(batch_results):
+                    params = entry.get("params") or {}
+                    run_metadata = {
+                        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "start_date": params.get("start_date"),
+                        "end_date": params.get("end_date"),
+                        "cloud_cover": params.get("cloud_cover"),
+                        "band1": params.get("band1"),
+                        "band2": params.get("band2"),
+                        "formula": params.get("formula"),
+                        "operation": params.get("operation"),
+                        "timeseries": params.get("timeseries"),
+                        "smart_filter": params.get("smart_filter"),
+                        "workers": params.get("workers"),
+                        "bbox": params.get("bbox"),
+                        "batch_label": entry.get("label"),
+                        "batch_index": entry.get("index"),
+                        "batch_total": entry.get("total"),
+                        "batch_root": state.get("root_dir"),
+                    }
+                    host.show_results_for_output(entry.get("output_dir"), auto_open=False, run_metadata=run_metadata)
+                    results_added += 1
+                if hasattr(host, "show_page"):
+                    host.show_page("results")
+            except Exception as e:
+                _log(self, f"Could not update Results tab for batch compute: {e}", Qgis.Warning)
         msg = (
             f"Batch compute {'cancelled' if cancelled else 'finished'}.\n\n"
             f"Completed: {state.get('completed', 0)}\n"
@@ -2817,6 +2856,8 @@ class EngineDockWidget(QDockWidget):
             f"Failed: {state.get('failed', 0)}\n\n"
             f"Output: {state.get('root_dir', '')}"
         )
+        if results_added:
+            msg += f"\n\nResults tab updated with {results_added} batch result(s)."
         _log(self, msg.replace("\n", " "))
         QMessageBox.information(self, "VirtuGhan", msg)
 

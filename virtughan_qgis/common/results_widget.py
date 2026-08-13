@@ -397,6 +397,15 @@ class ResultsWidget(QWidget):
         if generated_at:
             rows.append(f"<b>Generated:</b> {generated_at}")
 
+        batch_label = self._run_metadata.get("batch_label")
+        batch_index = self._run_metadata.get("batch_index")
+        batch_total = self._run_metadata.get("batch_total")
+        if batch_label:
+            suffix = ""
+            if batch_index and batch_total:
+                suffix = f" ({batch_index} of {batch_total})"
+            rows.append(f"<b>Batch polygon:</b> {batch_label}{suffix}")
+
         start_date = self._run_metadata.get("start_date")
         end_date = self._run_metadata.get("end_date")
         if start_date or end_date:
