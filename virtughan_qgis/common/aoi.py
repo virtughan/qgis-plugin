@@ -131,6 +131,7 @@ class AoiManager:
         self.fill_color = fill_color or QColor(0, 102, 255, 60)
         self.stroke_color = stroke_color or QColor(0, 102, 255, 200)
         self._generation = 0
+        self._archive_generation = 1
         self._active_fill_color = QColor(self.fill_color)
         self._active_stroke_color = QColor(self.stroke_color)
 
@@ -160,6 +161,19 @@ class AoiManager:
         self._active_fill_color = self._variant_color(self.fill_color, self._generation)
         self._active_stroke_color = self._variant_color(self.stroke_color, self._generation)
         self._generation += 1
+
+    def _next_archive_name(self) -> str:
+        project = QgsProject.instance()
+        existing = set()
+        try:
+            existing = {layer.name() for layer in project.mapLayers().values()}
+        except Exception:
+            pass
+        while True:
+            name = f"{self.layer_name} {self._archive_generation}"
+            self._archive_generation += 1
+            if name not in existing:
+                return name
 
     def _apply_style(self):
         if not self.layer or not self.layer.isValid():
@@ -224,6 +238,11 @@ class AoiManager:
 
     def archive_current(self):
         """Keep the current preview in the project, but stop treating it as active."""
+        if self.layer and self.layer.isValid():
+            try:
+                self.layer.setName(self._next_archive_name())
+            except Exception:
+                pass
         self.layer = None
         try:
             self.iface.mapCanvas().refresh()

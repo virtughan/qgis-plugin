@@ -846,7 +846,7 @@ def _backend_kwargs(backend_cls, params, logf):
     allowed = {name for name in sig.parameters.keys() if name != "self"}
     if "bands" in allowed:
         bands = []
-        for band in (params.get("band1"), params.get("band2")):
+        for band in (params.get("bands") or [params.get("band1"), params.get("band2")]):
             if band and band not in bands:
                 bands.append(band)
         kwargs = {

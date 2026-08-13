@@ -1075,10 +1075,10 @@ class ExtractorDockWidget(QDockWidget):
         self._aoi_polygon_wgs84 = None      # optional [[lon,lat], ...]
         self._batch_aoi_specs = []
         self._batch_state = None
-        # Green colors for Extractor AOI
+        # Green colors for Download AOI
         self._aoi_fill_color = QColor(76, 175, 80, 60)      # light green with transparency
         self._aoi_stroke_color = QColor(56, 142, 60, 200)   # darker green stroke
-        self._aoi = AoiManager(self.iface, layer_name="Extractor AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
+        self._aoi = AoiManager(self.iface, layer_name="Download AOI", fill_color=self._aoi_fill_color, stroke_color=self._aoi_stroke_color)
         self._prev_tool = None
 
         self._init_common_widget()
