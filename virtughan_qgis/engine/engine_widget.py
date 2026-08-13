@@ -23,7 +23,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QDockWidget, QFileDialog, QMessageBox,
     QProgressBar, QPlainTextEdit, QComboBox, QCheckBox, QLabel,
     QPushButton, QSpinBox, QLineEdit, QDateEdit, QFormLayout, QVBoxLayout, QHBoxLayout, QRadioButton,
-    QScrollArea
+    QScrollArea, QListWidget, QListWidgetItem
 )
 
 from qgis.core import (
@@ -88,7 +88,7 @@ from ..bootstrap import (
     ensure_runtime_network_ready,
     purge_non_runtime_modules,
 )
-from ..qt_compat import QtCompat, QMessageBoxCompat
+from ..qt_compat import QtCompat, QMessageBoxCompat, QAbstractItemViewCompat
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
@@ -1745,12 +1745,15 @@ class EngineDockWidget(QDockWidget):
     def _init_aoi_layer_selector(self):
         self._last_aoi_layer_id = None
         self._aoi_layer_project_signals_connected = False
-        self.aoiLayerCombo = QComboBox(self.ui_root)
-        self.aoiLayerCombo.setToolTip("Choose a polygon layer from the current project")
-        self.aoiLayerCombo.setVisible(False)
-        self.aoiLayerCombo.activated.connect(lambda *_: self._use_layer_aoi())
+        self.aoiLayerList = QListWidget(self.ui_root)
+        self.aoiLayerList.setToolTip("Choose one polygon layer from the current project")
+        self.aoiLayerList.setSelectionMode(QAbstractItemViewCompat.SingleSelection)
+        self.aoiLayerList.setVisible(False)
+        self.aoiLayerList.setMinimumHeight(72)
+        self.aoiLayerList.setMaximumHeight(120)
+        self.aoiLayerList.itemClicked.connect(lambda *_: self._use_layer_aoi())
         try:
-            self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerCombo, 0, 2, 1, 2)
+            self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerList, 1, 0, 1, 4)
         except Exception:
             pass
         try:
@@ -1840,11 +1843,14 @@ class EngineDockWidget(QDockWidget):
             pass
 
     def _populate_aoi_layer_combo(self):
-        combo = getattr(self, "aoiLayerCombo", None)
-        if combo is None:
+        layer_list = getattr(self, "aoiLayerList", None)
+        if layer_list is None:
             return
         try:
-            current_id = combo.currentData() or getattr(self, "_last_aoi_layer_id", None)
+            current_item = layer_list.currentItem()
+            current_id = (
+                current_item.data(QtCompat.UserRole) if current_item is not None else None
+            ) or getattr(self, "_last_aoi_layer_id", None)
             helper_layer_id = None
             try:
                 helper_layer = getattr(getattr(self, "_aoi", None), "layer", None)
@@ -1852,38 +1858,50 @@ class EngineDockWidget(QDockWidget):
                     helper_layer_id = helper_layer.id()
             except Exception:
                 helper_layer_id = None
-            combo.blockSignals(True)
-            combo.clear()
+            layer_list.blockSignals(True)
+            layer_list.clear()
             layers = polygon_layers(QgsProject.instance())
             if not layers:
-                combo.addItem("No polygon layers", "")
+                item = QListWidgetItem("No polygon layers")
+                item.setData(QtCompat.UserRole, "")
+                item.setFlags(QtCompat.NoItemFlags)
+                layer_list.addItem(item)
             else:
                 for layer in layers:
                     if helper_layer_id and layer.id() == helper_layer_id:
                         continue
-                    combo.addItem(layer.name(), layer.id())
-                if combo.count() == 0:
-                    combo.addItem("No polygon layers", "")
+                    item = QListWidgetItem(layer.name())
+                    item.setData(QtCompat.UserRole, layer.id())
+                    layer_list.addItem(item)
+                if layer_list.count() == 0:
+                    item = QListWidgetItem("No polygon layers")
+                    item.setData(QtCompat.UserRole, "")
+                    item.setFlags(QtCompat.NoItemFlags)
+                    layer_list.addItem(item)
             if current_id:
-                idx = combo.findData(current_id)
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
-                elif getattr(self, "_last_aoi_layer_id", None) == current_id:
+                found = False
+                for row in range(layer_list.count()):
+                    if layer_list.item(row).data(QtCompat.UserRole) == current_id:
+                        layer_list.setCurrentRow(row)
+                        found = True
+                        break
+                if not found and getattr(self, "_last_aoi_layer_id", None) == current_id:
                     self._last_aoi_layer_id = None
         except RuntimeError as exc:
             if "deleted" not in str(exc).lower():
                 raise
         finally:
             try:
-                combo.blockSignals(False)
+                layer_list.blockSignals(False)
             except RuntimeError:
                 pass
 
     def _selected_aoi_layer(self):
-        combo = getattr(self, "aoiLayerCombo", None)
-        if combo is None:
+        layer_list = getattr(self, "aoiLayerList", None)
+        if layer_list is None:
             return None
-        layer_id = combo.currentData()
+        item = layer_list.currentItem()
+        layer_id = item.data(QtCompat.UserRole) if item is not None else None
         if not layer_id:
             return None
         return QgsProject.instance().mapLayer(layer_id)
@@ -2196,19 +2214,19 @@ class EngineDockWidget(QDockWidget):
             self.aoiStartDrawButton.setVisible(False)
             self.aoiClearButton.setVisible(False)
             if "layer" in t:
-                if hasattr(self, "aoiLayerCombo"):
-                    self.aoiLayerCombo.setVisible(True)
+                if hasattr(self, "aoiLayerList"):
+                    self.aoiLayerList.setVisible(True)
                     self._populate_aoi_layer_combo()
                 self.aoiClearButton.setVisible(True)
-                self._use_layer_aoi()
-            elif hasattr(self, "aoiLayerCombo"):
-                self.aoiLayerCombo.setVisible(False)
+                self._update_aoi_preview("AOI: select one polygon layer from the list.")
+            elif hasattr(self, "aoiLayerList"):
+                self.aoiLayerList.setVisible(False)
             return
 
         # Clear previous AOI before applying new mode
         self._clear_aoi()
-        if hasattr(self, "aoiLayerCombo"):
-            self.aoiLayerCombo.setVisible(False)
+        if hasattr(self, "aoiLayerList"):
+            self.aoiLayerList.setVisible(False)
 
         # Hide the action button for all modes — action is triggered directly
         self.aoiStartDrawButton.setVisible(False)
@@ -2219,9 +2237,10 @@ class EngineDockWidget(QDockWidget):
         elif "rectangle" in t:
             self._start_draw_rectangle()
         elif "layer" in t:
-            if hasattr(self, "aoiLayerCombo"):
-                self.aoiLayerCombo.setVisible(True)
-            self._use_layer_aoi()
+            if hasattr(self, "aoiLayerList"):
+                self.aoiLayerList.setVisible(True)
+                self._populate_aoi_layer_combo()
+            self._update_aoi_preview("AOI: select one polygon layer from the list.")
         else:
             self._start_draw_polygon()
 
@@ -2984,7 +3003,7 @@ class EngineDockWidget(QDockWidget):
                 w.setEnabled(not running)
             except Exception:
                 pass
-        for w in (getattr(self, "aoiLayerCombo", None), getattr(self, "advancedBandsSelector", None)):
+        for w in (getattr(self, "aoiLayerList", None), getattr(self, "advancedBandsSelector", None)):
             try:
                 if w is not None:
                     w.setEnabled(not running)
