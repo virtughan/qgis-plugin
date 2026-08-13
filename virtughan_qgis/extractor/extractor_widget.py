@@ -64,7 +64,9 @@ from ..common.aoi import (
     rect_to_wgs84_bbox,
     geom_to_wgs84_bbox,
 )
+from ..common.batch_aoi import AoiTransformError, batch_root, combined_geometry, specs_from_features
 from ..common.scene_preview_dialog import ScenePreviewDialog
+from ..common.polygon_selection_dialog import PolygonSelectionDialog
 from ..common.common_logic import (
     collection_band_names,
     extra_query_for_collection,
@@ -1068,6 +1070,8 @@ class ExtractorDockWidget(QDockWidget):
         # AOI state
         self._aoi_bbox = None               # [lonmin, latmin, lonmax, latmax] (WGS84)
         self._aoi_polygon_wgs84 = None      # optional [[lon,lat], ...]
+        self._batch_aoi_specs = []
+        self._batch_state = None
         # Green colors for Extractor AOI
         self._aoi_fill_color = QColor(76, 175, 80, 60)      # light green with transparency
         self._aoi_stroke_color = QColor(56, 142, 60, 200)   # darker green stroke
@@ -1333,39 +1337,78 @@ class ExtractorDockWidget(QDockWidget):
             self._update_aoi_preview("AOI: select a polygon layer first.")
             return
 
-        selected = list(layer.selectedFeatures())
-        if selected:
-            features = selected
-        elif layer.featureCount() == 1:
-            features = list(layer.getFeatures())
-        else:
-            QMessageBox.information(
+        selected_fids = {f.id() for f in layer.selectedFeatures()}
+        try:
+            specs = specs_from_features(layer, list(layer.getFeatures()), QgsProject.instance())
+        except AoiTransformError as exc:
+            QMessageBox.warning(self, "VirtuGhan", str(exc))
+            return
+        transform_errors = list(getattr(specs_from_features, "last_errors", []) or [])
+        if not specs:
+            detail = "\n".join(transform_errors[:5])
+            QMessageBox.warning(
                 self,
                 "VirtuGhan",
-                "Select one or more polygon features in the layer first.",
+                "Selected layer has no valid polygon features that can be transformed to WGS84."
+                + (f"\n\n{detail}" if detail else ""),
             )
             return
-
-        if len(features) > 1:
-            reply = QMessageBox.question(
+        if transform_errors:
+            _log(
+                self,
+                f"{len(transform_errors)} feature(s) could not be transformed and were skipped. "
+                + " | ".join(transform_errors[:3]),
+                Qgis.Warning,
+            )
+            QMessageBox.warning(
                 self,
                 "VirtuGhan",
-                "Multiple polygon features are selected.\n\nUse their combined AOI for this download?",
-                QMessageBoxCompat.Yes | QMessageBoxCompat.No,
-                QMessageBoxCompat.Yes,
+                f"{len(transform_errors)} feature(s) could not be transformed and were skipped.\n\n"
+                + "\n".join(transform_errors[:5]),
             )
-            if reply != QMessageBoxCompat.Yes:
+        if len(specs) > 1:
+            dlg = PolygonSelectionDialog(self, specs, selected_fids=selected_fids, title="Select Download Batch Polygons")
+            _exec = getattr(dlg, "exec", None) or getattr(dlg, "exec_")
+            if _exec() != 1:
                 return
+            chosen = dlg.selected_specs()
+            if not chosen:
+                return
+            if len(chosen) > 1:
+                self._set_batch_aoi(chosen)
+                return
+            specs = chosen
 
-        geom = combined_feature_geometry_in_project_crs(layer, features, QgsProject.instance())
+        self._batch_aoi_specs = []
+        geom = specs[0].get("geometry_project")
         if geom is None or geom.isEmpty():
             QMessageBox.warning(self, "VirtuGhan", "Selected layer feature has no valid polygon geometry.")
             return
 
         self._aoi.replace_geometry(geom)
-        self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
-        self._aoi_polygon_wgs84 = self._compute_polygon_wgs84_coords(geom)
+        self._aoi_bbox = specs[0].get("bbox")
+        self._aoi_polygon_wgs84 = specs[0].get("polygon_wgs84")
         self._update_aoi_preview()
+
+    def _set_batch_aoi(self, specs):
+        self._batch_aoi_specs = list(specs or [])
+        geom = combined_geometry(self._batch_aoi_specs)
+        if geom is not None and not geom.isEmpty():
+            self._aoi.replace_geometry(geom)
+            try:
+                self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "VirtuGhan",
+                    f"Could not transform combined batch AOI to WGS84 (EPSG:4326): {exc}",
+                )
+                self._batch_aoi_specs = []
+                return
+        else:
+            self._aoi_bbox = self._batch_aoi_specs[0].get("bbox") if self._batch_aoi_specs else None
+        self._aoi_polygon_wgs84 = None
+        self._update_aoi_preview(f"Batch AOI: {len(self._batch_aoi_specs)} polygon features selected.")
 
     def _on_collection_changed(self, *_):
         collection = self._current_collection()
@@ -1564,6 +1607,7 @@ class ExtractorDockWidget(QDockWidget):
         self._drawing_tool = None  # Clear reference
         self._aoi_bbox = None
         self._aoi_polygon_wgs84 = None
+        self._batch_aoi_specs = []
         self._update_aoi_preview()
         try:
             self._aoi.clear()
@@ -1638,6 +1682,7 @@ class ExtractorDockWidget(QDockWidget):
     def _reset_form(self):
         self._aoi_bbox = None
         self._aoi_polygon_wgs84 = None
+        self._batch_aoi_specs = []
         self._update_aoi_preview("AOI: not set yet. Use smaller aoi and test first.")
         try:
             self._aoi.clear()
@@ -1713,6 +1758,10 @@ class ExtractorDockWidget(QDockWidget):
         return params
 
     def _run_clicked(self):
+        if self._batch_state is not None:
+            self._cancel_current_run()
+            self._batch_state["cancelled"] = True
+            return
         try:
             if self._current_task is not None:
                 status = self._current_task.status()
@@ -1724,6 +1773,10 @@ class ExtractorDockWidget(QDockWidget):
 
         if not ensure_runtime_network_ready(self):
             _log(self, "Runtime network preflight failed; run cancelled.", Qgis.Warning)
+            return
+
+        if len(self._batch_aoi_specs or []) > 1:
+            self._run_batch_clicked()
             return
 
         try:
@@ -1830,6 +1883,145 @@ class ExtractorDockWidget(QDockWidget):
         )
         QgsApplication.taskManager().addTask(self._current_task)
         _log(self, "Download handoff: backend task queued.")
+
+    def _run_batch_clicked(self):
+        try:
+            if not self._warn_for_aoi_size(interactive=True):
+                return
+            base_params = self._collect_params()
+        except Exception as e:
+            QMessageBox.warning(self, "VirtuGhan", str(e))
+            return
+
+        out_base = (self.outputPathEdit.text() or "").strip() or QgsProcessingUtils.tempFolder()
+        run_id = uuid.uuid4().hex[:8]
+        root_dir = batch_root(out_base, "virtughan_extractor", run_id)
+        specs = list(self._batch_aoi_specs or [])
+        self._batch_state = {
+            "specs": specs,
+            "index": 0,
+            "completed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "cancelled": False,
+            "root_dir": root_dir,
+        }
+        self._set_running(True)
+        self._focus_log_section()
+        _log(self, f"Batch download started: {len(specs)} polygon features. Root: {root_dir}")
+        self._start_next_batch_download(base_params)
+
+    def _start_next_batch_download(self, base_params):
+        state = self._batch_state
+        if not state:
+            return
+        if state.get("cancelled"):
+            self._finish_batch_download(cancelled=True)
+            return
+        if state["index"] >= len(state["specs"]):
+            self._finish_batch_download(cancelled=False)
+            return
+
+        spec = state["specs"][state["index"]]
+        state["index"] += 1
+        label = spec.get("label") or f"feature_{state['index']:03d}"
+        _log(self, f"[Batch {state['index']}/{len(state['specs'])}] Checking scenes for {label}...")
+
+        params = dict(base_params)
+        params["bbox"] = spec["bbox"]
+        params["polygon_wgs84"] = spec.get("polygon_wgs84")
+        params["output_dir"] = os.path.join(state["root_dir"], spec.get("folder_name") or f"feature_{state['index']:03d}")
+
+        try:
+            scenes = self._search_scenes_with_timeout(
+                params["bbox"],
+                params["start_date"],
+                params["end_date"],
+                params["cloud_cover"],
+                params["collection"],
+                params.get("extra_query"),
+                timeout_s=120.0,
+            )
+            if len(scenes or []) < 1:
+                state["skipped"] += 1
+                _log(self, f"[Batch {state['index']}] No matching images found; skipped.", Qgis.Warning)
+                self._start_next_batch_download(base_params)
+                return
+        except Exception as exc:
+            state["failed"] += 1
+            _log(self, f"[Batch {state['index']}] Scene search failed: {exc}", Qgis.Warning)
+            self._start_next_batch_download(base_params)
+            return
+
+        try:
+            os.makedirs(params["output_dir"], exist_ok=True)
+            log_path = os.path.join(params["output_dir"], "runtime.log")
+            open(log_path, "a", encoding="utf-8").close()
+        except Exception as exc:
+            state["failed"] += 1
+            _log(self, f"[Batch {state['index']}] Cannot create output folder: {exc}", Qgis.Warning)
+            self._start_next_batch_download(base_params)
+            return
+
+        self._stop_tailing()
+        self._start_tailing(log_path)
+        _log(self, f"[Batch {state['index']}/{len(state['specs'])}] Download started for {label}.")
+
+        def _on_done(ok, exc):
+            self._stop_tailing()
+            task_was_cancelled = False
+            try:
+                task_was_cancelled = bool(self._current_task and self._current_task.isCanceled())
+            except Exception:
+                pass
+            self._current_task = None
+            if isinstance(exc, _TaskCancelledError) or task_was_cancelled or state.get("cancelled"):
+                state["cancelled"] = True
+                self._finish_batch_download(cancelled=True)
+                return
+            if not ok or exc:
+                state["failed"] += 1
+                _log(self, f"[Batch {state['index']}] Download failed for {label}: {exc}", Qgis.Warning)
+            else:
+                state["completed"] += 1
+                self._load_rasters_from_dir(params["output_dir"])
+                _log(self, f"[Batch {state['index']}] Download completed for {label}.")
+            self._start_next_batch_download(base_params)
+
+        self._current_task = _ExtractorTask("VirtuGhan Extractor Batch", params, log_path, on_done=_on_done)
+        QgsApplication.taskManager().addTask(self._current_task)
+
+    def _finish_batch_download(self, *, cancelled: bool):
+        state = self._batch_state or {}
+        self._batch_state = None
+        self._current_task = None
+        self._stop_tailing()
+        self._set_running(False)
+        msg = (
+            f"Batch download {'cancelled' if cancelled else 'finished'}.\n\n"
+            f"Completed: {state.get('completed', 0)}\n"
+            f"Skipped: {state.get('skipped', 0)}\n"
+            f"Failed: {state.get('failed', 0)}\n\n"
+            f"Output: {state.get('root_dir', '')}"
+        )
+        _log(self, msg.replace("\n", " "))
+        QMessageBox.information(self, "VirtuGhan", msg)
+
+    def _load_rasters_from_dir(self, out_dir):
+        loaded_layer_ids = []
+        for root, _dirs, files in os.walk(out_dir):
+            for fn in files:
+                if fn.lower().endswith((".tif", ".tiff", ".vrt")):
+                    path = os.path.join(root, fn)
+                    lyr = QgsRasterLayer(path, os.path.splitext(fn)[0], "gdal")
+                    if lyr.isValid():
+                        QgsProject.instance().addMapLayer(lyr)
+                        loaded_layer_ids.append(lyr.id())
+                        _log(self, f"Loaded raster: {path}")
+                    else:
+                        _log(self, f"Failed to load raster: {path}", Qgis.Warning)
+        self._last_output_layer_ids = loaded_layer_ids
+        return loaded_layer_ids
 
     def _start_tailing(self, log_path: str):
         self._current_log_path = log_path
