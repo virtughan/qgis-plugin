@@ -912,41 +912,31 @@ class _ExtractorTask(QgsTask):
                         should_cancel=self.isCanceled,
                     )
                 else:
-                    max_attempts = 2
-                    for attempt in range(1, max_attempts + 1):
-                        try:
-                            if attempt > 1:
-                                logf.write(f"[INFO] Retrying download in a fresh subprocess (attempt {attempt}/{max_attempts}).\n")
-                            _run_extractor_in_subprocess(
-                                self.params,
-                                self.log_path,
+                    try:
+                        _run_extractor_in_subprocess(
+                            self.params,
+                            self.log_path,
+                            logf=logf,
+                            should_cancel=self.isCanceled,
+                        )
+                    except RuntimeError as sub_err:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+                        err_msg = str(sub_err)
+                        is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
+                        is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
+                        retryable = is_stuck or is_env_issue
+                        if retryable:
+                            logf.write(
+                                f"\n[WARNING] Subprocess failed: {err_msg}\n"
+                                "[INFO] Falling back to single-process download (workers=1).\n"
+                            )
+                            fallback_params = dict(self.params)
+                            fallback_params["workers"] = 1
+                            _run_extractor_inprocess_mac(
+                                fallback_params,
                                 logf=logf,
                                 should_cancel=self.isCanceled,
                             )
-                            break
-                        except RuntimeError as sub_err:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
-                            err_msg = str(sub_err)
-                            is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
-                            is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
-                            retryable = is_stuck or is_env_issue
-                            if retryable and attempt < max_attempts:
-                                logf.write(
-                                    f"\n[WARNING] Subprocess attempt {attempt}/{max_attempts} failed: {err_msg}\n"
-                                )
-                                continue
-                            if retryable:
-                                logf.write(
-                                    f"\n[WARNING] Subprocess failed: {err_msg}\n"
-                                    "[INFO] Falling back to single-process download (workers=1).\n"
-                                )
-                                fallback_params = dict(self.params)
-                                fallback_params["workers"] = 1
-                                _run_extractor_inprocess_mac(
-                                    fallback_params,
-                                    logf=logf,
-                                    should_cancel=self.isCanceled,
-                                )
-                                break
+                        else:
                             raise
             return True
         except _TaskCancelledError as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
