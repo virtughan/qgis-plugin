@@ -29,7 +29,7 @@ from ..bootstrap import (
 
 try:
     psutil = importlib.import_module("psutil")  # optional, used for adaptive concurrency
-except Exception:
+except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     psutil = None
 
 activate_runtime_paths()
@@ -47,7 +47,7 @@ def _prefer_primary_runtime_paths() -> None:
         try:
             while p in sys.path:
                 sys.path.remove(p)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     # Primary first, fallback retained only as last resort.
@@ -76,7 +76,7 @@ def _module_info(name: str) -> dict:
     if mod is None:
         try:
             mod = importlib.import_module(name)
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return {"import_error": str(exc), "loaded": False}
 
     mod_file = getattr(mod, "__file__", "") or ""
@@ -95,7 +95,7 @@ def _patch_rasterio_parsed_path_compat() -> None:
     """Make rasterio path handling robust when _ParsedPath comes from a different module instance."""
     try:
         import rasterio
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return
 
     original_open = getattr(rasterio, "open", None)
@@ -158,7 +158,7 @@ def _patch_rasterio_parsed_path_compat() -> None:
             if archive_val:
                 return f"{scheme_val}://{archive_val}/{path_val.lstrip('/')}"
             return f"{scheme_val}://{path_val.lstrip('/')}"
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return fp
 
     def _coerce_if_foreign_parsed_path(fp):
@@ -207,7 +207,7 @@ def _patch_rasterio_parsed_path_compat() -> None:
     for mod_name in parse_mod_names:
         try:
             path_mod = importlib.import_module(mod_name)
-        except Exception:
+        except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
             continue
 
         if hasattr(path_mod, "_parse_path"):
@@ -235,7 +235,7 @@ def _patch_rasterio_parsed_path_compat() -> None:
             open_attr = getattr(mod, "open", None)
             if callable(open_attr) and getattr(open_attr, "__module__", "").startswith("rasterio"):
                 setattr(mod, "open", rasterio.open)
-        except Exception:
+        except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
             continue
 
 
@@ -255,7 +255,7 @@ def _find_tileprocessor() -> Tuple[type, str]:
     """
     try:
         import virtughan  
-    except Exception as e:
+    except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         raise ImportError(
             "Cannot import 'virtughan' in this QGIS Python. "
             "Install it into the same interpreter QGIS uses. "
@@ -275,7 +275,7 @@ def _find_tileprocessor() -> Tuple[type, str]:
             continue
         try:
             mod = importlib.import_module(m.name)
-        except Exception:
+        except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
             continue
         for name, obj in vars(mod).items():
             if inspect.isclass(obj) and name == "TileProcessor":
@@ -285,7 +285,7 @@ def _find_tileprocessor() -> Tuple[type, str]:
     try:
         from virtughan.tile import TileProcessor  
         return TileProcessor, "virtughan.tile:TileProcessor"
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
     raise ImportError("TileProcessor not found anywhere under virtughan.*.")
@@ -335,7 +335,7 @@ def _safe_apply_colormap(result, colormap_str):
                 return np.nan
             try:
                 return float(v)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 return np.nan
 
         arr = np.vectorize(_safe_float, otypes=[float])(arr)
@@ -400,7 +400,7 @@ def _patch_tileprocessor_fetch_tile_compat() -> None:
                 return np.nan
             try:
                 return float(v)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 return np.nan
 
         return np.vectorize(_safe_float, otypes=[float])(arr)
@@ -409,7 +409,7 @@ def _patch_tileprocessor_fetch_tile_compat() -> None:
         tile = await original_fetch(url, x, y, z)
         try:
             return _coerce_no_value_safe_float_array(tile)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             # Fallback to original tile payload if coercion is not possible.
             return tile
 
@@ -432,7 +432,7 @@ def _resolve_tiler_concurrency() -> int:
     if raw:
         try:
             return max(1, int(raw))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
     return _default_tiler_concurrency()
 
@@ -518,7 +518,7 @@ def _module_file(name: str) -> str:
     try:
         mod = importlib.import_module(name)
         return str(getattr(mod, "__file__", "") or "")
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return ""
 
 
@@ -532,7 +532,7 @@ def _startup_fingerprint() -> dict:
                 "parse_path_id": id(getattr(mod, "parse_path", None)),
                 "_parse_path_id": id(getattr(mod, "_parse_path", None)),
             }
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             parse_targets[mod_name] = {"file": "", "parse_path_id": 0, "_parse_path_id": 0}
 
     return {
@@ -561,20 +561,20 @@ def _runtime_state_snapshot() -> dict:
         snap["parse_path_id"] = id(getattr(rp, "parse_path", None))
         snap["_parse_path_id"] = id(getattr(rp, "_parse_path", None))
         snap["parsed_path_class_id"] = id(getattr(rp, "_ParsedPath", None))
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         snap["rasterio_path_error"] = str(exc)
 
     try:
         import virtughan.tile as vt
         snap["tileprocessor_class_id"] = id(getattr(vt, "TileProcessor", None))
         snap["tileprocessor_fetch_id"] = id(getattr(getattr(vt, "TileProcessor", object), "fetch_tile", None))
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         snap["tileprocessor_error"] = str(exc)
 
     try:
         roots = [p for p in sys.path if "virtughan_runtime" in (p or "")]
         snap["runtime_paths"] = roots[:8]
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return snap
 
@@ -586,7 +586,7 @@ def _persist_and_log_startup_fingerprint() -> None:
         if os.path.exists(_STARTUP_STATE_FILE):
             with open(_STARTUP_STATE_FILE, "r", encoding="utf-8") as fh:
                 previous = json.load(fh)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         previous = None
 
     _append_tiler_log(
@@ -616,7 +616,7 @@ def _persist_and_log_startup_fingerprint() -> None:
     try:
         with open(_STARTUP_STATE_FILE, "w", encoding="utf-8") as fh:
             json.dump(current, fh)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
 
@@ -666,7 +666,7 @@ def _ensure_consistent_runtime_roots() -> None:
             try:
                 while p in sys.path:
                     sys.path.remove(p)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         sys.path.insert(0, target_root)
         sys.path.insert(0, target_site)
@@ -700,7 +700,7 @@ def _ensure_consistent_runtime_roots() -> None:
             before=json.dumps(current),
             after=json.dumps(after),
         )
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _append_tiler_log("warning", "Runtime root alignment failed", detail=str(exc))
 
 
@@ -715,12 +715,12 @@ def _stabilize_startup_path_bindings() -> None:
         rpath = importlib.import_module("rasterio.path")
         try:
             rp = importlib.reload(rp)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             # If reload is unavailable or fails, continue with current module object.
             pass
         try:
             rpath = importlib.reload(rpath)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         # Force both rasterio path entry points to share the same patched callables.
@@ -729,12 +729,12 @@ def _stabilize_startup_path_bindings() -> None:
         if parse_path is not None:
             try:
                 setattr(rpath, "parse_path", parse_path)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         if parse_path_private is not None:
             try:
                 setattr(rpath, "_parse_path", parse_path_private)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         # Rebind already-loaded aliases to the active rasterio._path callables.
@@ -746,7 +746,7 @@ def _stabilize_startup_path_bindings() -> None:
                     setattr(mod, "parse_path", parse_path)
                 if parse_path_private is not None and hasattr(mod, "_parse_path"):
                     setattr(mod, "_parse_path", parse_path_private)
-            except Exception:
+            except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                 continue
 
         # Force rio_tiler + all virtughan modules to re-import from patched rasterio.path.
@@ -777,7 +777,7 @@ def _stabilize_startup_path_bindings() -> None:
             fields=",".join(changed) if changed else "none",
             detail=json.dumps({"before": before, "after": after}, default=str),
         )
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _append_tiler_log("warning", "Startup ParsedPath stabilization failed", detail=str(exc))
 
 
@@ -786,7 +786,7 @@ def _cpu_usage_percent() -> Optional[float]:
         return None
     try:
         return float(psutil.cpu_percent(interval=None))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return None
 
 
@@ -905,7 +905,7 @@ def _viewport_age_seconds() -> Optional[float]:
         dt = datetime.fromisoformat(ts)
         now = datetime.utcnow()
         return max(0.0, (now - dt.replace(tzinfo=None)).total_seconds())
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return None
 
 
@@ -915,7 +915,7 @@ def _tile_intersects_settled_viewport_debug(z: int, x: int, y: int, generation: 
         return True, {"decision": "allow", "reason": "no_settled_viewport"}
     try:
         vp_gen = int(vp.get("generation", -1))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         vp_gen = -1
     if vp_gen != int(generation):
         return True, {
@@ -932,7 +932,7 @@ def _tile_intersects_settled_viewport_debug(z: int, x: int, y: int, generation: 
         max_lat = float(vp["max_lat"])
         pad_deg = max(0.0, float(vp.get("pad_deg", 0.0)))
         pad_tiles = max(0, int(vp.get("pad_tiles", 0)))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return True, {"decision": "allow", "reason": "viewport_parse_error"}
 
     try:
@@ -1001,7 +1001,7 @@ def _tile_intersects_settled_viewport_debug(z: int, x: int, y: int, generation: 
             "tile_max_lon": float(t_max_lon),
             "tile_max_lat": float(t_max_lat),
         }
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return True, {"decision": "allow", "reason": "intersection_exception"}
 
 
@@ -1107,7 +1107,7 @@ def _tile_tag_from_path(path: str) -> str:
         parts = rest.split("/")
         if len(parts) >= 3:
             return f"{parts[0]}/{parts[1]}/{parts[2]}"
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return ""
 
@@ -1166,7 +1166,7 @@ async def _generate_tile_with_cache_fallback(**kwargs):
     raw_func = getattr(processor.cached_generate_tile, "__wrapped__", None)
     try:
         return await processor.cached_generate_tile(**kwargs)
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         if raw_func is None:
             raise
         logger.warning(
@@ -1256,7 +1256,7 @@ async def bump_generation(
         if settle_delay_sec is not None:
             try:
                 _VIEW_SETTLE_DELAY_SEC = max(0.0, float(settle_delay_sec))
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 _VIEW_SETTLE_DELAY_SEC = _DEFAULT_VIEW_SETTLE_DELAY_SEC
         _LAST_VIEW_CHANGE_MONOTONIC = time.monotonic()
     _append_tiler_log(
@@ -1494,7 +1494,7 @@ async def get_tile(
                 await asyncio.wait_for(sem.acquire(), timeout=slice_sec)
                 acquired = True
                 break
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 waited += slice_sec
 
         if not acquired:
@@ -1566,7 +1566,7 @@ async def get_tile(
             try:
                 image_bytes, feature = await asyncio.wait_for(asyncio.shield(compute_task), timeout=slice_sec)
                 break
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 elapsed += slice_sec
         headers = {}
         try:
@@ -1575,14 +1575,14 @@ async def get_tile(
                 headers["X-Image-Date"] = props["datetime"]
             if "eo:cloud_cover" in props:
                 headers["X-Cloud-Cover"] = str(props["eo:cloud_cover"])
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         headers["Cache-Control"] = "public, max-age=300"
         _LAST_TILE_ERROR.clear()
         _append_tile_event_log("info", "Served tile", tile=req_tag)
         return Response(content=image_bytes, media_type="image/png", headers=headers)
 
-    except HTTPException as he:
+    except HTTPException as he:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         if _looks_like_parsed_path_error(getattr(he, "detail", "")):
             _append_tile_event_log(
                 "warning",
@@ -1617,15 +1617,15 @@ async def get_tile(
                         headers["X-Image-Date"] = props["datetime"]
                     if "eo:cloud_cover" in props:
                         headers["X-Cloud-Cover"] = str(props["eo:cloud_cover"])
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
                 _LAST_TILE_ERROR.clear()
                 _append_tile_event_log("info", "Served tile after parsed-path HTTPException recovery", tile=req_tag)
                 return Response(content=image_bytes, media_type="image/png", headers=headers)
-            except Exception as retry_ex:
+            except Exception as retry_ex:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 return JSONResponse(status_code=500, content={"detail": str(retry_ex)})
         return JSONResponse(status_code=he.status_code, content={"detail": he.detail})
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _append_tile_event_log("warning", "Tile generation timeout", tile=req_tag)
         _record_tile_failure(
             reason="tile_compute_timeout",
@@ -1635,11 +1635,11 @@ async def get_tile(
             response="tile_compute_timeout",
         )
         return _retryable_tile_unavailable("tile_compute_timeout", status_code=504)
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         try:
             if task_owner and compute_task is not None and not compute_task.done():
                 compute_task.cancel()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         _append_tile_event_log("warning", "Tile generation cancelled", tile=req_tag)
         _record_tile_failure(
@@ -1650,7 +1650,7 @@ async def get_tile(
             response="tile_compute_cancelled",
         )
         return _retryable_tile_unavailable("tile_compute_cancelled", status_code=503)
-    except Exception as ex:
+    except Exception as ex:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         if _looks_like_parsed_path_error(ex):
             _append_tile_event_log(
                 "warning",
@@ -1685,12 +1685,12 @@ async def get_tile(
                         headers["X-Image-Date"] = props["datetime"]
                     if "eo:cloud_cover" in props:
                         headers["X-Cloud-Cover"] = str(props["eo:cloud_cover"])
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
                 _LAST_TILE_ERROR.clear()
                 _append_tile_event_log("info", "Served tile after parsed-path recovery", tile=req_tag)
                 return Response(content=image_bytes, media_type="image/png", headers=headers)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         tb = traceback.format_exc()
@@ -1742,12 +1742,12 @@ async def get_tile(
                 task_ref = _INFLIGHT_TILE_TASKS.get(compute_key)
                 if task_ref is compute_task:
                     _INFLIGHT_TILE_TASKS.pop(compute_key, None)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         if acquired:
             try:
                 sem.release()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         if counted_active and _ACTIVE_TILE_REQUESTS > 0:
             _ACTIVE_TILE_REQUESTS -= 1

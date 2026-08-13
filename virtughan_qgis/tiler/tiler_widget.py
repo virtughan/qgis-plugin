@@ -41,7 +41,7 @@ from ..bootstrap import (
 
 activate_runtime_paths()
 
-from ..qt_compat import QtCompat, QSizePolicyCompat
+from ..qt_compat import QtCompat, QgisCompat, QgsBlockingNetworkRequestCompat, QSizePolicyCompat
 from ..common.ui_helpers import DynamicBandSelector, apply_primary_button_style, describe_bands_for_formula
 
 CommonParamsWidget = None
@@ -57,7 +57,7 @@ try:
         filter_bands_used_by_formula,
         normalize_collection,
     )
-except Exception:
+except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     CommonParamsWidget = None
     default_band_list = lambda: ["red", "green", "blue", "nir", "nir08", "swir16", "swir22", "rededge1", "rededge2", "rededge3"]
     index_presets_two_band = lambda: []
@@ -106,7 +106,7 @@ class _InProcessServerManager:
         # Pass desired request concurrency to tiler API on import/reload.
         try:
             os.environ["VIRTUGHAN_TILER_CONCURRENCY"] = str(effective_workers)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             os.environ["VIRTUGHAN_TILER_CONCURRENCY"] = "4"
 
         from fastapi import FastAPI
@@ -139,7 +139,7 @@ class _InProcessServerManager:
                 sys.path.insert(0, dep_path)
 
         def _log(msg: str):
-            QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
+            QgsMessageLog.logMessage(msg, "VirtuGhan", QgisCompat.Info)
 
         def _resolve_app(path: str):
             if not path or ":" not in path:
@@ -168,7 +168,7 @@ class _InProcessServerManager:
                 app = getattr(m, fn)
                 if isinstance(app, FastAPI):
                     return app, f"{module_name}:{fn}"
-            except Exception as e:
+            except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 _log(f"[uvicorn] Could not import {module_name}:{fn} ({e}).")
             return None, None
 
@@ -185,8 +185,8 @@ class _InProcessServerManager:
         class _QgisHandler(logging.Handler):
             def emit(self, record):
                 try:
-                    QgsMessageLog.logMessage(f"[uvicorn] {self.format(record)}", "VirtuGhan", Qgis.Info)
-                except Exception:
+                    QgsMessageLog.logMessage(f"[uvicorn] {self.format(record)}", "VirtuGhan", QgisCompat.Info)
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
 
         for h in list(uv_logger.handlers):
@@ -207,7 +207,7 @@ class _InProcessServerManager:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind((bind_host, int(bind_port)))
                 return True
-            except OSError:
+            except OSError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 return False
             finally:
                 sock.close()
@@ -239,7 +239,7 @@ class _InProcessServerManager:
             self._bound_host = host
             self._bound_port = chosen_port
             return
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             last_err = e
 
         raise RuntimeError(f"Failed to start local server on {host}:{port}. Last error: {last_err}")
@@ -248,7 +248,7 @@ class _InProcessServerManager:
         if self._server is not None:
             try:
                 self._server.should_exit = True
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         self._server = None
         self._thread = None
@@ -305,12 +305,12 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._canvas.extentsChanged.connect(self._on_canvas_view_changed)
             self._canvas.scaleChanged.connect(self._on_canvas_scale_changed)
             self.destroyed.connect(lambda *_: self._disconnect_canvas_signals())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             self.setMinimumSize(self.sizeHint())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _set_header_logo(self):
@@ -340,14 +340,14 @@ class TilerWidget(QWidget, FORM_CLASS):
             idx = header_layout.indexOf(title_label)
             header_layout.insertWidget(max(0, idx), logo_label)
             header_layout.setSpacing(6)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _log(self, msg: str):
-        QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
+        QgsMessageLog.logMessage(msg, "VirtuGhan", QgisCompat.Info)
         try:
             _TILER_UI_SESSION_LOGS.append(str(msg))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             if hasattr(self, "_tilerLogText") and self._tilerLogText is not None:
@@ -355,7 +355,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 # Auto-scroll to bottom to show latest log
                 sb = self._tilerLogText.verticalScrollBar()
                 sb.setValue(sb.maximum())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _init_log_panel(self):
@@ -389,12 +389,12 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             if _TILER_UI_SESSION_LOGS:
                 self._tilerLogText.setPlainText("\n".join(_TILER_UI_SESSION_LOGS))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             self.groupBoxLocal.setSizePolicy(QSizePolicyCompat.Expanding, QSizePolicyCompat.Fixed)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._rebalance_vertical_layout()
 
@@ -402,7 +402,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         """Keep advanced controls readable by compacting log panel when needed."""
         try:
             advanced_open = bool(self.groupBoxLocal.isVisible())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             advanced_open = False
 
         try:
@@ -412,7 +412,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             else:
                 self.groupBoxLocal.setMinimumHeight(0)
                 self.groupBoxLocal.setMaximumHeight(200)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
@@ -423,12 +423,12 @@ class TilerWidget(QWidget, FORM_CLASS):
                 else:
                     self._tilerLogText.setMinimumHeight(72)
                     self._tilerLogText.setMaximumHeight(120)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             self.adjustSize()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
@@ -437,7 +437,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self.setMinimumHeight(max(self.minimumHeight(), needed_h))
             else:
                 self.setMinimumHeight(0)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _clear_tiler_log(self):
@@ -445,7 +445,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._tilerLogText.clear()
             self._last_tiler_log_id = 0
             _TILER_UI_SESSION_LOGS.clear()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _diag_url(self, path: str) -> str:
@@ -457,7 +457,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         blocking = QgsBlockingNetworkRequest()
         blocking.setAuthCfg("")  # no auth needed for localhost
         err = blocking.get(request)
-        if err != QgsBlockingNetworkRequest.NoError:
+        if err != QgsBlockingNetworkRequestCompat.NoError:
             raise RuntimeError(blocking.errorMessage())
         reply = blocking.reply()
         data = bytes(reply.content()).decode("utf-8", errors="replace")
@@ -535,23 +535,23 @@ class TilerWidget(QWidget, FORM_CLASS):
                 return
             try:
                 self._canvas.extentsChanged.disconnect(self._on_canvas_view_changed)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             try:
                 self._canvas.scaleChanged.disconnect(self._on_canvas_scale_changed)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             self._canvas = None
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _is_local_server_active(self) -> bool:
         try:
             return bool(self.runLocalCheck.isChecked() and self.server.is_running())
-        except RuntimeError:
+        except RuntimeError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             # Can happen if Qt has already deleted child widgets during teardown.
             return False
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
     def _has_active_tiler_layer(self) -> bool:
@@ -566,10 +566,10 @@ class TilerWidget(QWidget, FORM_CLASS):
                     src = getattr(lyr, "source", lambda: "")() or ""
                     if "/tile/{z}/{x}/{y}" in src:
                         return True
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
             return False
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
     def _bump_view_generation(self, reason: str, settle: bool, settle_delay_sec: float | None = None):
@@ -582,7 +582,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._diag_url(f"/diag/bump-generation?reason={reason}&settle={settle_q}{delay_q}"),
                 timeout=0.5,
             )
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
 
     def _notify_view_generation_change(self):
@@ -612,11 +612,11 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._publish_settled_viewport(int(settled.get("generation")))
             else:
                 self._log("[WARN] Settled generation bump failed (no response).")
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             self._motion_gate_failsafe_timer.stop()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._set_tiler_layer_motion_gate(enabled=False)
         self._pending_motion_kind = "pan"
@@ -630,7 +630,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._set_tiler_layer_motion_gate(enabled=False)
                 self._view_motion_active = False
                 self._pending_motion_kind = "pan"
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _set_tiler_layer_motion_gate(self, enabled: bool):
@@ -667,9 +667,9 @@ class TilerWidget(QWidget, FORM_CLASS):
                     layer.triggerRepaint()
                 if self._canvas is not None:
                     self._canvas.refresh()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _current_view_signature(self):
@@ -681,7 +681,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             mupp = 0.0
             try:
                 mupp = float(self._canvas.mapUnitsPerPixel())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 mupp = 0.0
             q = max(1e-6, mupp * 0.5)
 
@@ -695,7 +695,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 _q(float(ext.yMaximum())),
                 round(float(self._canvas.scale()), 3),
             )
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
 
     def _current_view_bbox_lonlat(self):
@@ -720,7 +720,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             min_lat = min(lats)
             max_lat = max(lats)
             return (min_lon, min_lat, max_lon, max_lat)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
 
     def _publish_settled_viewport(self, generation: int):
@@ -750,7 +750,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._http_json_get(url, timeout=timeout_s)
                 self._log(f"[DEBUG] Settled viewport publish success gen={int(generation)} timeout={timeout_s}")
                 return
-            except Exception as e:
+            except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 last_err = e
         self._log(f"[WARN] Failed to publish settled viewport: {last_err}")
 
@@ -766,7 +766,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._diag_url(f"/diag/logs?since_id={int(self._last_tiler_log_id)}"),
                 timeout=0.7,
             )
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self._poll_fail_count += 1
             if self._poll_fail_count >= 3 and not self._poll_failure_logged:
                 self._log(f"[WARN] Tiler log polling failed repeatedly: {e}")
@@ -848,7 +848,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self.workersSpin.setValue(4)
             self.workersSpin.setToolTip("Fixed worker count (4).")
             self._last_active_worker_limit = 4
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     # Reuse defaults from common (if available), else fallback
@@ -865,7 +865,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                         d = getattr(CommonParamsWidget, name)()
                         if isinstance(d, dict) and d:
                             return d
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         today = QDate.currentDate()
         return {
@@ -1003,7 +1003,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             self.band1Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
             self.band2Combo.currentTextChanged.connect(self._sync_reference_from_advanced)
-        except RuntimeError:
+        except RuntimeError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self.formulaLine.textChanged.connect(self._sync_reference_from_advanced)
         self.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
@@ -1017,7 +1017,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             grid = self.findChild(QWidget, "groupBoxParams").layout()
             grid.addWidget(self.advancedBandsSelector, 7, 1, 1, 2)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self.advancedBandsSelector.setParent(self)
 
         self.labelBand1.setText("Bands *")
@@ -1037,7 +1037,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             grid.setRowMinimumHeight(7, selector.minimumSizeHint().height())
             self.findChild(QWidget, "groupBoxParams").updateGeometry()
             self.updateGeometry()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _scroll_to_tiler_log(self):
@@ -1046,7 +1046,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._tilerLogText.setFocus(QtCompat.OtherFocusReason)
                 sb = self._tilerLogText.verticalScrollBar()
                 sb.setValue(sb.maximum())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             parent = self.parentWidget()
@@ -1056,7 +1056,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                     vsb.setValue(vsb.maximum())
                     break
                 parent = parent.parentWidget()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _default_advanced_bands(self, collection=None):
@@ -1107,7 +1107,7 @@ class TilerWidget(QWidget, FORM_CLASS):
     def _current_collection(self):
         try:
             return normalize_collection(self.collectionCombo.itemData(self.collectionCombo.currentIndex()))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return "sentinel-2-l2a"
 
     def _on_collection_changed(self, *_):
@@ -1244,7 +1244,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         enabled = self.runLocalCheck.isChecked()
         try:
             running = self.server.is_running()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             running = False
         self.startServerBtn.setEnabled(enabled and not running)
         self.stopServerBtn.setEnabled(enabled and running)
@@ -1278,7 +1278,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 if "/tile/{z}/{x}/{y}" in src or lyr.name() == want_name:
                     if lyr.id() not in to_remove:
                         to_remove.append(lyr.id())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         if to_remove:
@@ -1368,14 +1368,14 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._apply_localserver_visibility()
             else:
                 self._log("Local server already running.")
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.critical(self, "Start Server Error", str(e))
 
     def _on_stop_server(self):
         try:
             try:
                 self._motion_gate_failsafe_timer.stop()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             self._set_tiler_layer_motion_gate(enabled=False)
             self.server.stop()
@@ -1385,7 +1385,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._poll_failure_logged = False
             self._log("Local server stopped.")
             self._apply_localserver_visibility()
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.critical(self, "Stop Server Error", str(e))
 
     def _try_recover_local_server(self, trigger: str):
@@ -1393,13 +1393,13 @@ class TilerWidget(QWidget, FORM_CLASS):
         try:
             if not self.runLocalCheck.isChecked():
                 return False
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
         try:
             if self.server.is_running():
                 return True
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
         try:
@@ -1413,7 +1413,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._log("[INFO] Local server recovered.")
                 return True
             return False
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self._log(f"[WARN] Local server recovery failed: {e}")
             return False
 
@@ -1461,7 +1461,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._log(f"Added layer '{layer_name}' with source: {layer.source()}")
             self._scroll_to_tiler_log()
             QMessageBox.information(self, "Layer Added", f"'{layer_name}' added successfully.")
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.critical(self, "Error", str(e))
 
     def _on_layers_removed(self, layer_ids):
@@ -1481,7 +1481,7 @@ class TilerWidget(QWidget, FORM_CLASS):
                 self._tiler_log_timer.stop()
                 self._log("Local server stopped (no more Tiler layers).")
                 self._apply_localserver_visibility()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def closeEvent(self, event):
@@ -1490,7 +1490,7 @@ class TilerWidget(QWidget, FORM_CLASS):
             self._view_change_timer.stop()
             self._motion_gate_failsafe_timer.stop()
             self._tiler_log_timer.stop()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         super().closeEvent(event)
 

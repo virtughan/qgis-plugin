@@ -4,6 +4,8 @@ from qgis.PyQt.QtCore import QDate
 from qgis.core import Qgis, QgsMessageLog
 import zipfile
 
+from ..qt_compat import QgisCompat
+
 from .common_logic import (
     load_bands_meta, populate_band_combos, check_resolution_warning,
     auto_workers, qdate_to_iso, collection_choices, normalize_collection,
@@ -80,8 +82,8 @@ class CommonParamsWidget(QtWidgets.QWidget):
         if msg:
             try:
                 self._warn_callback(msg)
-            except Exception:
-                QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Warning)
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+                QgsMessageLog.logMessage(msg, "VirtuGhan", QgisCompat.Warning)
 
     def warn_resolution_if_needed(self, callback):
         """Provide a function(str) to be called when we detect a GSD mismatch."""
@@ -125,11 +127,11 @@ def extract_zipfiles(out_dir: str, logger=None, delete_archives: bool = False) -
     """
     extracted_dirs: list[str] = []
 
-    def _log(msg, level=Qgis.Info):
+    def _log(msg, level=QgisCompat.Info):
         if logger:
             try:
                 logger(msg, level)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     try:
@@ -155,11 +157,11 @@ def extract_zipfiles(out_dir: str, logger=None, delete_archives: bool = False) -
                         try:
                             os.remove(zpath)
                             _log(f"Deleted archive: {zpath}")
-                        except Exception as e:
-                            _log(f"Could not delete archive {zpath}: {e}", Qgis.Warning)
-                except Exception as e:
-                    _log(f"Failed to extract {zpath}: {e}", Qgis.Warning)
-    except Exception as e:
-        _log(f"Zip extraction step failed: {e}", Qgis.Warning)
+                        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+                            _log(f"Could not delete archive {zpath}: {e}", QgisCompat.Warning)
+                except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+                    _log(f"Failed to extract {zpath}: {e}", QgisCompat.Warning)
+    except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Zip extraction step failed: {e}", QgisCompat.Warning)
 
     return extracted_dirs

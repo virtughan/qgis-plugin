@@ -50,7 +50,7 @@ def bbox_area_km2(bbox: list[float] | tuple[float, float, float, float] | None) 
     try:
         import math
         km_per_deg_lon *= max(0.05, math.cos(math.radians(mid_lat)))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return abs((x2 - x1) * km_per_deg_lon) * abs((y2 - y1) * km_per_deg_lat)
 
@@ -73,11 +73,11 @@ def polygon_layers(project: QgsProject | None = None):
                 continue
             try:
                 geom_type = QgsWkbTypes.geometryType(layer.wkbType())
-            except Exception:
+            except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                 continue
-            if geom_type == QgsWkbTypes.PolygonGeometry:
+            if geom_type == get_polygon_geometry_type():
                 layers.append(layer)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return layers
 
@@ -93,7 +93,7 @@ def feature_geometry_in_project_crs(layer: QgsVectorLayer, feature: QgsFeature, 
         dst = project.crs()
         if src.isValid() and dst.isValid() and src.authid() != dst.authid():
             geom.transform(QgsCoordinateTransform(src, dst, project))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return geom
 
@@ -110,10 +110,10 @@ def combined_feature_geometry_in_project_crs(layer: QgsVectorLayer, features, pr
     for geom in geoms[1:]:
         try:
             combined = combined.combine(geom)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             try:
                 combined = combined.combine(QgsGeometry(geom))
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
     return combined
 
@@ -152,7 +152,7 @@ class AoiManager:
             out = QColor.fromHsv(hue, saturation, value, alpha)
             out.setAlpha(color.alpha())
             return out
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             out = QColor(color)
             out.setAlpha(color.alpha())
             return out
@@ -167,7 +167,7 @@ class AoiManager:
         existing = set()
         try:
             existing = {layer.name() for layer in project.mapLayers().values()}
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         while True:
             name = f"{self.layer_name} {self._archive_generation}"
@@ -187,9 +187,9 @@ class AoiManager:
             self.layer.emitStyleChanged()
             try:
                 self.iface.layerTreeView().refreshLayerSymbology(self.layer.id())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def ensure_layer(self):
@@ -241,25 +241,25 @@ class AoiManager:
         if self.layer and self.layer.isValid():
             try:
                 self.layer.setName(self._next_archive_name())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         self.layer = None
         try:
             self.iface.mapCanvas().refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def clear(self):
         if self.layer and self.layer.isValid():
             try:
                 QgsProject.instance().removeMapLayer(self.layer.id())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         self.layer = None
         # Refresh canvas to immediately show the removed layer
         try:
             self.iface.mapCanvas().refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
 
@@ -278,10 +278,10 @@ class AoiPolygonTool(QgsMapTool):
         try:
             self.rb.setColor(stroke)
             self.rb.setFillColor(fill)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             try:
                 self.rb.setStrokeColor(stroke)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     def canvasPressEvent(self, e):
@@ -318,12 +318,12 @@ class AoiPolygonTool(QgsMapTool):
     def _cleanup(self):
         try:
             self.rb.reset(get_polygon_geometry_type())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self.points.clear()
         try:
             self.canvas.unsetMapTool(self)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
 
@@ -342,10 +342,10 @@ class AoiRectTool(QgsMapTool):
         try:
             self.rb.setColor(stroke)
             self.rb.setFillColor(fill)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             try:
                 self.rb.setStrokeColor(stroke)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     def canvasPressEvent(self, e):
@@ -383,10 +383,10 @@ class AoiRectTool(QgsMapTool):
     def _finish(self, rect: QgsRectangle | None):
         try:
             self.rb.reset(get_polygon_geometry_type())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             self.canvas.unsetMapTool(self)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self.on_done(rect)

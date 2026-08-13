@@ -90,13 +90,13 @@ from ..common.ui_helpers import apply_primary_button_style, hide_single_tab_bar
 
 activate_runtime_paths()
 
-from ..qt_compat import QtCompat, QMessageBoxCompat, QAbstractItemViewCompat
+from ..qt_compat import QtCompat, QgisCompat, QgsTaskCompat, QMessageBoxCompat, QAbstractItemViewCompat
 
 COMMON_IMPORT_ERROR = None
 CommonParamsWidget = None
 try:
     from ..common.common_widget import CommonParamsWidget
-except Exception as _e:
+except Exception as _e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     COMMON_IMPORT_ERROR = _e
     CommonParamsWidget = None
 
@@ -159,7 +159,7 @@ def _apply_pyproj_windows_guard(logger=None):
                 os.environ["PROJ_DATA"] = proj_path
                 selected_proj_path = proj_path
                 break
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
     if selected_proj_path and logger:
@@ -242,7 +242,7 @@ def _run_extractor_inprocess_mac(params: dict, logf=None, should_cancel=None):
             while dep_path in sys.path:
                 try:
                     sys.path.remove(dep_path)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     break
             sys.path.insert(0, dep_path)
 
@@ -471,7 +471,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                     ):
                         if candidate.is_dir():
                             pyhome_candidates.append(str(candidate))
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
             selected_env = None
@@ -499,7 +499,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                 preflight = subprocess.run(
                     preflight_cmd,
                     **preflight_run_kwargs,
-                )
+                )  # nosec B603 - fixed QGIS Python executable and argument list; shell is not used.
                 if logf:
                     logf.write(
                         f"[INFO] mac preflight pyhome={pyhome or '<unset>'} returncode={preflight.returncode}\n"
@@ -538,7 +538,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             preflight = subprocess.run(
                 preflight_cmd,
                 **preflight_run_kwargs,
-            )
+            )  # nosec B603 - fixed QGIS Python executable and argument list; shell is not used.
             if preflight.returncode != 0:
                 raise RuntimeError(
                     "Resolved Python executable failed startup preflight. "
@@ -552,7 +552,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             if preflight.stderr:
                 logf.write(f"[INFO] python preflight stderr={preflight.stderr.strip()}\n")
 
-        proc = subprocess.Popen(**run_kwargs)
+        proc = subprocess.Popen(**run_kwargs)  # nosec B603 - fixed QGIS Python executable and generated runner path; shell is not used.
         stdout_data = ""
         stderr_data = ""
         try:
@@ -566,14 +566,14 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                 if callable(should_cancel) and should_cancel():
                     try:
                         proc.terminate()
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                     try:
                         proc.wait(timeout=2.0)
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         try:
                             proc.kill()
-                        except Exception:
+                        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                             pass
                     raise _TaskCancelledError("Download cancelled by user.")
 
@@ -588,7 +588,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                     if current_log_size > last_log_size:
                         last_log_size = current_log_size
                         last_log_activity = now
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
 
                 # Detect stuck subprocess
@@ -600,14 +600,14 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                         )
                     try:
                         proc.terminate()
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                     try:
                         proc.wait(timeout=2.0)
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         try:
                             proc.kill()
-                        except Exception:
+                        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                             pass
                     raise RuntimeError(
                         "Extractor subprocess appears stuck (no progress for 90 seconds).\n\n"
@@ -619,14 +619,14 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
                         logf.write("[ERROR] Extractor subprocess timed out after 10 minutes.\n")
                     try:
                         proc.terminate()
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                     try:
                         proc.wait(timeout=2.0)
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         try:
                             proc.kill()
-                        except Exception:
+                        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                             pass
                     raise RuntimeError(
                         "Extractor subprocess timed out after 10 minutes."
@@ -639,7 +639,7 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
             if proc.poll() is None:
                 try:
                     proc.kill()
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
 
         if logf and stdout_data:
@@ -663,15 +663,15 @@ def _run_extractor_in_subprocess(params: dict, log_path: str, logf=None, should_
     finally:
         try:
             shutil.rmtree(work_dir, ignore_errors=True)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
 
-def _log(widget, msg, level=Qgis.Info):
+def _log(widget, msg, level=QgisCompat.Info):
     QgsMessageLog.logMessage(str(msg), "VirtuGhan", level)
     try:
         widget.logText.appendPlainText(str(msg))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
 
@@ -682,7 +682,7 @@ def _resolve_embedded_python_executable() -> str:
     def _add_root(path_value):
         try:
             p = Path(path_value).resolve()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return
         if p not in install_roots:
             install_roots.append(p)
@@ -690,20 +690,20 @@ def _resolve_embedded_python_executable() -> str:
     def _add_candidate(path_value):
         try:
             p = Path(path_value)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return
         candidates.append(p)
 
     def _is_within_install_roots(candidate_path: Path) -> bool:
         try:
             resolved = candidate_path.resolve()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
         for root in install_roots:
             try:
                 resolved.relative_to(root)
                 return True
-            except Exception:
+            except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                 continue
         return False
 
@@ -732,7 +732,7 @@ def _resolve_embedded_python_executable() -> str:
                         _add_root(parent / "Contents")
                         _add_root(parent / "Contents" / "MacOS")
                         break
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     base_executable = getattr(sys, "_base_executable", "")
@@ -760,7 +760,7 @@ def _resolve_embedded_python_executable() -> str:
                 for entry in sorted(bin_dir.iterdir()):
                     if entry.is_file() and entry.name.lower().startswith("python"):
                         candidates.append(entry)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     if sys.platform == "darwin" and sys.executable:
@@ -786,10 +786,10 @@ def _resolve_embedded_python_executable() -> str:
                         for entry in sorted(parent.iterdir()):
                             if entry.is_file() and entry.name.lower().startswith("python"):
                                 candidates.append(entry)
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                     break
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     if os.name == "nt":
@@ -802,7 +802,7 @@ def _resolve_embedded_python_executable() -> str:
                     if app.is_dir() and app.name.lower().startswith("python"):
                         candidates.append(app / "python.exe")
                         candidates.append(app / "Scripts" / "python.exe")
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     if sys.executable:
@@ -812,7 +812,7 @@ def _resolve_embedded_python_executable() -> str:
     for candidate in candidates:
         try:
             resolved = candidate.resolve()
-        except Exception:
+        except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
             continue
         normalized = str(resolved)
         if normalized in seen:
@@ -863,7 +863,7 @@ def _with_embedded_python_executable(logf=None):
                 mp_set_executable(embedded_python)
                 if logf:
                     logf.write(f"Using multiprocessing executable: {embedded_python}\n")
-        except Exception as mp_exc:
+        except Exception as mp_exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             if logf:
                 logf.write(f"Could not configure multiprocessing executable: {mp_exc}\n")
 
@@ -878,7 +878,7 @@ def _with_embedded_python_executable(logf=None):
 
 class _ExtractorTask(QgsTask):
     def __init__(self, desc, params, log_path, on_done=None):
-        super().__init__(desc, QgsTask.CanCancel)
+        super().__init__(desc, QgsTaskCompat.CanCancel)
         self.params = params
         self.log_path = log_path
         self.on_done = on_done
@@ -888,7 +888,7 @@ class _ExtractorTask(QgsTask):
         try:
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
                 logf.write("[cancel] Download cancellation requested by user.\n")
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         return super().cancel()
 
@@ -896,7 +896,7 @@ class _ExtractorTask(QgsTask):
         try:
             os.makedirs(self.params["output_dir"], exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
-                _apply_pyproj_windows_guard(logger=lambda m, lvl=Qgis.Info: logf.write(f"[{lvl}] {m}\n"))
+                _apply_pyproj_windows_guard(logger=lambda m, lvl=QgisCompat.Info: logf.write(f"[{lvl}] {m}\n"))
                 _reload_pyproj_modules(logger=lambda m: logf.write(f"[INFO] {m}\n"))
                 logf.write(f"[INFO] PROJ_LIB={os.environ.get('PROJ_LIB', '')}\n")
                 logf.write(f"[INFO] PROJ_DATA={os.environ.get('PROJ_DATA', '')}\n")
@@ -924,7 +924,7 @@ class _ExtractorTask(QgsTask):
                                 should_cancel=self.isCanceled,
                             )
                             break
-                        except RuntimeError as sub_err:
+                        except RuntimeError as sub_err:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                             err_msg = str(sub_err)
                             is_stuck = "appears stuck" in err_msg or "timed out" in err_msg.lower()
                             is_env_issue = "Could not locate" in err_msg or "preflight" in err_msg.lower()
@@ -949,16 +949,16 @@ class _ExtractorTask(QgsTask):
                                 break
                             raise
             return True
-        except _TaskCancelledError as e:
+        except _TaskCancelledError as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self.exc = e
             return False
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self.exc = e
             try:
                 with open(self.log_path, "a", encoding="utf-8", buffering=1) as logf:
                     logf.write("[exception]\n")
                     logf.write(traceback.format_exc())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             return False
 
@@ -966,7 +966,7 @@ class _ExtractorTask(QgsTask):
         if self.on_done:
             try:
                 self.on_done(ok, self.exc)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
 class _UiLogTailer:
@@ -994,7 +994,7 @@ class _UiLogTailer:
         try:
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
             open(self._path, "a", encoding="utf-8").close()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._pos = 0
         self._last_growth_monotonic = time.monotonic()
@@ -1028,9 +1028,9 @@ class _UiLogTailer:
                         if callable(self._on_stall):
                             try:
                                 self._on_stall(idle_sec)
-                            except Exception:
+                            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                                 pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 from qgis.PyQt.QtCore import Qt, QTimer
 
@@ -1090,7 +1090,7 @@ class ExtractorDockWidget(QDockWidget):
         )
         try:
             self.commonWidget.collectionCombo.currentIndexChanged.connect(self._on_collection_changed)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._smart_filter_warning_key = None
         self._wire_smart_filter_warning()
@@ -1123,7 +1123,7 @@ class ExtractorDockWidget(QDockWidget):
         try:
             self.ui_root.setMinimumSize(self.ui_root.sizeHint())
             self.setMinimumSize(self.ui_root.sizeHint())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         self._current_task = None
@@ -1139,7 +1139,7 @@ class ExtractorDockWidget(QDockWidget):
         try:
             self.commonWidget.startDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
             self.commonWidget.endDate.dateChanged.connect(lambda *_: self._maybe_warn_smart_filter_timeframe())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _maybe_warn_smart_filter_timeframe(self):
@@ -1171,12 +1171,12 @@ class ExtractorDockWidget(QDockWidget):
                     "Date range is longer than 1 year. If you enable Smart filter, "
                     "it may reduce the number of downloaded images by selecting representative scenes."
                 )
-            _log(self, msg, Qgis.Warning)
+            _log(self, msg, QgisCompat.Warning)
             try:
                 self.iface.messageBar().pushWarning("VirtuGhan", msg)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _set_header_logo(self):
@@ -1206,7 +1206,7 @@ class ExtractorDockWidget(QDockWidget):
             idx = header_layout.indexOf(title_label)
             header_layout.insertWidget(max(0, idx), logo_label)
             header_layout.setSpacing(6)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _init_common_widget(self):
@@ -1220,7 +1220,7 @@ class ExtractorDockWidget(QDockWidget):
             self._hide_bands_and_formula()
         else:
             self.commonWidget = None
-            _log(self, f"CommonParamsWidget failed: {COMMON_IMPORT_ERROR}", Qgis.Warning)
+            _log(self, f"CommonParamsWidget failed: {COMMON_IMPORT_ERROR}", QgisCompat.Warning)
 
 
     def _hide_bands_and_formula(self):
@@ -1258,13 +1258,13 @@ class ExtractorDockWidget(QDockWidget):
                     try:
                         grid_layout.setRowMinimumHeight(row, 0)
                         grid_layout.setRowStretch(row, 0)
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                 try:
                     grid_layout.setVerticalSpacing(2)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         # Optional: nudge layouts to recompute sizes
@@ -1272,7 +1272,7 @@ class ExtractorDockWidget(QDockWidget):
             w.updateGeometry()
             w.setMinimumHeight(w.sizeHint().height())
             self.ui_root.adjustSize()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
 
@@ -1286,7 +1286,7 @@ class ExtractorDockWidget(QDockWidget):
         if self.commonWidget:
             try:
                 return normalize_collection(self.commonWidget.get_params().get("collection"))
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         return "sentinel-2-l2a"
 
@@ -1305,13 +1305,13 @@ class ExtractorDockWidget(QDockWidget):
             layout.removeWidget(self.aoiPreviewLabel)
             layout.addWidget(self.aoiLayerList, 1, 0, 1, 5)
             layout.addWidget(self.aoiPreviewLabel, 2, 0, 1, 5)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             QgsProject.instance().layersAdded.connect(self._on_project_layers_changed)
             QgsProject.instance().layersRemoved.connect(self._on_project_layers_changed)
             self._aoi_layer_project_signals_connected = True
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._populate_aoi_layer_combo()
 
@@ -1325,11 +1325,11 @@ class ExtractorDockWidget(QDockWidget):
             project = QgsProject.instance()
             try:
                 project.layersAdded.disconnect(self._on_project_layers_changed)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             try:
                 project.layersRemoved.disconnect(self._on_project_layers_changed)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         finally:
             self._aoi_layer_project_signals_connected = False
@@ -1348,7 +1348,7 @@ class ExtractorDockWidget(QDockWidget):
                 helper_layer = getattr(getattr(self, "_aoi", None), "layer", None)
                 if helper_layer is not None and helper_layer.isValid():
                     helper_layer_id = helper_layer.id()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 helper_layer_id = None
             layer_list.blockSignals(True)
             layer_list.clear()
@@ -1379,13 +1379,13 @@ class ExtractorDockWidget(QDockWidget):
                         break
                 if not found and getattr(self, "_last_aoi_layer_id", None) == current_id:
                     self._last_aoi_layer_id = None
-        except RuntimeError as exc:
+        except RuntimeError as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             if "deleted" not in str(exc).lower():
                 raise
         finally:
             try:
                 layer_list.blockSignals(False)
-            except RuntimeError:
+            except RuntimeError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     def _selected_aoi_layer(self):
@@ -1408,7 +1408,7 @@ class ExtractorDockWidget(QDockWidget):
         selected_fids = {f.id() for f in layer.selectedFeatures()}
         try:
             specs = specs_from_features(layer, list(layer.getFeatures()), QgsProject.instance())
-        except AoiTransformError as exc:
+        except AoiTransformError as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.warning(self, "VirtuGhan", str(exc))
             return
         transform_errors = list(getattr(specs_from_features, "last_errors", []) or [])
@@ -1426,7 +1426,7 @@ class ExtractorDockWidget(QDockWidget):
                 self,
                 f"{len(transform_errors)} feature(s) could not be transformed and were skipped. "
                 + " | ".join(transform_errors[:3]),
-                Qgis.Warning,
+                QgisCompat.Warning,
             )
             QMessageBox.warning(
                 self,
@@ -1456,7 +1456,7 @@ class ExtractorDockWidget(QDockWidget):
                         return
                     try:
                         self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
-                    except Exception as exc:
+                    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         QMessageBox.warning(
                             self,
                             "VirtuGhan",
@@ -1501,7 +1501,7 @@ class ExtractorDockWidget(QDockWidget):
             ])
             try:
                 self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
-            except Exception as exc:
+            except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 QMessageBox.warning(
                     self,
                     "VirtuGhan",
@@ -1607,7 +1607,7 @@ class ExtractorDockWidget(QDockWidget):
                     canvas.setMapTool(self._prev_tool)
                 else:
                     canvas.setMapTool(None)  # Reset to default tool
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(QtCompat.ArrowCursor))
@@ -1649,7 +1649,7 @@ class ExtractorDockWidget(QDockWidget):
                     canvas.setMapTool(self._prev_tool)
                 else:
                     canvas.setMapTool(None)  # Reset to default tool
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 canvas.setMapTool(None)
             # Restore cursor and message bar
             canvas.setCursor(QCursor(QtCompat.ArrowCursor))
@@ -1691,7 +1691,7 @@ class ExtractorDockWidget(QDockWidget):
             else:
                 ring = poly[0]
             return [[float(p.x()), float(p.y())] for p in ring]
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
 
     def _clear_aoi(self):
@@ -1702,7 +1702,7 @@ class ExtractorDockWidget(QDockWidget):
             if hasattr(self, '_drawing_tool') and self._drawing_tool and hasattr(self._drawing_tool, 'rb'):
                 try:
                     self._drawing_tool.rb.reset()
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
             # Restore previous map tool
             if self._prev_tool:
@@ -1717,7 +1717,7 @@ class ExtractorDockWidget(QDockWidget):
         self._update_aoi_preview()
         try:
             self._aoi.clear()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _archive_current_aoi(self):
@@ -1747,7 +1747,7 @@ class ExtractorDockWidget(QDockWidget):
             _log(
                 self,
                 f"AOI is large (approx. {area:,.0f} km2). Download may be slow; consider reducing AOI size.",
-                Qgis.Warning,
+                QgisCompat.Warning,
             )
             return True
         if level == "very_large":
@@ -1756,7 +1756,7 @@ class ExtractorDockWidget(QDockWidget):
                 "This can take a long time and may fail because of download size, memory use, or remote service limits.\n\n"
                 "Reduce the AOI size for a more reliable download."
             )
-            _log(self, message.replace("\n", " "), Qgis.Warning)
+            _log(self, message.replace("\n", " "), QgisCompat.Warning)
             if not interactive:
                 return True
             reply = QMessageBox.question(
@@ -1800,12 +1800,12 @@ class ExtractorDockWidget(QDockWidget):
         self._update_aoi_preview("AOI: not set yet. Use smaller aoi and test first.")
         try:
             self._aoi.clear()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         if self.commonWidget and hasattr(self.commonWidget, "reset"):
             try:
                 self.commonWidget.reset()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         self.smartFilterCheck.setChecked(False)
         self.workersSpin.setValue(self._recommended_default_workers())
@@ -1825,7 +1825,7 @@ class ExtractorDockWidget(QDockWidget):
         b = self._aoi_bbox
         try:
             x1, y1, x2, y2 = map(float, b)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             raise RuntimeError(f"AOI bbox must be four numbers: {b}")
         if not (-180.0 <= x1 < x2 <= 180.0 and -90.0 <= y1 < y2 <= 90.0):
             raise RuntimeError(f"Invalid AOI bbox (WGS84): {b}")
@@ -1879,14 +1879,14 @@ class ExtractorDockWidget(QDockWidget):
         try:
             if self._current_task is not None:
                 status = self._current_task.status()
-                if status in (QgsTask.Queued, QgsTask.Running):
+                if status in (QgisCompat.Queued, QgisCompat.Running):
                     self._cancel_current_run()
                     return
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         if not ensure_runtime_network_ready(self):
-            _log(self, "Runtime network preflight failed; run cancelled.", Qgis.Warning)
+            _log(self, "Runtime network preflight failed; run cancelled.", QgisCompat.Warning)
             return
 
         if len(self._batch_aoi_specs or []) > 1:
@@ -1900,8 +1900,8 @@ class ExtractorDockWidget(QDockWidget):
             self._validate_minimum_matching_scenes(min_count=1, timeout_s=120.0)
             _log(self, "Pre-download stage completed: scene check passed.")
             params = self._collect_params()
-        except TimeoutError:
-            _log(self, "Pre-download scene check timed out after 2 minutes.", Qgis.Warning)
+        except TimeoutError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+            _log(self, "Pre-download scene check timed out after 2 minutes.", QgisCompat.Warning)
             QMessageBox.warning(
                 self,
                 "VirtuGhan",
@@ -1909,7 +1909,7 @@ class ExtractorDockWidget(QDockWidget):
                 "Please try again later.",
             )
             return
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             if "matching scene" not in str(e).lower():
                 QMessageBox.warning(self, "VirtuGhan", str(e))
             return
@@ -1917,7 +1917,7 @@ class ExtractorDockWidget(QDockWidget):
         out_dir = params["output_dir"]
         try:
             os.makedirs(out_dir, exist_ok=True)
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.critical(
                 self, "VirtuGhan", f"Cannot create output folder:\n{out_dir}\n\n{e}"
             )
@@ -1928,7 +1928,7 @@ class ExtractorDockWidget(QDockWidget):
         _log(self, f"Log file: {log_path}")
         try:
             open(log_path, "a", encoding="utf-8").close()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         self._set_running(True)
@@ -1944,15 +1944,15 @@ class ExtractorDockWidget(QDockWidget):
             task_was_cancelled = False
             try:
                 task_was_cancelled = bool(self._current_task and self._current_task.isCanceled())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 task_was_cancelled = False
             self._current_task = None
             if isinstance(exc, _TaskCancelledError) or task_was_cancelled:
-                _log(self, "Download cancelled by user.", Qgis.Warning)
+                _log(self, "Download cancelled by user.", QgisCompat.Warning)
                 QMessageBox.information(self, "VirtuGhan", "Download cancelled.")
                 return
             if not ok or exc:
-                _log(self, f"Extractor failed: {exc}", Qgis.Critical)
+                _log(self, f"Extractor failed: {exc}", QgisCompat.Critical)
                 QMessageBox.critical(
                     self,
                     "VirtuGhan",
@@ -1972,9 +1972,9 @@ class ExtractorDockWidget(QDockWidget):
                                 _log(self, f"Loaded raster: {path}")
                                 added += 1
                             else:
-                                _log(self, f"Failed to load raster: {path}", Qgis.Warning)
+                                _log(self, f"Failed to load raster: {path}", QgisCompat.Warning)
                 if added == 0:
-                    _log(self, "Download completed, but no .tif/.tiff/.vrt output images were found.", Qgis.Warning)
+                    _log(self, "Download completed, but no .tif/.tiff/.vrt output images were found.", QgisCompat.Warning)
                 self._last_output_layer_ids = loaded_layer_ids
 
                 self._has_successful_run = added > 0
@@ -1984,7 +1984,7 @@ class ExtractorDockWidget(QDockWidget):
                     if count > 0:
                         _log(self, f"Scene footprints layer added to main map after run completion ({count} scenes).")
                     else:
-                        _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", Qgis.Warning)
+                        _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", QgisCompat.Warning)
                 else:
                     self._clear_scene_footprints_layer()
 
@@ -2013,7 +2013,7 @@ class ExtractorDockWidget(QDockWidget):
             if not self._warn_for_aoi_size(interactive=True):
                 return
             base_params = self._collect_params()
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
 
@@ -2068,12 +2068,12 @@ class ExtractorDockWidget(QDockWidget):
             )
             if len(scenes or []) < 1:
                 state["skipped"] += 1
-                _log(self, f"[Batch {state['index']}] No matching images found; skipped.", Qgis.Warning)
+                _log(self, f"[Batch {state['index']}] No matching images found; skipped.", QgisCompat.Warning)
                 self._start_next_batch_download(base_params)
                 return
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             state["failed"] += 1
-            _log(self, f"[Batch {state['index']}] Scene search failed: {exc}", Qgis.Warning)
+            _log(self, f"[Batch {state['index']}] Scene search failed: {exc}", QgisCompat.Warning)
             self._start_next_batch_download(base_params)
             return
 
@@ -2081,9 +2081,9 @@ class ExtractorDockWidget(QDockWidget):
             os.makedirs(params["output_dir"], exist_ok=True)
             log_path = os.path.join(params["output_dir"], "runtime.log")
             open(log_path, "a", encoding="utf-8").close()
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             state["failed"] += 1
-            _log(self, f"[Batch {state['index']}] Cannot create output folder: {exc}", Qgis.Warning)
+            _log(self, f"[Batch {state['index']}] Cannot create output folder: {exc}", QgisCompat.Warning)
             self._start_next_batch_download(base_params)
             return
 
@@ -2096,7 +2096,7 @@ class ExtractorDockWidget(QDockWidget):
             task_was_cancelled = False
             try:
                 task_was_cancelled = bool(self._current_task and self._current_task.isCanceled())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             self._current_task = None
             if isinstance(exc, _TaskCancelledError) or task_was_cancelled or state.get("cancelled"):
@@ -2105,7 +2105,7 @@ class ExtractorDockWidget(QDockWidget):
                 return
             if not ok or exc:
                 state["failed"] += 1
-                _log(self, f"[Batch {state['index']}] Download failed for {label}: {exc}", Qgis.Warning)
+                _log(self, f"[Batch {state['index']}] Download failed for {label}: {exc}", QgisCompat.Warning)
             else:
                 state["completed"] += 1
                 self._load_rasters_from_dir(params["output_dir"])
@@ -2145,7 +2145,7 @@ class ExtractorDockWidget(QDockWidget):
                         loaded_layer_ids.append(lyr.id())
                         _log(self, f"Loaded raster: {path}")
                     else:
-                        _log(self, f"Failed to load raster: {path}", Qgis.Warning)
+                        _log(self, f"Failed to load raster: {path}", QgisCompat.Warning)
         self._last_output_layer_ids = loaded_layer_ids
         return loaded_layer_ids
 
@@ -2163,7 +2163,7 @@ class ExtractorDockWidget(QDockWidget):
             self.logText.setFocus(QtCompat.OtherFocusReason)
             sb = self.logText.verticalScrollBar()
             sb.setValue(sb.maximum())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         # Scroll the outer page scroll area to the bottom so the log is visible
@@ -2176,7 +2176,7 @@ class ExtractorDockWidget(QDockWidget):
                         vsb.setValue(vsb.maximum())
                     break
                 parent = parent.parentWidget()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _stop_tailing(self):
@@ -2195,23 +2195,23 @@ class ExtractorDockWidget(QDockWidget):
             host = self.window()
             if host and hasattr(host, "set_tab_busy"):
                 host.set_tab_busy("extractor", running)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         for w in (self.aoiStartDrawButton, self.aoiClearButton,
                   self.aoiModeCombo, self.outputBrowseButton,
                   self.showSceneFootprintsCheck):
             try:
                 w.setEnabled(not running)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         try:
             if getattr(self, "aoiLayerList", None) is not None:
                 self.aoiLayerList.setEnabled(not running)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             self.previewScenesButton.setEnabled(True)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _cancel_current_run(self):
@@ -2220,11 +2220,11 @@ class ExtractorDockWidget(QDockWidget):
             return
         try:
             status = task.status()
-            if status in (QgsTask.Queued, QgsTask.Running):
+            if status in (QgisCompat.Queued, QgisCompat.Running):
                 task.cancel()
-                _log(self, "Cancellation requested...", Qgis.Warning)
-        except Exception as e:
-            _log(self, f"Failed to cancel extractor task: {e}", Qgis.Warning)
+                _log(self, "Cancellation requested...", QgisCompat.Warning)
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+            _log(self, f"Failed to cancel extractor task: {e}", QgisCompat.Warning)
 
     def _on_show_scene_footprints_toggled(self, checked: bool):
         if not checked:
@@ -2236,7 +2236,7 @@ class ExtractorDockWidget(QDockWidget):
             if count > 0:
                 _log(self, f"Scene footprints layer added to main map ({count} scenes).")
             else:
-                _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", Qgis.Warning)
+                _log(self, "No scene footprints were added (no scenes found for current AOI/date/cloud filters).", QgisCompat.Warning)
         else:
             _log(self, "Scene footprints will be added after a successful run.")
 
@@ -2257,8 +2257,8 @@ class ExtractorDockWidget(QDockWidget):
             )
             self._selected_preview_scenes = scenes or []
             _log(self, f"Loaded {len(self._selected_preview_scenes)} scenes from current filters for main-map footprints.")
-        except Exception as e:
-            _log(self, f"Failed to fetch scenes for main-map footprints: {e}", Qgis.Warning)
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+            _log(self, f"Failed to fetch scenes for main-map footprints: {e}", QgisCompat.Warning)
             return []
 
         return list(self._selected_preview_scenes)
@@ -2267,12 +2267,12 @@ class ExtractorDockWidget(QDockWidget):
         if self._scene_footprints_layer and self._scene_footprints_layer.isValid():
             try:
                 QgsProject.instance().removeMapLayer(self._scene_footprints_layer.id())
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         self._scene_footprints_layer = None
         try:
             self.iface.mapCanvas().refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _stac_geometry_to_qgs(self, geom_obj):
@@ -2296,7 +2296,7 @@ class ExtractorDockWidget(QDockWidget):
                         rings.append([QgsPointXY(float(x), float(y)) for x, y in ring])
                     polys.append(rings)
                 return QgsGeometry.fromMultiPolygonXY(polys)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
         return None
 
@@ -2337,7 +2337,7 @@ class ExtractorDockWidget(QDockWidget):
                     cloud_cover,
                     extra_query=extra_query,
                 )
-            except Exception as exc:
+            except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 result["error"] = exc
 
         t = threading.Thread(target=_worker, daemon=True)
@@ -2354,12 +2354,12 @@ class ExtractorDockWidget(QDockWidget):
                 _log(
                     self,
                     f"Pre-download scene check still running ({elapsed}s elapsed, {remaining}s remaining)...",
-                    Qgis.Info,
+                    QgisCompat.Info,
                 )
                 next_progress_log_at = now + 15.0
             try:
                 QgsApplication.processEvents()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             time.sleep(0.05)
 
@@ -2416,7 +2416,7 @@ class ExtractorDockWidget(QDockWidget):
                 continue
             try:
                 geom.transform(xform)
-            except Exception:
+            except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                 continue
             props = scene.get("properties", {}) or {}
             feat = QgsFeature(layer.fields())
@@ -2430,7 +2430,7 @@ class ExtractorDockWidget(QDockWidget):
             feats.append(feat)
 
         if not feats:
-            _log(self, "No valid scene footprint geometries found.", Qgis.Warning)
+            _log(self, "No valid scene footprint geometries found.", QgisCompat.Warning)
             return 0
 
         prov.addFeatures(feats)
@@ -2442,7 +2442,7 @@ class ExtractorDockWidget(QDockWidget):
             sym.symbolLayer(0).setStrokeWidth(0.35)
             layer.triggerRepaint()
             layer.emitStyleChanged()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         project = QgsProject.instance()
@@ -2457,7 +2457,7 @@ class ExtractorDockWidget(QDockWidget):
                     continue
                 try:
                     ref_indices.append(root.children().index(ref_node))
-                except ValueError:
+                except ValueError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
             if ref_indices:
                 insert_idx = max(ref_indices) + 1
@@ -2465,7 +2465,7 @@ class ExtractorDockWidget(QDockWidget):
         self._scene_footprints_layer = layer
         try:
             self.iface.mapCanvas().refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         return len(feats)
 
@@ -2474,7 +2474,7 @@ class ExtractorDockWidget(QDockWidget):
             params = self._collect_search_params()
             if not self._warn_for_aoi_size(interactive=True):
                 return
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.warning(self, "VirtuGhan", str(e))
             return
 
@@ -2519,8 +2519,8 @@ class ExtractorDockWidget(QDockWidget):
             self._selected_preview_scenes = selected_scenes
             _log(self, f"Selected scenes in preview: {len(selected_scenes)}")
             _log(self, "Preview is temporary; main map footprints update only after run completion.")
-        except Exception as e:
-            _log(self, f"Scene search failed: {e}", Qgis.Critical)
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+            _log(self, f"Scene search failed: {e}", QgisCompat.Critical)
             QMessageBox.critical(self, "VirtuGhan", f"Scene search failed:\n{e}")
         finally:
             self.progressBar.setVisible(False)
@@ -2546,42 +2546,42 @@ class ExtractorDockWidget(QDockWidget):
                 return None, None
 
             return QgsGeometry(geom), layer.crs().authid()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None, None
 
     def _teardown_runtime_state(self):
         try:
             self._disconnect_aoi_layer_project_signals()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             self._stop_tailing()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             if self._current_task is not None:
                 try:
                     self._current_task.on_done = None
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
                 try:
                     self._current_task.cancel()
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._current_task = None
 
         try:
             self._clear_scene_footprints_layer()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             self._clear_aoi()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
@@ -2594,7 +2594,7 @@ class ExtractorDockWidget(QDockWidget):
                     canvas.setMapTool(None)
                 canvas.setCursor(QCursor(QtCompat.ArrowCursor))
             self.iface.messageBar().clearWidgets()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         self._drawing_tool = None

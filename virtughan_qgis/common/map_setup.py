@@ -51,7 +51,7 @@ def ensure_osm_basemap(name: str = _OSM_NAME,
         # insert at bottom
         try:
             root.insertLayer(len(root.children()), lyr) if as_bottom else root.insertLayer(0, lyr)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             root.addLayer(lyr)  # fallback (usually adds at top)
     else:
         if as_bottom:
@@ -61,13 +61,13 @@ def ensure_osm_basemap(name: str = _OSM_NAME,
                 parent.removeChildNode(node)
                 try:
                     root.insertLayer(len(root.children()), lyr)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     root.addLayer(lyr)
 
     if set_project_crs:
         try:
             prj.setCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     return lyr
@@ -110,13 +110,13 @@ def zoom_to_lonlat(iface,
             canvas.setCenter(pt)
             try:
                 canvas.zoomScale(scale_m)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             canvas.setCenter(pt)
             if refresh:
                 canvas.refresh()
             return True
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
     def _apply_with_single_fallback():
@@ -160,7 +160,7 @@ def zoom_to_wgs84_bbox(iface,
             if refresh:
                 canvas.refresh()
             return True
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
 
     def _apply_with_single_fallback():

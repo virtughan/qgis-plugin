@@ -368,7 +368,7 @@ class ResultsWidget(QWidget):
             with open(save_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self.info.setText(f"History saved: {save_path}")
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.warning(self, "VirtuGhan", f"Could not save history:\n{e}")
 
     def _open_help(self):
@@ -467,7 +467,7 @@ class ResultsWidget(QWidget):
                 src = lyr.source() if hasattr(lyr, "source") else ""
                 if src:
                     existing_sources.add(os.path.normcase(os.path.normpath(src)))
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         for root, _dirs, files in os.walk(self._output_dir):

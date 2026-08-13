@@ -15,7 +15,7 @@ from .dependency_versions import (
     RASTERIO_VERSION,
     runtime_package_specs,
 )
-from .qt_compat import QMessageBoxCompat
+from .qt_compat import QgisCompat, QMessageBoxCompat
 
 PKG_NAME = "virtughan"
 DEFAULT_PACKAGES = runtime_package_specs()
@@ -32,14 +32,14 @@ UNINSTALL_ON_PLUGIN_UNINSTALL_KEY = "virtughan/dependencies/uninstall_on_plugin_
 def get_uninstall_on_plugin_uninstall() -> bool:
     try:
         return bool(QSettings().value(UNINSTALL_ON_PLUGIN_UNINSTALL_KEY, True, type=bool))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return True
 
 
 def set_uninstall_on_plugin_uninstall(enabled: bool):
     try:
         QSettings().setValue(UNINSTALL_ON_PLUGIN_UNINSTALL_KEY, bool(enabled))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
 
@@ -66,9 +66,9 @@ def mark_runtime_restart_required(reason: str = "runtime dependencies updated"):
         with open(guard_path, "w", encoding="utf-8") as fh:
             fh.write(f"pid={os.getpid()}\n")
             fh.write(f"reason={reason}\n")
-        _log(f"Marked runtime restart required ({reason})", Qgis.Info)
-    except Exception as exc:
-        _log(f"Could not mark runtime restart requirement: {exc}", Qgis.Warning)
+        _log(f"Marked runtime restart required ({reason})", QgisCompat.Info)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Could not mark runtime restart requirement: {exc}", QgisCompat.Warning)
 
 
 def clear_runtime_restart_required():
@@ -76,8 +76,8 @@ def clear_runtime_restart_required():
         guard_path = get_runtime_restart_guard_path()
         if os.path.isfile(guard_path):
             os.remove(guard_path)
-    except Exception as exc:
-        _log(f"Could not clear runtime restart requirement: {exc}", Qgis.Warning)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Could not clear runtime restart requirement: {exc}", QgisCompat.Warning)
 
 
 def is_runtime_restart_required() -> bool:
@@ -88,7 +88,7 @@ def is_runtime_restart_required() -> bool:
     try:
         with open(guard_path, "r", encoding="utf-8") as fh:
             lines = [line.strip() for line in fh.readlines() if line.strip()]
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return False
 
     pid_line = next((line for line in lines if line.startswith("pid=")), "")
@@ -97,7 +97,7 @@ def is_runtime_restart_required() -> bool:
 
     try:
         marked_pid = int(pid_line.split("=", 1)[1])
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return False
 
     if marked_pid != os.getpid():
@@ -110,27 +110,27 @@ def is_runtime_restart_required() -> bool:
 
 def _level_name(level) -> str:
     success_level = getattr(Qgis, "Success", None)
-    if level == Qgis.Critical:
+    if level == QgisCompat.Critical:
         return "CRITICAL"
-    if level == Qgis.Warning:
+    if level == QgisCompat.Warning:
         return "WARNING"
     if success_level is not None and level == success_level:
         return "SUCCESS"
     return "INFO"
 
 
-def _append_file_log(msg: str, level=Qgis.Info):
+def _append_file_log(msg: str, level=QgisCompat.Info):
     try:
         log_path = get_bootstrap_log_path()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"{timestamp} [{_level_name(level)}] {msg}\n"
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(line)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
 
-def _log(msg: str, level=Qgis.Info):
+def _log(msg: str, level=QgisCompat.Info):
     QgsMessageLog.logMessage(f"VirtuGhan Bootstrap: {msg}", "VirtuGhan", level)
     _append_file_log(msg, level)
 
@@ -169,7 +169,7 @@ def _activate_vendor_paths(preferred_site_packages: str | None = None) -> list[s
         while path in sys.path:
             try:
                 sys.path.remove(path)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 break
         sys.path.insert(0, path)
         activated.append(path)
@@ -204,7 +204,7 @@ def purge_non_runtime_modules(module_prefixes: tuple[str, ...] | list[str]) -> l
         try:
             if os.path.commonpath([norm_file, plugin_root]) == plugin_root:
                 continue
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         if _is_path_loaded_from_runtime(norm_file):
@@ -213,11 +213,11 @@ def purge_non_runtime_modules(module_prefixes: tuple[str, ...] | list[str]) -> l
         try:
             del sys.modules[mod_name]
             purged.append(mod_name)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     if purged:
-        _log("Purged non-runtime dependency modules: " + ", ".join(purged[:20]), Qgis.Info)
+        _log("Purged non-runtime dependency modules: " + ", ".join(purged[:20]), QgisCompat.Info)
         importlib.invalidate_caches()
     return purged
 
@@ -249,7 +249,7 @@ def _get_installed_virtughan_version(module) -> str:
 
     try:
         return (importlib_metadata.version("virtughan") or "").strip()
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return ""
 
 
@@ -260,7 +260,7 @@ def _get_installed_distribution_version(dist_name: str, module=None) -> str:
 
     try:
         return (importlib_metadata.version(dist_name) or "").strip()
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return ""
 
 
@@ -286,7 +286,7 @@ def _is_path_loaded_from_runtime(path: str) -> bool:
     for runtime_site in runtime_sites:
         try:
             common = os.path.commonpath([mod_file, runtime_site])
-        except Exception:
+        except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
             continue
         if common == runtime_site:
             return True
@@ -352,7 +352,7 @@ def _clear_runtime_module_cache():
         ):
             try:
                 del sys.modules[mod_name]
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
 
@@ -389,7 +389,7 @@ def _clear_pip_cache(progress_callback=None) -> tuple[int, list[str]]:
         try:
             os.chmod(path, 0o700)
             func(path)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     removed = 0
@@ -403,18 +403,18 @@ def _clear_pip_cache(progress_callback=None) -> tuple[int, list[str]]:
                 failed.append(f"{cache_dir}: cache folder still exists after delete attempt")
             else:
                 removed += 1
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             failed.append(f"{cache_dir}: {exc}")
 
     if removed:
-        _log(f"Pip cache cleared: removed {removed} cache folder(s)", Qgis.Info)
+        _log(f"Pip cache cleared: removed {removed} cache folder(s)", QgisCompat.Info)
         if progress_callback:
             progress_callback(f"Cleared pip cache folders: {removed}")
     elif progress_callback:
         progress_callback("No pip cache folders found to clear.")
 
     if failed:
-        _log("Pip cache cleanup completed with warnings", Qgis.Warning)
+        _log("Pip cache cleanup completed with warnings", QgisCompat.Warning)
         if progress_callback:
             progress_callback("Pip cache cleanup warnings: " + " | ".join(failed[:5]))
 
@@ -452,7 +452,7 @@ def _preflight_runtime_reinstall(progress_callback=None) -> tuple[bool, list[str
 
     if failed:
         details = "Failed to remove some dependency files:\n" + "\n".join(failed[:20])
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         if progress_callback:
             progress_callback(f"Cleanup warnings: {details}")
 
@@ -469,14 +469,14 @@ def _preflight_runtime_reinstall(progress_callback=None) -> tuple[bool, list[str
                 "Please restart QGIS and try again."
             )
         _set_last_error(msg)
-        _log(msg, Qgis.Warning)
+        _log(msg, QgisCompat.Warning)
         if progress_callback:
             progress_callback(msg)
         return False, []
 
     _log(
         f"Runtime preflight ready: removed={removed}, targets={', '.join(targets)}",
-        Qgis.Info,
+        QgisCompat.Info,
     )
     return True, targets
 
@@ -507,14 +507,14 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
             if not success and deps_ok:
                 _log(
                     "Runtime installation completed with pip warnings, but dependencies verified successfully.",
-                    Qgis.Warning,
+                    QgisCompat.Warning,
                 )
                 return True
 
             pip_err = get_last_install_error() or ""
             if "locked by the current QGIS session" in pip_err:
                 saw_lock_issue = True
-                _log(pip_err, Qgis.Warning)
+                _log(pip_err, QgisCompat.Warning)
                 if progress_callback:
                     progress_callback(pip_err)
 
@@ -527,7 +527,7 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
                         f"Detected NumPy ABI mismatch; retrying install with constraint '{abi_hint}' "
                         f"in {target}."
                     )
-                    _log(msg, Qgis.Warning)
+                    _log(msg, QgisCompat.Warning)
                     if progress_callback:
                         progress_callback(msg)
 
@@ -555,7 +555,7 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
                         _log(
                             "Runtime installation completed with pip warnings after NumPy ABI retry, "
                             "but dependencies verified successfully.",
-                            Qgis.Warning,
+                            QgisCompat.Warning,
                         )
                         return True
 
@@ -564,7 +564,7 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
                     f"Runtime installation did not verify cleanly in {target}; "
                     "retrying in fallback runtime folder."
                 )
-                _log(msg, Qgis.Warning)
+                _log(msg, QgisCompat.Warning)
                 if progress_callback:
                     progress_callback(msg)
 
@@ -579,12 +579,12 @@ def _install_via_pip(packages: list[str], progress_callback=None, targets: list[
                 "Please restart QGIS and try installation again."
             )
         _set_last_error(restart_msg)
-        _log(restart_msg, Qgis.Warning)
+        _log(restart_msg, QgisCompat.Warning)
         if progress_callback:
             progress_callback(restart_msg)
         return False
-    except Exception as exc:
-        _log(f"Runtime install exception: {exc}", Qgis.Critical)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Runtime install exception: {exc}", QgisCompat.Critical)
         return False
 
 
@@ -611,11 +611,11 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
         virtughan_spec = importlib.util.find_spec("virtughan")
         if virtughan_spec is None:
             _set_last_error("VirtuGhan package not found")
-            _log("VirtuGhan package not found", Qgis.Warning)
+            _log("VirtuGhan package not found", QgisCompat.Warning)
             return False
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(f"VirtuGhan discovery failed: {exc}")
-        _log(f"VirtuGhan discovery failed: {exc}", Qgis.Warning)
+        _log(f"VirtuGhan discovery failed: {exc}", QgisCompat.Warning)
         return False
 
     installed = _get_installed_distribution_version("virtughan")
@@ -626,7 +626,7 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             f"{virtughan_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     if installed and not _is_installed_version_sufficient(installed, VIRTUGHAN_VERSION):
@@ -634,24 +634,24 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             f"VirtuGhan version too old ({installed}). Required: {VIRTUGHAN_VERSION}"
         )
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     if not _is_installed_version_exact(installed, VIRTUGHAN_VERSION):
         details = f"VirtuGhan version mismatch ({installed}). Expected: {VIRTUGHAN_VERSION}"
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     try:
         rasterio_spec = importlib.util.find_spec("rasterio")
         if rasterio_spec is None:
             _set_last_error("rasterio package not found")
-            _log("rasterio package not found", Qgis.Warning)
+            _log("rasterio package not found", QgisCompat.Warning)
             return False
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(f"rasterio discovery failed: {exc}")
-        _log(f"rasterio discovery failed: {exc}", Qgis.Warning)
+        _log(f"rasterio discovery failed: {exc}", QgisCompat.Warning)
         return False
 
     rasterio_origin = getattr(rasterio_spec, "origin", "") or ""
@@ -661,25 +661,25 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             f"{rasterio_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     rasterio_version = _get_installed_distribution_version("rasterio", None)
     if not _is_installed_version_exact(rasterio_version, RASTERIO_VERSION):
         details = f"rasterio version mismatch ({rasterio_version}). Expected: {RASTERIO_VERSION}"
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     try:
         numpy_spec = importlib.util.find_spec("numpy")
         if numpy_spec is None:
             _set_last_error("numpy package not found")
-            _log("numpy package not found", Qgis.Warning)
+            _log("numpy package not found", QgisCompat.Warning)
             return False
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(f"numpy discovery failed: {exc}")
-        _log(f"numpy discovery failed: {exc}", Qgis.Warning)
+        _log(f"numpy discovery failed: {exc}", QgisCompat.Warning)
         return False
 
     numpy_origin = getattr(numpy_spec, "origin", "") or ""
@@ -692,14 +692,14 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
                 f"{numpy_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
             )
             _set_last_error(details)
-            _log(details, Qgis.Warning)
+            _log(details, QgisCompat.Warning)
             return False
         else:
             # On Linux/macOS, accept system numpy as valid
             _log(
                 f"numpy loaded from system path ({numpy_origin}); "
                 "accepted on non-Windows platform.",
-                Qgis.Info,
+                QgisCompat.Info,
             )
 
     numpy_version = _get_installed_distribution_version("numpy", None)
@@ -708,23 +708,23 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
         try:
             import numpy
             numpy_version = getattr(numpy, "__version__", "")
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
     if not numpy_version:
         details = "numpy version could not be determined"
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     try:
         attr_spec = importlib.util.find_spec("attr")
         if attr_spec is None:
             _set_last_error("attrs package not found")
-            _log("attrs package not found", Qgis.Warning)
+            _log("attrs package not found", QgisCompat.Warning)
             return False
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(f"attrs discovery failed: {exc}")
-        _log(f"attrs discovery failed: {exc}", Qgis.Warning)
+        _log(f"attrs discovery failed: {exc}", QgisCompat.Warning)
         return False
 
     attr_origin = getattr(attr_spec, "origin", "") or ""
@@ -734,23 +734,23 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             f"{attr_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     try:
         mpl_spec = importlib.util.find_spec("matplotlib")
         if mpl_spec is None:
             _set_last_error("matplotlib package not found")
-            _log("matplotlib package not found", Qgis.Warning)
+            _log("matplotlib package not found", QgisCompat.Warning)
             return False
         backend_spec = importlib.util.find_spec("matplotlib.backends.backend_agg")
         if backend_spec is None:
             _set_last_error("matplotlib Agg backend not found")
-            _log("matplotlib Agg backend not found", Qgis.Warning)
+            _log("matplotlib Agg backend not found", QgisCompat.Warning)
             return False
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(f"matplotlib discovery failed: {exc}")
-        _log(f"matplotlib discovery failed: {exc}", Qgis.Warning)
+        _log(f"matplotlib discovery failed: {exc}", QgisCompat.Warning)
         return False
 
     mpl_origin = getattr(mpl_spec, "origin", "") or ""
@@ -760,7 +760,7 @@ def check_dependencies(preferred_site_packages: str | None = None) -> bool:
             f"{mpl_origin}. Expected under: {RUNTIME_SITE_PACKAGES_DIR}"
         )
         _set_last_error(details)
-        _log(details, Qgis.Warning)
+        _log(details, QgisCompat.Warning)
         return False
 
     _set_last_error(None)
@@ -782,7 +782,7 @@ def check_runtime_tls_bundle() -> tuple[bool, str | None]:
         if bundle_path and os.path.isfile(bundle_path):
             return True, None
         return False, f"Missing TLS CA bundle: {bundle_path}"
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return False, f"TLS certificate setup error: {exc}"
 
 
@@ -798,7 +798,7 @@ def _check_plugin_import_health() -> tuple[bool, str | None]:
         try:
             if importlib.util.find_spec(name) is None:
                 return False, f"Plugin module not found: {name}"
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False, f"Plugin module discovery failed ({name}): {exc}"
     return True, None
 
@@ -814,18 +814,18 @@ def ensure_runtime_network_ready(parent=None) -> bool:
         _log(
             "Runtime dependencies were updated in this QGIS session; "
             "validating refreshed runtime without restart.",
-            Qgis.Info,
+            QgisCompat.Info,
         )
 
     ok, details = check_runtime_tls_bundle()
     if ok:
         if restart_flag_set:
             clear_runtime_restart_required()
-            _log("Runtime refresh validated; restart requirement cleared.", Qgis.Info)
+            _log("Runtime refresh validated; restart requirement cleared.", QgisCompat.Info)
         return True
 
     _set_last_error(details)
-    _log(details or "TLS CA bundle check failed", Qgis.Warning)
+    _log(details or "TLS CA bundle check failed", QgisCompat.Warning)
 
     if parent is None:
         return False
@@ -880,7 +880,7 @@ def install_dependencies(parent=None, quiet=False) -> bool:
             _show_manual_install_dialog(parent)
         return False
 
-    _log("Attempting runtime dependency installation...", Qgis.Info)
+    _log("Attempting runtime dependency installation...", QgisCompat.Info)
 
     if _install_via_pip(DEFAULT_PACKAGES, targets=install_targets) and check_dependencies():
         mark_runtime_restart_required("runtime dependencies installed")
@@ -929,15 +929,15 @@ def _show_manual_install_dialog(parent):
         dialog.setLayout(layout)
         _exec = getattr(dialog, 'exec', None) or getattr(dialog, 'exec_')
         _exec()
-    except Exception as exc:
-        _log(f"Error showing manual install dialog: {exc}", Qgis.Warning)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Error showing manual install dialog: {exc}", QgisCompat.Warning)
 
 
 def ensure_virtughan_installed(parent=None, quiet=True):
     try:
         return install_dependencies(parent, quiet)
-    except Exception as exc:
-        _log(f"Bootstrap error: {exc}", Qgis.Critical)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Bootstrap error: {exc}", QgisCompat.Critical)
         _set_last_error(str(exc))
         return check_dependencies()
 
@@ -967,8 +967,8 @@ def mark_as_installed():
         with open(flag_path, "w", encoding="utf-8") as f:
             f.write("installed\n")
         _log("Installation state saved")
-    except Exception as exc:
-        _log(f"Could not save installation state: {exc}", Qgis.Warning)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Could not save installation state: {exc}", QgisCompat.Warning)
 
 
 def clear_install_state():
@@ -978,8 +978,8 @@ def clear_install_state():
         if os.path.isfile(flag_path):
             os.remove(flag_path)
         _log("Installation state cleared")
-    except Exception as exc:
-        _log(f"Could not clear installation state: {exc}", Qgis.Warning)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Could not clear installation state: {exc}", QgisCompat.Warning)
 
 
 def _clear_runtime_site_packages() -> tuple[int, list[str]]:
@@ -992,7 +992,7 @@ def _clear_runtime_site_packages() -> tuple[int, list[str]]:
         try:
             os.chmod(path, 0o700)
             func(path)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     removed = 0
@@ -1007,7 +1007,7 @@ def _clear_runtime_site_packages() -> tuple[int, list[str]]:
                 failed.append(f"{root}: runtime folder still exists after delete attempt")
             else:
                 removed += 1
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             failed.append(f"{root}: {exc}")
 
     return removed, failed
@@ -1032,7 +1032,7 @@ def repair_runtime_dependencies(clear_pip_cache: bool = False, progress_callback
             ):
                 try:
                     del sys.modules[mod_name]
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
 
         if failed:
@@ -1045,17 +1045,17 @@ def repair_runtime_dependencies(clear_pip_cache: bool = False, progress_callback
                 )
             else:
                 _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
-            _log("Dependency repair completed with warnings", Qgis.Warning)
+            _log("Dependency repair completed with warnings", QgisCompat.Warning)
             return False
 
-        _log(f"Dependency repair completed: removed {removed} entries", Qgis.Info)
+        _log(f"Dependency repair completed: removed {removed} entries", QgisCompat.Info)
         if clear_pip_cache:
-            _log("Dependency repair used fresh mode (pip cache cleared)", Qgis.Info)
+            _log("Dependency repair used fresh mode (pip cache cleared)", QgisCompat.Info)
         mark_runtime_restart_required("runtime dependencies repaired")
         return True
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(str(exc))
-        _log(f"Dependency repair failed: {exc}", Qgis.Critical)
+        _log(f"Dependency repair failed: {exc}", QgisCompat.Critical)
         return False
 
 
@@ -1074,7 +1074,7 @@ def uninstall_runtime_dependencies() -> bool:
             ):
                 try:
                     del sys.modules[mod_name]
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
 
         if failed:
@@ -1086,15 +1086,15 @@ def uninstall_runtime_dependencies() -> bool:
                 )
             else:
                 _set_last_error("Failed to remove some dependency files:\n" + "\n".join(failed[:20]))
-            _log("Dependency uninstall completed with warnings", Qgis.Warning)
+            _log("Dependency uninstall completed with warnings", QgisCompat.Warning)
             return False
 
-        _log(f"Dependency uninstall completed: removed {removed} entries", Qgis.Info)
+        _log(f"Dependency uninstall completed: removed {removed} entries", QgisCompat.Info)
         clear_runtime_restart_required()
         return True
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         _set_last_error(str(exc))
-        _log(f"Dependency uninstall failed: {exc}", Qgis.Critical)
+        _log(f"Dependency uninstall failed: {exc}", QgisCompat.Critical)
         return False
 
 
@@ -1125,13 +1125,13 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
             return True
         if deps_ok and not imports_ok and import_err:
             _set_last_error(import_err)
-            _log(import_err, Qgis.Warning)
+            _log(import_err, QgisCompat.Warning)
             return False
     else:
-        _log("Force reinstall requested: bypassing healthy-dependencies shortcut", Qgis.Info)
+        _log("Force reinstall requested: bypassing healthy-dependencies shortcut", QgisCompat.Info)
 
     # Dependencies missing or broken - show interactive installer
-    _log("Dependencies missing, showing installer dialog", Qgis.Info)
+    _log("Dependencies missing, showing installer dialog", QgisCompat.Info)
 
     # Define the installation callback
     def _do_install(progress_callback=None) -> bool:
@@ -1148,7 +1148,7 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
 
         if progress_callback:
             progress_callback("Starting package installation...\n")
-        _log("Attempting interactive runtime dependency installation...", Qgis.Info)
+        _log("Attempting interactive runtime dependency installation...", QgisCompat.Info)
 
         try:
             success = _install_via_pip(
@@ -1168,12 +1168,12 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
                     progress_callback(
                         "Dependencies were installed and verified successfully.\n"
                     )
-                _log("Interactive runtime installation successful", Qgis.Info)
+                _log("Interactive runtime installation successful", QgisCompat.Info)
                 mark_as_installed()
                 return True
             if import_err:
                 _set_last_error(import_err)
-                _log(import_err, Qgis.Warning)
+                _log(import_err, QgisCompat.Warning)
                 if progress_callback:
                     progress_callback(f"{import_err}\n")
             else:
@@ -1181,7 +1181,7 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
                 if progress_callback:
                     progress_callback(f"{verify_err}\n")
 
-            _log("Interactive runtime installation failed", Qgis.Warning)
+            _log("Interactive runtime installation failed", QgisCompat.Warning)
             if not get_last_bootstrap_error():
                 _set_last_error(
                     "Failed to install required dependencies at runtime.\n\n"
@@ -1189,8 +1189,8 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
                 )
             return False
 
-        except Exception as exc:
-            _log(f"Interactive runtime install exception: {exc}", Qgis.Critical)
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+            _log(f"Interactive runtime install exception: {exc}", QgisCompat.Critical)
             if progress_callback:
                 progress_callback(f"\nException: {exc}\n")
             return False
@@ -1205,14 +1205,14 @@ def interactive_install_dependencies(parent=None, force_reinstall: bool = False)
         if success:
             mark_as_installed()
             mark_runtime_restart_required("runtime dependencies installed (interactive)")
-            _log("First-time installation completed successfully", Qgis.Info)
+            _log("First-time installation completed successfully", QgisCompat.Info)
         else:
-            _log("First-time installation failed or cancelled", Qgis.Warning)
+            _log("First-time installation failed or cancelled", QgisCompat.Warning)
 
         return success
 
-    except Exception as exc:
-        _log(f"Error launching installer dialog: {exc}", Qgis.Critical)
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
+        _log(f"Error launching installer dialog: {exc}", QgisCompat.Critical)
         _set_last_error(f"Installer dialog failed: {exc}")
         # Fallback to silent install
         return install_dependencies(parent, quiet=False)

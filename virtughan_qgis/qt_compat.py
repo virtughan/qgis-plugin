@@ -21,6 +21,12 @@ from qgis.PyQt.QtWidgets import (
     QTableWidget,
 )
 from qgis.PyQt.QtGui import QPainter
+from qgis.core import (
+    Qgis as _Qgis,
+    QgsBlockingNetworkRequest as _QgsBlockingNetworkRequest,
+    QgsProcessingParameterNumber as _QgsProcessingParameterNumber,
+    QgsTask as _QgsTask,
+)
 
 
 def _resolve(obj, *candidates):
@@ -108,6 +114,31 @@ class QtCompat:
 
 
 # ---------------------------------------------------------------------------
+# QGIS enums
+# ---------------------------------------------------------------------------
+
+class QgisCompat:
+    Info = _resolve(_Qgis, "Info", "MessageLevel.Info")
+    Warning = _resolve(_Qgis, "Warning", "MessageLevel.Warning")
+    Critical = _resolve(_Qgis, "Critical", "MessageLevel.Critical")
+
+    Queued = _resolve(_QgsTask, "Queued", "TaskStatus.Queued")
+    Running = _resolve(_QgsTask, "Running", "TaskStatus.Running")
+
+
+class QgsTaskCompat:
+    CanCancel = _resolve(_QgsTask, "CanCancel", "Flag.CanCancel")
+
+
+class QgsBlockingNetworkRequestCompat:
+    NoError = _resolve(_QgsBlockingNetworkRequest, "NoError", "ErrorCode.NoError")
+
+
+class QgsProcessingParameterNumberCompat:
+    Integer = _resolve(_QgsProcessingParameterNumber, "Integer", "Type.Integer")
+
+
+# ---------------------------------------------------------------------------
 # QMessageBox enums
 # ---------------------------------------------------------------------------
 
@@ -190,7 +221,7 @@ try:
         Close = _resolve(_QDialogButtonBox, "Close", "StandardButton.Close")
         Ok = _resolve(_QDialogButtonBox, "Ok", "StandardButton.Ok")
         Cancel = _resolve(_QDialogButtonBox, "Cancel", "StandardButton.Cancel")
-except ImportError:
+except ImportError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     class QDialogButtonBoxCompat:
         Close = 0x00200000
         Ok = 0x00000400
@@ -209,7 +240,7 @@ try:
         Preferred = _resolve(_QSizePolicy, "Preferred", "Policy.Preferred")
         Fixed = _resolve(_QSizePolicy, "Fixed", "Policy.Fixed")
         Minimum = _resolve(_QSizePolicy, "Minimum", "Policy.Minimum")
-except ImportError:
+except ImportError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     class QSizePolicyCompat:
         Expanding = 7
         Preferred = 5
@@ -227,12 +258,7 @@ def get_polygon_geometry_type():
         from qgis.core import Qgis
         # QGIS 4.x uses Qgis.GeometryType
         return Qgis.GeometryType.Polygon
-    except AttributeError:
-        pass
-    try:
-        from qgis.core import QgsWkbTypes
-        return QgsWkbTypes.PolygonGeometry
-    except (ImportError, AttributeError):
+    except AttributeError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     # Fallback: raw int value for PolygonGeometry
     return 2

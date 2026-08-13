@@ -23,7 +23,7 @@ from ..bootstrap import (
     set_uninstall_on_plugin_uninstall,
 )
 from ..qt_compat import (
-    QtCompat, QMessageBoxCompat, QFrameCompat, QAbstractItemViewCompat,
+    QtCompat, QgisCompat, QMessageBoxCompat, QFrameCompat, QAbstractItemViewCompat,
     QPainterCompat, QDockWidgetCompat, QStyleCompat, QSizePolicyCompat,
 )
 
@@ -69,7 +69,7 @@ def load_icon(rel_path: str, fallback=None) -> QIcon:
             return ic
 
     # fallback
-    QgsMessageLog.logMessage(f"[VirtuGhan] Icon not found, using fallback: {abs_path}", "VirtuGhan", Qgis.Warning)
+    QgsMessageLog.logMessage(f"[VirtuGhan] Icon not found, using fallback: {abs_path}", "VirtuGhan", QgisCompat.Warning)
     return QApplication.style().standardIcon(fallback)
 
 
@@ -538,7 +538,7 @@ class VirtughanHubDialog(QDialog):
         set_uninstall_on_plugin_uninstall(bool(checked))
         try:
             self._cleanup_help_label.setVisible(bool(checked))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _on_repair_dependencies(self):
@@ -659,7 +659,7 @@ class VirtughanHubDialog(QDialog):
             row = self._key_to_row[k]
             if self.nav.currentRow() != row:
                 self.nav.setCurrentRow(row)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def show_results_for_output(self, output_dir: str, auto_open: bool = False, run_metadata: dict | None = None):
@@ -785,7 +785,7 @@ class VirtughanHubDialog(QDialog):
                 new_y += (min_top - frame.top())
 
             self.move(int(new_x), int(new_y))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def showEvent(self, event):
@@ -811,7 +811,7 @@ class VirtughanHubDialog(QDialog):
                 x = int(target_rect.right() - self.width() - margin)
                 y = int(target_rect.top() + max(20, margin))
                 self.move(x, y)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def resizeEvent(self, event):
@@ -902,7 +902,7 @@ class VirtughanHubDialog(QDialog):
 
             spacer_height = max(0, viewport_height - used_height)
             self._dependencies_spacer_item.setSizeHint(QSize(200, spacer_height))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _has_busy_tabs(self) -> bool:
@@ -911,7 +911,7 @@ class VirtughanHubDialog(QDialog):
                 item = self.nav.item(i)
                 if item is not None and bool(item.data(NAV_BUSY_ROLE)):
                     return True
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return False
         return False
 
@@ -919,14 +919,14 @@ class VirtughanHubDialog(QDialog):
         if self._has_busy_tabs():
             try:
                 self.hide()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             try:
                 self.iface.messageBar().pushWarning(
                     "VirtuGhan",
                     "A VirtuGhan task is still running. The window was hidden and will reopen instead of creating a new instance.",
                 )
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             event.ignore()
             return

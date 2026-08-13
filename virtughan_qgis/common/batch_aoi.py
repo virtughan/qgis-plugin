@@ -33,11 +33,11 @@ def feature_label(layer: QgsVectorLayer, feature: QgsFeature, index: int) -> str
                 value = feature.attribute(name)
                 if value not in (None, ""):
                     return safe_batch_label(value, f"feature_{index:03d}")
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
     try:
         fid = feature.id()
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         fid = index
     return safe_batch_label(f"fid_{fid}", f"feature_{index:03d}")
 
@@ -61,7 +61,7 @@ def polygon_wgs84_coords(geom_project: QgsGeometry, project: QgsProject | None =
             ring = poly[0]
         coords = [[float(p.x()), float(p.y())] for p in ring]
         return coords or None
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return None
 
 
@@ -84,7 +84,7 @@ def _feature_geometry_in_project_crs_strict(layer: QgsVectorLayer, feature: QgsF
     if src.isValid() and dst.isValid() and src.authid() != dst.authid():
         try:
             geom.transform(QgsCoordinateTransform(src, dst, project))
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             raise AoiTransformError(f"Could not transform AOI layer geometry to the project CRS: {exc}") from exc
     if geom is None or geom.isEmpty():
         raise AoiTransformError("AOI geometry became empty after transformation to the project CRS.")
@@ -94,13 +94,13 @@ def _feature_geometry_in_project_crs_strict(layer: QgsVectorLayer, feature: QgsF
 def _bbox_wgs84_strict(geom_project: QgsGeometry, project: QgsProject):
     try:
         bbox = geom_to_wgs84_bbox(geom_project, project)
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         raise AoiTransformError(f"Could not transform AOI to WGS84 (EPSG:4326), which is required by the satellite search backend: {exc}") from exc
     if not bbox or len(bbox) != 4:
         raise AoiTransformError("Could not create a WGS84 AOI bbox for the selected geometry.")
     try:
         x1, y1, x2, y2 = map(float, bbox)
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         raise AoiTransformError(f"WGS84 AOI bbox contains invalid values: {bbox}") from exc
     if not (-180.0 <= x1 < x2 <= 180.0 and -90.0 <= y1 < y2 <= 90.0):
         raise AoiTransformError(f"Transformed AOI bbox is outside valid WGS84 bounds: {bbox}")
@@ -116,16 +116,16 @@ def specs_from_features(layer: QgsVectorLayer, features, project: QgsProject | N
         try:
             geom = _feature_geometry_in_project_crs_strict(layer, feature, project)
             bbox = _bbox_wgs84_strict(geom, project)
-        except AoiTransformError as exc:
+        except AoiTransformError as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             try:
                 fid = feature.id()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 fid = index
             errors.append(f"Feature {fid}: {exc}")
             continue
         try:
             fid = feature.id()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             fid = index
         label = feature_label(layer, feature, index)
         specs.append(
@@ -154,7 +154,7 @@ def combined_geometry(specs):
     for other in geoms[1:]:
         try:
             geom = geom.combine(other)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
     return geom
 

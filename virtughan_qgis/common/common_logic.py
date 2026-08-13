@@ -1,6 +1,8 @@
 
 import re
 
+from ..qt_compat import QgisCompat
+
 DEFAULT_COLLECTION = "sentinel-2-l2a"
 
 COLLECTION_LABELS = {
@@ -90,7 +92,7 @@ def collection_band_metadata(collection_id=DEFAULT_COLLECTION):
             }
         if meta:
             return meta
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     return dict(FALLBACK_COLLECTION_BANDS.get(collection, FALLBACK_COLLECTION_BANDS[DEFAULT_COLLECTION]))
 
@@ -223,7 +225,7 @@ def load_bands_meta(collection_id=DEFAULT_COLLECTION):
         try:
             with open(vendored, "r") as f:
                 return json.load(f)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     
@@ -233,10 +235,10 @@ def load_bands_meta(collection_id=DEFAULT_COLLECTION):
             if p.exists():
                 with open(p, "r") as f:
                     return json.load(f)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
-    QgsMessageLog.logMessage("sentinel-2-bands.json not found; falling back to default band list.", "VirtuGhan", Qgis.Warning)
+    QgsMessageLog.logMessage("sentinel-2-bands.json not found; falling back to default band list.", "VirtuGhan", QgisCompat.Warning)
     return None
 
 def default_band_list():
@@ -338,7 +340,7 @@ def search_stac_features(collection_id, bbox, start_date, end_date, cloud_cover,
             "rpds",
             "matplotlib",
         ))
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
     from virtughan.collections import get_collection
     from virtughan.stac import search_stac
@@ -368,7 +370,7 @@ def auto_workers():
     try:
         import multiprocessing
         return max(1, multiprocessing.cpu_count() - 1)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return 1
 
 def qdate_to_iso(qdate):

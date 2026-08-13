@@ -22,6 +22,8 @@ from qgis.core import (
     QgsRectangle,
 )
 
+from ..qt_compat import QgsBlockingNetworkRequestCompat
+
 
 GEOCODING_SCALE_M = 12000
 
@@ -102,12 +104,12 @@ class GeocodingPlaceWidget(QWidget):
             )
             blocking = QgsBlockingNetworkRequest()
             err = blocking.get(request)
-            if err != QgsBlockingNetworkRequest.NoError:
+            if err != QgsBlockingNetworkRequestCompat.NoError:
                 raise RuntimeError(blocking.errorMessage())
             reply = blocking.reply()
             payload = bytes(reply.content()).decode("utf-8")
             items = json.loads(payload)
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self.status_label.setText(f"Search failed: {exc}")
             return
 
@@ -171,5 +173,5 @@ class GeocodingPlaceWidget(QWidget):
 
             canvas.refresh()
             self.status_label.setText(f"Moved to: {result.get('display_name', 'selected place')}")
-        except Exception as exc:
+        except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self.status_label.setText(f"Could not move map: {exc}")

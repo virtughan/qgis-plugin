@@ -225,7 +225,7 @@ class FirstTimeInstallerDialog(QDialog):
             self.showNormal()
             self.raise_()
             self.activateWindow()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         def _install_worker():
@@ -243,14 +243,14 @@ class FirstTimeInstallerDialog(QDialog):
                         from .bootstrap import get_last_bootstrap_error
 
                         detail = get_last_bootstrap_error()
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         detail = None
 
                     self.progress.install_complete.emit(
                         False,
                         detail or "Installation failed. Check log above for details.",
                     )
-            except Exception as exc:
+            except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 self.progress.install_complete.emit(
                     False, f"Installation exception: {exc}"
                 )

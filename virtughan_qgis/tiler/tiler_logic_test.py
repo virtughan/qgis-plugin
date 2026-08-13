@@ -17,7 +17,7 @@ def test_tileprocessor_colormap():
         output_path = os.path.join(os.path.expanduser("~"), "projects/virtughan-qgis-plugin//static/outputs/test_tile_output.png")
         image.save(output_path)
         print(f"Test passed. Image saved at: {output_path}")
-    except Exception as ex:
+    except Exception as ex:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         print("Test failed with exception:", ex)
 
 

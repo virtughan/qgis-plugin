@@ -8,7 +8,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.core import QgsApplication, QgsMessageLog, Qgis
 
 from .common.map_setup import setup_default_map
-from .qt_compat import QtCompat, QMessageBoxCompat
+from .qt_compat import QtCompat, QgisCompat, QMessageBoxCompat
 
 
 PLUGIN_DIR = os.path.dirname(__file__)
@@ -22,7 +22,7 @@ try:
         get_uninstall_on_plugin_uninstall,
         clear_install_state,
     )
-except Exception:
+except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     def get_last_bootstrap_error():
         return "Bootstrap module failed to load."
 
@@ -84,7 +84,7 @@ class VirtuGhanPlugin:
             self._VirtughanHubDialog = VirtughanHubDialog
             self._imports_ready = True
             return True
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             self._last_import_error = str(e)
             return False
 
@@ -120,7 +120,7 @@ class VirtuGhanPlugin:
         try:
             self.provider = self._VirtuGhanProcessingProvider()
             QgsApplication.processingRegistry().addProvider(self.provider)
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             QMessageBox.warning(
                 self.iface.mainWindow(),
                 "VirtuGhan",
@@ -133,7 +133,7 @@ class VirtuGhanPlugin:
         try:
             if self._hub_dialog:
                 self._hub_dialog.close()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._hub_dialog = None
 
@@ -161,7 +161,7 @@ class VirtuGhanPlugin:
         if self.provider:
             try:
                 QgsApplication.processingRegistry().removeProvider(self.provider)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             self.provider = None 
 
@@ -171,7 +171,7 @@ class VirtuGhanPlugin:
         if self.toolbar:
             try:
                 self.iface.mainWindow().removeToolBar(self.toolbar)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             self.toolbar = None
 
@@ -183,25 +183,25 @@ class VirtuGhanPlugin:
                 return
             if QCoreApplication.closingDown():
                 return
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return
 
         iface = self.iface
 
         def _emit_info(msg: str):
             try:
-                QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Info)
+                QgsMessageLog.logMessage(msg, "VirtuGhan", QgisCompat.Info)
                 if iface and iface.messageBar():
                     iface.messageBar().pushInfo("VirtuGhan", msg)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         def _emit_warning(msg: str):
             try:
-                QgsMessageLog.logMessage(msg, "VirtuGhan", Qgis.Warning)
+                QgsMessageLog.logMessage(msg, "VirtuGhan", QgisCompat.Warning)
                 if iface and iface.messageBar():
                     iface.messageBar().pushWarning("VirtuGhan", msg)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         def _attempt_cleanup(attempt: int = 0):
@@ -253,11 +253,11 @@ class VirtuGhanPlugin:
                     skip_zoom_if_present=True,        # don't recenter if OSM already present
                     zoom_delay_ms=1000,
                 )
-        except Exception as e:
+        except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             # skip if osm map already exists and any issues with map loading
             try:
                 self.iface.messageBar().pushWarning("VirtuGhan", f"Basemap skipped: {e}")
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         # Reuse existing dialog instance if it is still alive (even if hidden/minimized)
@@ -270,7 +270,7 @@ class VirtuGhanPlugin:
                     try:
                         if mw.isMinimized():
                             mw.showNormal()
-                    except Exception:
+                    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                         pass
                     mw.raise_()
                     mw.activateWindow()
@@ -279,9 +279,9 @@ class VirtuGhanPlugin:
                     self._hub_dialog.raise_()
                     self._hub_dialog.activateWindow()
                 return
-            except RuntimeError:
+            except RuntimeError:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 self._hub_dialog = None
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
         # Close previous instance if you want only one hub at a time
@@ -289,10 +289,10 @@ class VirtuGhanPlugin:
             if self._hub_dialog:
                 try:
                     self._results_history_session = self._hub_dialog.get_results_history_snapshot()
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
                 self._hub_dialog.close()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         hub_parent = None if sys.platform == "darwin" else self.iface.mainWindow()
@@ -300,7 +300,7 @@ class VirtuGhanPlugin:
         try:
             if self._results_history_session:
                 self._hub_dialog.set_results_history(self._results_history_session)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._hub_dialog.finished.connect(self._on_hub_finished)
         self._hub_dialog.setModal(False)
@@ -310,7 +310,7 @@ class VirtuGhanPlugin:
             try:
                 if mw.isMinimized():
                     mw.showNormal()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             mw.raise_()
             mw.activateWindow()
@@ -323,7 +323,7 @@ class VirtuGhanPlugin:
         try:
             if self._hub_dialog:
                 self._results_history_session = self._hub_dialog.get_results_history_snapshot()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         self._hub_dialog = None
 

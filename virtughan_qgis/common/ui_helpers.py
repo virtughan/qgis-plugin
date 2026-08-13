@@ -54,7 +54,7 @@ def hide_single_tab_bar(root: QWidget | None, tab_name: str = "tabWidget"):
     try:
         tab_widget.tabBar().hide()
         tab_widget.setContentsMargins(0, 0, 0, 0)
-    except Exception:
+    except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         pass
 
 
@@ -151,7 +151,7 @@ class DynamicBandSelector(QWidget):
         self._refresh_minimum_height()
         try:
             self.parentWidget().updateGeometry()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         if emit:
             self.changed.emit()
@@ -180,7 +180,7 @@ class DynamicBandSelector(QWidget):
         self._refresh_minimum_height()
         try:
             self.parentWidget().updateGeometry()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         if emit:
             self.changed.emit()

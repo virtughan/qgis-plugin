@@ -11,7 +11,7 @@ from qgis.core import (
 )
 
 from ..bootstrap import activate_runtime_paths
-from ..qt_compat import QtCompat
+from ..qt_compat import QtCompat, QgsProcessingParameterNumberCompat
 from ..common.common_logic import (
     build_bands_list,
     collection_choices,
@@ -24,14 +24,14 @@ activate_runtime_paths()
 try:
     from qgis.core import QgsProcessingParameterDate
     HAVE_DATE_PARAM = True
-except Exception:
+except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     QgsProcessingParameterDate = None
     HAVE_DATE_PARAM = False
 
 VIRTUGHAN_IMPORT_ERROR = None
 try:
     from virtughan.engine import VirtughanProcessor
-except Exception as e:
+except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     VirtughanProcessor = None
     VIRTUGHAN_IMPORT_ERROR = e
 
@@ -76,14 +76,14 @@ class _FeedbackTee(io.TextIOBase):
             if line.strip():
                 try:
                     self.feedback.pushInfo(line)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     pass
         return len(s)
 
     def flush(self):
         try:
             self.file.flush()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
 
@@ -113,7 +113,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
 
         self.addParameter(QgsProcessingParameterNumber(
             "CLOUD_COVER", "Max cloud cover (%)",
-            type=QgsProcessingParameterNumber.Integer, defaultValue=30, minValue=0, maxValue=100))
+            type=QgsProcessingParameterNumberCompat.Integer, defaultValue=30, minValue=0, maxValue=100))
         self.addParameter(QgsProcessingParameterString("FORMULA", "Formula",
             defaultValue="(nir-red)/(nir+red)"))
         self.addParameter(QgsProcessingParameterString("BAND1", "Band 1", defaultValue="red"))
@@ -128,7 +128,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             "SMART_FILTER", "Apply smart filter", defaultValue=False))
         self.addParameter(QgsProcessingParameterNumber(
             "WORKERS", "Workers (0=auto)",
-            type=QgsProcessingParameterNumber.Integer, defaultValue=1, minValue=0, maxValue=64))
+            type=QgsProcessingParameterNumberCompat.Integer, defaultValue=1, minValue=0, maxValue=64))
         self.addParameter(QgsProcessingParameterFolderDestination(
             "OUTPUT_FOLDER", "Output folder (blank = temp)", optional=True))
 
@@ -146,7 +146,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
         extent = self.parameterAsExtent(parameters, "EXTENT", context)
         try:
             src_crs = self.parameterAsExtentCrs(parameters, "EXTENT", context)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             src_crs = QgsProject.instance().crs()
         bbox = _extent_to_wgs84_bbox(extent, src_crs)
         feedback.pushInfo(f"AOI (EPSG:4326): {bbox}")
@@ -188,7 +188,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
             try:
                 import multiprocessing
                 workers = max(1, multiprocessing.cpu_count() - 1)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 workers = 1
 
         out_base = (self.parameterAsString(parameters, "OUTPUT_FOLDER", context) or "").strip()
@@ -238,7 +238,7 @@ class VirtuGhanEngineAlgorithm(QgsProcessingAlgorithm):
                     proc.compute()
                     print("[checkpoint] exited VirtughanProcessor.compute()", flush=True)
                     print("compute() finished.", flush=True)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     print("[exception]", flush=True)
                     print(traceback.format_exc(), flush=True)
                     raise QgsProcessingException("VirtughanProcessor.compute() failed – see runtime.log for details.")

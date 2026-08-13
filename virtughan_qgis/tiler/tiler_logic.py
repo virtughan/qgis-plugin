@@ -3,6 +3,8 @@ from urllib.parse import urlencode, quote
 
 from qgis.core import QgsProject, QgsRasterLayer, QgsMessageLog, Qgis
 
+from ..qt_compat import QgisCompat
+
 
 class TilerLogic:
     """Create/register an XYZ tile layer that proxies to your FastAPI tiler."""
@@ -46,7 +48,7 @@ class TilerLogic:
 
     def add_xyz_layer(self, backend_url: str, name: str, params: dict):
         uri = self.build_xyz_uri(backend_url, name, params)
-        QgsMessageLog.logMessage(f"[VirtuGhan Tiler] URI: {uri}", "VirtuGhan", Qgis.Info)
+        QgsMessageLog.logMessage(f"[VirtuGhan Tiler] URI: {uri}", "VirtuGhan", QgisCompat.Info)
         layer = QgsRasterLayer(uri, name, "wms")  
         if not layer.isValid():
             raise RuntimeError("Failed to create XYZ layer. Check URL/params.")

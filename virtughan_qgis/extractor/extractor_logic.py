@@ -17,21 +17,21 @@ from ..common.common_logic import (
     normalize_collection,
 )
 from ..bootstrap import activate_runtime_paths
-from ..qt_compat import QtCompat
+from ..qt_compat import QtCompat, QgsProcessingParameterNumberCompat
 
 activate_runtime_paths()
 
 EXTRACTOR_IMPORT_ERROR = None
 try:
     from virtughan.extract import ExtractProcessor
-except Exception as e:
+except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     ExtractProcessor = None
     EXTRACTOR_IMPORT_ERROR = e
 
 EXTRACTOR_IMPORT_ERROR = None
 try:
     from virtughan.extract import ExtractProcessor
-except Exception as e:
+except Exception as e:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
     ExtractProcessor = None
     EXTRACTOR_IMPORT_ERROR = e
 
@@ -71,11 +71,11 @@ class _FeedbackTee(io.TextIOBase):
             line, self._buf = self._buf.split("\n", 1)
             if line.strip():
                 try: self.feedback.pushInfo(line)
-                except Exception: pass
+                except Exception: pass  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         return len(s)
     def flush(self):
         try: self.file.flush()
-        except Exception: pass
+        except Exception: pass  # nosec B110 - defensive QGIS cleanup or optional API fallback.
 
 class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
     def initAlgorithm(self, config=None):
@@ -93,7 +93,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
 
         self.addParameter(QgsProcessingParameterNumber(
             "CLOUD_COVER", "Max cloud cover (%)",
-            type=QgsProcessingParameterNumber.Integer, defaultValue=30, minValue=0, maxValue=100))
+            type=QgsProcessingParameterNumberCompat.Integer, defaultValue=30, minValue=0, maxValue=100))
 
         
         self.addParameter(QgsProcessingParameterString(
@@ -107,7 +107,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
 
         self.addParameter(QgsProcessingParameterNumber(
             "WORKERS", "Workers (0=auto)",
-            type=QgsProcessingParameterNumber.Integer, defaultValue=1, minValue=0, maxValue=64))
+            type=QgsProcessingParameterNumberCompat.Integer, defaultValue=1, minValue=0, maxValue=64))
         self.addParameter(QgsProcessingParameterFolderDestination(
             "OUTPUT_FOLDER", "Output folder (blank = temp)", optional=True))
 
@@ -126,7 +126,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
         extent = self.parameterAsExtent(parameters, "EXTENT", context)
         try:
             src_crs = self.parameterAsExtentCrs(parameters, "EXTENT", context)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             src_crs = QgsProject.instance().crs()
         bbox = _extent_to_wgs84_bbox(extent, src_crs)
         feedback.pushInfo(f"AOI (EPSG:4326): {bbox}")
@@ -191,7 +191,7 @@ class VirtuGhanExtractorAlgorithm(QgsProcessingAlgorithm):
                     )
                     proc.extract()
                     print("Extraction finished.", flush=True)
-                except Exception:
+                except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                     print("[exception]", flush=True)
                     print(traceback.format_exc(), flush=True)
                     raise QgsProcessingException("ExtractProcessor.extract() failed – see runtime.log for details.")

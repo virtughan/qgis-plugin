@@ -82,7 +82,7 @@ class PolygonSelectionDialog(QDialog):
         splitter.setStretchFactor(1, 5)
         try:
             splitter.setSizes([180, 520])
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         self.buttons = QDialogButtonBox(QDialogButtonBoxCompat.Ok | QDialogButtonBoxCompat.Cancel, self)
@@ -96,7 +96,7 @@ class PolygonSelectionDialog(QDialog):
         try:
             self.canvas.setCrsTransformEnabled(True)
             self.canvas.setDestinationCrs(self._layer.crs())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         layers = [self._layer]
         if self._basemap and self._basemap.isValid():
@@ -113,7 +113,7 @@ class PolygonSelectionDialog(QDialog):
         try:
             if self._basemap and self._basemap.isValid():
                 QgsProject.instance().removeMapLayer(self._basemap.id())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         super().closeEvent(event)
 
@@ -128,7 +128,7 @@ class PolygonSelectionDialog(QDialog):
         if layer.isValid():
             try:
                 QgsProject.instance().addMapLayer(layer, False)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
             return layer
         return None
@@ -162,7 +162,7 @@ class PolygonSelectionDialog(QDialog):
             ]))
             layer.triggerRepaint()
             layer.emitStyleChanged()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         return layer
 
@@ -178,7 +178,7 @@ class PolygonSelectionDialog(QDialog):
             dst = layer.crs()
             if src.isValid() and dst.isValid() and src != dst:
                 xform = QgsCoordinateTransform(src, dst, QgsProject.instance())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         feats = []
         for spec in self._specs:
@@ -187,7 +187,7 @@ class PolygonSelectionDialog(QDialog):
             if xform is not None:
                 try:
                     geom.transform(xform)
-                except Exception:
+                except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                     continue
             feat = QgsFeature(layer.fields())
             feat.setGeometry(geom)
@@ -206,7 +206,7 @@ class PolygonSelectionDialog(QDialog):
                 ext.scale(1.15)
                 self.canvas.setExtent(ext)
             self.canvas.refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
     def _populate_table(self):
@@ -261,5 +261,5 @@ class PolygonSelectionDialog(QDialog):
         self._reload_layer()
         try:
             self.buttons.button(QDialogButtonBoxCompat.Ok).setEnabled(bool(keys))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass

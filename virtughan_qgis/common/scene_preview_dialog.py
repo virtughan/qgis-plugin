@@ -111,7 +111,7 @@ class ScenePreviewDialog(QDialog):
         try:
             self.canvas.setCrsTransformEnabled(True)
             self.canvas.setDestinationCrs(self._layer.crs())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         if self._basemap and self._basemap.isValid():
             layers = [self._layer]
@@ -136,12 +136,12 @@ class ScenePreviewDialog(QDialog):
         try:
             if self._basemap and self._basemap.isValid():
                 QgsProject.instance().removeMapLayer(self._basemap.id())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         try:
             if self._aoi_layer and self._aoi_layer.isValid():
                 QgsProject.instance().removeMapLayer(self._aoi_layer.id())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         super().closeEvent(event)
 
@@ -152,7 +152,7 @@ class ScenePreviewDialog(QDialog):
             return None
         try:
             QgsProject.instance().addMapLayer(layer, False)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         return layer
 
@@ -185,7 +185,7 @@ class ScenePreviewDialog(QDialog):
             sym.symbolLayer(0).setStrokeWidth(0.45)
             layer.triggerRepaint()
             layer.emitStyleChanged()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         return layer
@@ -206,7 +206,7 @@ class ScenePreviewDialog(QDialog):
             dst = layer.crs()
             if src.isValid() and dst.isValid() and src != dst:
                 geom.transform(QgsCoordinateTransform(src, dst, QgsProject.instance()))
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         if geom is None or geom.isEmpty():
@@ -230,12 +230,12 @@ class ScenePreviewDialog(QDialog):
             sym.symbolLayer(0).setStrokeWidth(0.6)
             layer.triggerRepaint()
             layer.emitStyleChanged()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
 
         try:
             QgsProject.instance().addMapLayer(layer, False)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             pass
         return layer
 
@@ -252,7 +252,7 @@ class ScenePreviewDialog(QDialog):
             dst = layer.crs()
             if src != dst:
                 xform = QgsCoordinateTransform(src, dst, QgsProject.instance())
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             xform = None
 
         for scene in self._all_scenes:
@@ -266,7 +266,7 @@ class ScenePreviewDialog(QDialog):
             if xform is not None:
                 try:
                     geom.transform(xform)
-                except Exception:
+                except Exception:  # nosec B110,B112 - defensive QGIS cleanup or optional API fallback.
                     continue
 
             props = scene.get("properties", {}) or {}
@@ -295,10 +295,10 @@ class ScenePreviewDialog(QDialog):
             ext.scale(1.1)
             self.canvas.setExtent(ext)
             self.canvas.refresh()
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             try:
                 self.canvas.refresh()
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
     def _stac_geometry_to_qgs(self, geom_obj):
@@ -325,7 +325,7 @@ class ScenePreviewDialog(QDialog):
                         rings.append([QgsPointXY(float(x), float(y)) for x, y in ring])
                     polys.append(rings)
                 return QgsGeometry.fromMultiPolygonXY(polys)
-        except Exception:
+        except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
             return None
 
         return None

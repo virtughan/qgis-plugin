@@ -216,13 +216,13 @@ def _run_pip_inprocess(
 
     try:
         from pip._internal.cli.main import main as pip_main
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         if progress_callback:
             progress_callback(f"Could not import bundled pip in-process: {exc}")
         if added_path and pip_path_str:
             try:
                 sys.path.remove(pip_path_str)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
         return False
 
@@ -269,7 +269,7 @@ def _run_pip_inprocess(
         if result_code != 0 and not get_last_install_error():
             _set_last_install_error(_detect_lock_related_error(captured_lines))
         return result_code == 0
-    except Exception as exc:
+    except Exception as exc:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
         if progress_callback:
             progress_callback(f"In-process pip error: {exc}")
         if not get_last_install_error():
@@ -281,7 +281,7 @@ def _run_pip_inprocess(
         if added_path and pip_path_str:
             try:
                 sys.path.remove(pip_path_str)
-            except Exception:
+            except Exception:  # nosec B110 - defensive QGIS cleanup or optional API fallback.
                 pass
 
 
