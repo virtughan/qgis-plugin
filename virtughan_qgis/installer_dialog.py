@@ -221,6 +221,12 @@ class FirstTimeInstallerDialog(QDialog):
                 False, "No installation callback provided"
             )
             return
+        try:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
 
         def _install_worker():
             try:

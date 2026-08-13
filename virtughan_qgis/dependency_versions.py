@@ -5,8 +5,11 @@ RASTERIO_VERSION = "1.4.3"
 
 def runtime_package_specs() -> list[str]:
     return [
-        f"virtughan[api]=={VIRTUGHAN_VERSION}",
+        f"virtughan=={VIRTUGHAN_VERSION}",
         f"rasterio=={RASTERIO_VERSION}",
+        "aiocache>=0.12.3",
+        "fastapi>=0.115.6",
+        "uvicorn>=0.34.0",
     ]
 
 

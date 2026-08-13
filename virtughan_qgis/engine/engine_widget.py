@@ -1744,6 +1744,7 @@ class EngineDockWidget(QDockWidget):
 
     def _init_aoi_layer_selector(self):
         self._last_aoi_layer_id = None
+        self._aoi_layer_project_signals_connected = False
         self.aoiLayerCombo = QComboBox(self.ui_root)
         self.aoiLayerCombo.setToolTip("Choose a polygon layer from the current project")
         self.aoiLayerCombo.setVisible(False)
@@ -1753,11 +1754,31 @@ class EngineDockWidget(QDockWidget):
         except Exception:
             pass
         try:
-            QgsProject.instance().layersAdded.connect(lambda *_: self._populate_aoi_layer_combo())
-            QgsProject.instance().layersRemoved.connect(lambda *_: self._populate_aoi_layer_combo())
+            QgsProject.instance().layersAdded.connect(self._on_project_layers_changed)
+            QgsProject.instance().layersRemoved.connect(self._on_project_layers_changed)
+            self._aoi_layer_project_signals_connected = True
         except Exception:
             pass
         self._populate_aoi_layer_combo()
+
+    def _on_project_layers_changed(self, *_):
+        self._populate_aoi_layer_combo()
+
+    def _disconnect_aoi_layer_project_signals(self):
+        if not getattr(self, "_aoi_layer_project_signals_connected", False):
+            return
+        try:
+            project = QgsProject.instance()
+            try:
+                project.layersAdded.disconnect(self._on_project_layers_changed)
+            except Exception:
+                pass
+            try:
+                project.layersRemoved.disconnect(self._on_project_layers_changed)
+            except Exception:
+                pass
+        finally:
+            self._aoi_layer_project_signals_connected = False
 
     def _shorten_static_notes(self):
         tip = self.ui_root.findChild(QLabel, "indexTipLabel")
@@ -1822,22 +1843,30 @@ class EngineDockWidget(QDockWidget):
         combo = getattr(self, "aoiLayerCombo", None)
         if combo is None:
             return
-        current_id = combo.currentData() or getattr(self, "_last_aoi_layer_id", None)
-        combo.blockSignals(True)
-        combo.clear()
-        layers = polygon_layers(QgsProject.instance())
-        if not layers:
-            combo.addItem("No polygon layers", "")
-        else:
-            for layer in layers:
-                combo.addItem(layer.name(), layer.id())
-        if current_id:
-            idx = combo.findData(current_id)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-            elif getattr(self, "_last_aoi_layer_id", None) == current_id:
-                self._last_aoi_layer_id = None
-        combo.blockSignals(False)
+        try:
+            current_id = combo.currentData() or getattr(self, "_last_aoi_layer_id", None)
+            combo.blockSignals(True)
+            combo.clear()
+            layers = polygon_layers(QgsProject.instance())
+            if not layers:
+                combo.addItem("No polygon layers", "")
+            else:
+                for layer in layers:
+                    combo.addItem(layer.name(), layer.id())
+            if current_id:
+                idx = combo.findData(current_id)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                elif getattr(self, "_last_aoi_layer_id", None) == current_id:
+                    self._last_aoi_layer_id = None
+        except RuntimeError as exc:
+            if "deleted" not in str(exc).lower():
+                raise
+        finally:
+            try:
+                combo.blockSignals(False)
+            except RuntimeError:
+                pass
 
     def _selected_aoi_layer(self):
         combo = getattr(self, "aoiLayerCombo", None)
@@ -3287,6 +3316,11 @@ class EngineDockWidget(QDockWidget):
             return None, None
 
     def _teardown_runtime_state(self):
+        try:
+            self._disconnect_aoi_layer_project_signals()
+        except Exception:
+            pass
+
         try:
             self._stop_tailing()
         except Exception:
