@@ -1749,11 +1749,14 @@ class EngineDockWidget(QDockWidget):
         self.aoiLayerList.setToolTip("Choose one polygon layer from the current project")
         self.aoiLayerList.setSelectionMode(QAbstractItemViewCompat.SingleSelection)
         self.aoiLayerList.setVisible(False)
-        self.aoiLayerList.setMinimumHeight(72)
-        self.aoiLayerList.setMaximumHeight(120)
+        self.aoiLayerList.setMinimumHeight(48)
+        self.aoiLayerList.setMaximumHeight(76)
         self.aoiLayerList.itemClicked.connect(lambda *_: self._use_layer_aoi())
         try:
-            self.ui_root.findChild(QWidget, "groupAOI").layout().addWidget(self.aoiLayerList, 1, 0, 1, 4)
+            layout = self.ui_root.findChild(QWidget, "groupAOI").layout()
+            layout.removeWidget(self.aoiPreviewLabel)
+            layout.addWidget(self.aoiLayerList, 1, 0, 1, 5)
+            layout.addWidget(self.aoiPreviewLabel, 2, 0, 1, 5)
         except Exception:
             pass
         try:
