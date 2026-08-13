@@ -9,8 +9,8 @@ import json
 from collections import deque
 
 from qgis.PyQt import uic
-from qgis.PyQt.QtCore import QDate, Qt, QTimer
-from qgis.PyQt.QtGui import QPixmap
+from qgis.PyQt.QtCore import QDate, QSize, Qt, QTimer
+from qgis.PyQt.QtGui import QColor, QIcon, QPainter, QPixmap
 from qgis.PyQt.QtWidgets import (
     QWidget,
     QMessageBox,
@@ -918,22 +918,7 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.timeseriesCheck.setChecked(False)
         self.operationCombo.clear()
         self.operationCombo.addItems(["median", "mean", "min", "max"])
-        self.paletteCombo.clear()
-        self.paletteCombo.addItems([
-            "RdYlGn",
-            "viridis",
-            "plasma",
-            "inferno",
-            "magma",
-            "cividis",
-            "turbo",
-            "terrain",
-            "Spectral",
-            "coolwarm",
-            "BrBG",
-            "PiYG",
-            "Greys",
-        ])
+        self._init_palette_combo()
 
         # Backend defaults
         if not self.backendUrlLine.text():
@@ -952,6 +937,43 @@ class TilerWidget(QWidget, FORM_CLASS):
         self.workersSpin.setRange(1, 64)
         self.workersSpin.setValue(4)
         self.workersSpin.setEnabled(False)
+
+    def _palette_definitions(self):
+        return [
+            ("RdYlGn", ["#a50026", "#f46d43", "#fee08b", "#ffffbf", "#d9ef8b", "#66bd63", "#006837"]),
+            ("viridis", ["#440154", "#443983", "#31688e", "#21918c", "#35b779", "#90d743", "#fde725"]),
+            ("plasma", ["#0d0887", "#6a00a8", "#b12a90", "#e16462", "#fca636", "#f0f921"]),
+            ("inferno", ["#000004", "#320a5a", "#781c6d", "#bb3754", "#ec6824", "#fbb41a", "#fcffa4"]),
+            ("magma", ["#000004", "#2c115f", "#721f81", "#b73779", "#f1605d", "#feb078", "#fcfdbf"]),
+            ("cividis", ["#00204c", "#25446b", "#576d6d", "#8a9361", "#c3bd4d", "#ffea46"]),
+            ("turbo", ["#30123b", "#4662d8", "#35abf8", "#1ae4b6", "#a4fc3c", "#faba39", "#e73f2f", "#7a0403"]),
+            ("terrain", ["#333399", "#00a6ca", "#33cc33", "#b8de29", "#cc8d1a", "#ffffff"]),
+            ("Spectral", ["#9e0142", "#d53e4f", "#f46d43", "#fee08b", "#e6f598", "#66c2a5", "#3288bd", "#5e4fa2"]),
+            ("coolwarm", ["#3b4cc0", "#688aef", "#b9d0f9", "#f7f7f7", "#f7b89c", "#e36c55", "#b40426"]),
+            ("BrBG", ["#543005", "#8c510a", "#bf812d", "#dfc27d", "#f5f5f5", "#80cdc1", "#35978f", "#01665e", "#003c30"]),
+            ("PiYG", ["#8e0152", "#c51b7d", "#de77ae", "#f1b6da", "#f7f7f7", "#b8e186", "#7fbc41", "#4d9221", "#276419"]),
+            ("Greys", ["#ffffff", "#d9d9d9", "#bdbdbd", "#969696", "#636363", "#252525"]),
+        ]
+
+    def _palette_icon(self, colors, width=72, height=16) -> QIcon:
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor("#ffffff"))
+        painter = QPainter(pixmap)
+        try:
+            count = max(1, len(colors or []))
+            for idx, color in enumerate(colors or ["#ffffff"]):
+                x1 = int(idx * width / count)
+                x2 = int((idx + 1) * width / count)
+                painter.fillRect(x1, 0, max(1, x2 - x1), height, QColor(color))
+        finally:
+            painter.end()
+        return QIcon(pixmap)
+
+    def _init_palette_combo(self):
+        self.paletteCombo.clear()
+        self.paletteCombo.setIconSize(QSize(72, 16))
+        for name, colors in self._palette_definitions():
+            self.paletteCombo.addItem(self._palette_icon(colors), name, name)
 
     def _wire_signals(self):
         apply_primary_button_style(self.addLayerBtn)
@@ -1200,7 +1222,7 @@ class TilerWidget(QWidget, FORM_CLASS):
 
         timeseries = self.timeseriesCheck.isChecked()
         operation = self.operationCombo.currentText().strip() if timeseries else None
-        palette = self.paletteCombo.currentText().strip() or "RdYlGn"
+        palette = self.paletteCombo.currentData() or self.paletteCombo.currentText().strip() or "RdYlGn"
         return (start_date, end_date, cloud_cover, band1, band2, formula, timeseries, operation, self._current_collection(), palette)
 
     def _on_start_server(self):
