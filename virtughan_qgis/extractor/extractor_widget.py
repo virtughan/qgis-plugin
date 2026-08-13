@@ -66,6 +66,7 @@ from ..common.aoi import (
 )
 from ..common.batch_aoi import AoiTransformError, batch_root, combined_geometry, specs_from_features
 from ..common.scene_preview_dialog import ScenePreviewDialog
+from ..common.batch_mode_dialog import choose_multi_polygon_mode
 from ..common.polygon_selection_dialog import PolygonSelectionDialog
 from ..common.common_logic import (
     collection_band_names,
@@ -908,13 +909,10 @@ class _ExtractorTask(QgsTask):
                         should_cancel=self.isCanceled,
                     )
                 elif _EXTRACTOR_SUBPROCESS_DISABLED:
-                    logf.write("[INFO] Subprocess previously failed; using in-process extractor (workers=1).\n")
-                    fallback_params = dict(self.params)
-                    fallback_params["workers"] = 1
-                    _run_extractor_inprocess_mac(
-                        fallback_params,
-                        logf=logf,
-                        should_cancel=self.isCanceled,
+                    raise RuntimeError(
+                        "Download subprocess was disabled earlier in this QGIS session. "
+                        "Restart QGIS and try again. In-process download fallback is disabled on this platform "
+                        "to avoid native PROJ/pyproj crashes."
                     )
                 else:
                     try:
@@ -932,16 +930,10 @@ class _ExtractorTask(QgsTask):
                             _EXTRACTOR_SUBPROCESS_DISABLED = True
                             logf.write(
                                 f"\n[WARNING] Subprocess failed: {err_msg}\n"
-                                "[INFO] Retrying extractor in-process (single-threaded fallback)...\n"
-                                "[INFO] Subprocess disabled for this session; future runs will use in-process directly.\n"
+                                "[INFO] In-process download fallback is disabled on this platform to avoid native crashes.\n"
+                                "[INFO] Restart QGIS and try again, or reduce AOI/date range if the subprocess timed out.\n"
                             )
-                            fallback_params = dict(self.params)
-                            fallback_params["workers"] = 1
-                            _run_extractor_inprocess_mac(
-                                fallback_params,
-                                logf=logf,
-                                should_cancel=self.isCanceled,
-                            )
+                            raise
                         else:
                             raise
             return True
@@ -1367,17 +1359,50 @@ class ExtractorDockWidget(QDockWidget):
                 + "\n".join(transform_errors[:5]),
             )
         if len(specs) > 1:
-            dlg = PolygonSelectionDialog(self, specs, selected_fids=selected_fids, title="Select Download Batch Polygons")
-            _exec = getattr(dlg, "exec", None) or getattr(dlg, "exec_")
-            if _exec() != 1:
+            selected_specs = [spec for spec in specs if spec.get("fid") in selected_fids]
+            combined_specs = selected_specs or specs
+            mode = choose_multi_polygon_mode(
+                self,
+                action_label="download images for this AOI",
+                total_count=len(specs),
+                selected_count=len(selected_specs),
+            )
+            if mode is None:
                 return
-            chosen = dlg.selected_specs()
-            if not chosen:
-                return
-            if len(chosen) > 1:
-                self._set_batch_aoi(chosen)
-                return
-            specs = chosen
+            if mode == "combined":
+                if len(combined_specs) == 1:
+                    specs = combined_specs
+                else:
+                    self._batch_aoi_specs = []
+                    geom = combined_geometry(combined_specs)
+                    if geom is None or geom.isEmpty():
+                        QMessageBox.warning(self, "VirtuGhan", "Selected layer features have no valid polygon geometry.")
+                        return
+                    self._aoi.replace_geometry(geom)
+                    try:
+                        self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
+                    except Exception as exc:
+                        QMessageBox.warning(
+                            self,
+                            "VirtuGhan",
+                            f"Could not transform combined AOI to WGS84 (EPSG:4326): {exc}",
+                        )
+                        return
+                    self._aoi_polygon_wgs84 = None
+                    self._update_aoi_preview(f"Combined AOI: {len(combined_specs)} polygon features.")
+                    return
+            else:
+                dlg = PolygonSelectionDialog(self, specs, selected_fids=selected_fids, title="Select Download Batch Polygons")
+                _exec = getattr(dlg, "exec", None) or getattr(dlg, "exec_")
+                if _exec() != 1:
+                    return
+                chosen = dlg.selected_specs()
+                if not chosen:
+                    return
+                if len(chosen) > 1:
+                    self._set_batch_aoi(chosen)
+                    return
+                specs = chosen
 
         self._batch_aoi_specs = []
         geom = specs[0].get("geometry_project")

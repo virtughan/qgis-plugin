@@ -15,6 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 from qgis.core import (
+    QgsCategorizedSymbolRenderer,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFeature,
@@ -22,6 +23,7 @@ from qgis.core import (
     QgsGeometry,
     QgsProject,
     QgsRasterLayer,
+    QgsRendererCategory,
     QgsVectorLayer,
 )
 from qgis.gui import QgsMapCanvas
@@ -33,7 +35,7 @@ class PolygonSelectionDialog(QDialog):
     def __init__(self, parent, specs, selected_fids=None, title="Select Batch Polygons"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(720, 600)
+        self.resize(760, 760)
         self._specs = list(specs or [])
         self._spec_by_key = {self._key(s): s for s in self._specs}
         self._checked_keys = set()
@@ -76,8 +78,12 @@ class PolygonSelectionDialog(QDialog):
         self.canvas = QgsMapCanvas(self)
         self.canvas.setCanvasColor(QtCompat.white)
         splitter.addWidget(self.canvas)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 5)
+        try:
+            splitter.setSizes([180, 520])
+        except Exception:
+            pass
 
         self.buttons = QDialogButtonBox(QDialogButtonBoxCompat.Ok | QDialogButtonBoxCompat.Cancel, self)
         self.buttons.button(QDialogButtonBoxCompat.Ok).setText("Use Selected")
@@ -131,14 +137,29 @@ class PolygonSelectionDialog(QDialog):
         layer_crs = "EPSG:3857" if (self._basemap and self._basemap.isValid()) else QgsProject.instance().crs().authid()
         layer = QgsVectorLayer(f"Polygon?crs={layer_crs}", "Batch AOI Preview", "memory")
         prov = layer.dataProvider()
-        prov.addAttributes([QgsField("label", QVariant.String), QgsField("fid", QVariant.String)])
+        prov.addAttributes([
+            QgsField("label", QVariant.String),
+            QgsField("fid", QVariant.String),
+            QgsField("selected", QVariant.Int),
+        ])
         layer.updateFields()
         self._reload_layer(layer)
         try:
-            sym = layer.renderer().symbol()
-            sym.setColor(QColor(255, 193, 7, 45))
-            sym.symbolLayer(0).setStrokeColor(QColor(255, 143, 0, 190))
-            sym.symbolLayer(0).setStrokeWidth(0.55)
+            base = layer.renderer().symbol()
+            selected_sym = base.clone()
+            selected_sym.setColor(QColor(0, 188, 212, 105))
+            selected_sym.symbolLayer(0).setStrokeColor(QColor(0, 77, 96, 255))
+            selected_sym.symbolLayer(0).setStrokeWidth(1.5)
+
+            unselected_sym = base.clone()
+            unselected_sym.setColor(QColor(176, 190, 197, 35))
+            unselected_sym.symbolLayer(0).setStrokeColor(QColor(84, 110, 122, 140))
+            unselected_sym.symbolLayer(0).setStrokeWidth(0.55)
+
+            layer.setRenderer(QgsCategorizedSymbolRenderer("selected", [
+                QgsRendererCategory(1, selected_sym, "Selected"),
+                QgsRendererCategory(0, unselected_sym, "Not selected"),
+            ]))
             layer.triggerRepaint()
             layer.emitStyleChanged()
         except Exception:
@@ -161,8 +182,7 @@ class PolygonSelectionDialog(QDialog):
             pass
         feats = []
         for spec in self._specs:
-            if self._key(spec) not in self._checked_keys:
-                continue
+            selected = 1 if self._key(spec) in self._checked_keys else 0
             geom = QgsGeometry(spec.get("geometry_project"))
             if xform is not None:
                 try:
@@ -171,7 +191,7 @@ class PolygonSelectionDialog(QDialog):
                     continue
             feat = QgsFeature(layer.fields())
             feat.setGeometry(geom)
-            feat.setAttributes([str(spec.get("label", "")), str(spec.get("fid", ""))])
+            feat.setAttributes([str(spec.get("label", "")), str(spec.get("fid", "")), selected])
             feats.append(feat)
         if feats:
             prov.addFeatures(feats)
