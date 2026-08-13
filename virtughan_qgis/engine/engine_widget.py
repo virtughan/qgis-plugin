@@ -2724,10 +2724,10 @@ class EngineDockWidget(QDockWidget):
                             else:
                                 _log(self, f"Failed to load raster: {path}", Qgis.Warning)
                 if added == 0:
-                    _log(self, "No .tif/.tiff/.vrt files found to load.")
+                    _log(self, "Compute completed, but no .tif/.tiff/.vrt output images were found.", Qgis.Warning)
                 self._last_output_layer_ids = loaded_layer_ids
 
-                self._has_successful_run = True
+                self._has_successful_run = added > 0
                 if self.showSceneFootprintsCheck.isChecked():
                     scenes_for_map = self._resolve_scenes_for_main_map_footprints()
                     count = self._render_scene_footprints(scenes_for_map, below_layer_ids=self._last_output_layer_ids)
@@ -2764,7 +2764,14 @@ class EngineDockWidget(QDockWidget):
                     except Exception as e:
                         _log(self, f"Could not update Results tab: {e}", Qgis.Warning)
 
-                msg = f"Compute finished.\nOutput: {out_dir}"
+                if added == 0:
+                    msg = (
+                        "Compute completed, but no output images were found for the selected AOI and filters.\n\n"
+                        "Try a smaller AOI, a different AOI, or a different date/filter selection.\n\n"
+                        f"Output folder checked:\n{out_dir}"
+                    )
+                else:
+                    msg = f"Compute finished.\nOutput: {out_dir}"
                 if self.timeseriesCheck.isChecked():
                     frames = 0
                     if isinstance(results_summary, dict):
@@ -2775,7 +2782,10 @@ class EngineDockWidget(QDockWidget):
                         msg += "\n\nTimeseries was requested, but no timeseries image frames were found in output."
 
                 self._archive_current_aoi()
-                QMessageBox.information(self, "VirtuGhan", msg)
+                if added == 0:
+                    QMessageBox.warning(self, "VirtuGhan", msg)
+                else:
+                    QMessageBox.information(self, "VirtuGhan", msg)
 
         self._current_task = _VirtughanTask("VirtuGhan Compute", params, log_path, on_done=_on_done)
         _log(self, "Compute handoff: backend task queued.")

@@ -1973,10 +1973,10 @@ class ExtractorDockWidget(QDockWidget):
                             else:
                                 _log(self, f"Failed to load raster: {path}", Qgis.Warning)
                 if added == 0:
-                    _log(self, "No raster files found to load.")
+                    _log(self, "Download completed, but no .tif/.tiff/.vrt output images were found.", Qgis.Warning)
                 self._last_output_layer_ids = loaded_layer_ids
 
-                self._has_successful_run = True
+                self._has_successful_run = added > 0
                 if self.showSceneFootprintsCheck.isChecked():
                     scenes_for_map = self._resolve_scenes_for_main_map_footprints()
                     count = self._render_scene_footprints(scenes_for_map, below_layer_ids=self._last_output_layer_ids)
@@ -1988,9 +1988,18 @@ class ExtractorDockWidget(QDockWidget):
                     self._clear_scene_footprints_layer()
 
                 self._archive_current_aoi()
-                QMessageBox.information(
-                    self, "VirtuGhan", f"Extractor finished.\nOutput: {out_dir}"
-                )
+                if added == 0:
+                    QMessageBox.warning(
+                        self,
+                        "VirtuGhan",
+                        "Download completed, but no output images were found for the selected AOI and filters.\n\n"
+                        "Try a smaller AOI, a different AOI, or a different date/filter selection.\n\n"
+                        f"Output folder checked:\n{out_dir}",
+                    )
+                else:
+                    QMessageBox.information(
+                        self, "VirtuGhan", f"Extractor finished.\nOutput: {out_dir}"
+                    )
 
         self._current_task = _ExtractorTask(
             "VirtuGhan Extractor", params, log_path, on_done=_on_done
