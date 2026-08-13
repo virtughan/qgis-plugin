@@ -153,7 +153,7 @@ class VirtughanHubDialog(QDialog):
     <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
     <li><b>Simple (Presets)</b>: choose a ready-made index or SAR formula for the selected dataset.</li>
     <li><b>Advanced (Manual)</b>: add one or more band dropdowns with <b>+</b>, then write a formula using those band names. Bands selected but not used in the formula are ignored before processing.</li>
-    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. If several polygon features are selected, Compute can use their combined AOI.</li>
+    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. For layers with multiple polygon features, choose one combined AOI or process selected polygons separately as a batch.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
@@ -182,13 +182,13 @@ class VirtughanHubDialog(QDialog):
     <li><b>Start date *</b>, <b>End date *</b>: search period.</li>
     <li><b>Max cloud (%) *</b>: Search Images with cloud cover less than this value.</li>
     <li><b>Bands to download *</b>: select one or more bands that you want to download as images.</li>
-    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. If several polygon features are selected, Download can use their combined AOI.</li>
+    <li><b>Area of Interest *</b>: choose map extent, draw a rectangle/polygon, or select a polygon layer from the Layers panel. For layers with multiple polygon features, choose one combined AOI or download selected polygons separately as a batch.</li>
 </ul>
 <h4>Options and output</h4>
 <ul>
     <li><b>Apply smart filter</b>: optional and off by default. If enabled, it selects representative scenes over time and can reduce the number of downloaded images, especially for date ranges longer than 1 year.</li>
     <li><b>Workers</b>: parallel download/processing count. Increase for faster runs on capable hardware. Start with the default shown in UI (2 on low-core devices, otherwise 4), then increase gradually. If your machine slows down or becomes unstable, reduce Workers.</li>
-    <li><b>Output folder</b>: destination directory for downloaded rasters.</li>
+    <li><b>Output folder</b>: destination directory for downloaded rasters. Leave blank to use the QGIS temporary folder.</li>
     <li><b>Show matching scene footprints on map</b>: add matched scene footprints after run.</li>
     <li><b>Preview Matching Scenes</b>: review matching scenes before running. If no images match the selected AOI, date range, dataset, and filters, a message explains that no matching images were found.</li>
     <li><b>Download Images</b>, <b>Reset</b>, and <b>Log</b>: execute, clear inputs, and inspect status/errors.</li>
@@ -256,7 +256,7 @@ class VirtughanHubDialog(QDialog):
 </ul>
 <h4>Run History</h4>
 <ul>
-    <li>Each Compute run is added to <b>Run History</b> at the top of Results.</li>
+    <li>Each Compute run is added to <b>Run History</b> at the top of Results. Batch Compute adds one result for each completed polygon.</li>
     <li>Select any history item to reload its Aggregate/Timeseries/Trend previews.</li>
     <li><b>Open Output Folder</b>: opens that run output location in your file explorer.</li>
     <li><b>Add Geo Outputs to Map</b>: loads georeferenced outputs from that run into the current QGIS project.</li>
@@ -269,7 +269,7 @@ class VirtughanHubDialog(QDialog):
 """,
     "dependencies": """
 <h3>Dependencies</h3>
-<p><b>Repair Dependencies</b> checks core runtime packages including <b>virtughan</b>, <b>rasterio</b>, <b>numpy</b>, <b>attrs</b>, and <b>matplotlib</b>. If healthy, it leaves them unchanged; if broken/missing, it repairs automatically.</p>
+<p><b>Repair Dependencies</b> checks core runtime packages including <b>virtughan</b>, <b>rasterio</b>, <b>numpy</b>, <b>attrs</b>, <b>matplotlib</b>, and local server packages used by Tiles. If healthy, it leaves them unchanged; if broken/missing, it repairs automatically.</p>
 <p><b>Reinstall Dependencies</b> force-clears plugin-managed runtime folders and reinstalls dependencies from scratch.</p>
 <p>An internet connection is required when packages need to be downloaded or reinstalled.</p>
 <p>If one runtime folder is locked, installer automatically retries in the alternate runtime folder. If both are locked, restart QGIS and try again.</p>

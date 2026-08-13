@@ -1370,6 +1370,10 @@ class ExtractorDockWidget(QDockWidget):
         if layer is None or not layer.isValid():
             self._update_aoi_preview("AOI: select a polygon layer first.")
             return
+        try:
+            self._aoi.clear()
+        except Exception:
+            pass
         self._last_aoi_layer_id = layer.id()
 
         selected_fids = {f.id() for f in layer.selectedFeatures()}
@@ -1421,7 +1425,6 @@ class ExtractorDockWidget(QDockWidget):
                     if geom is None or geom.isEmpty():
                         QMessageBox.warning(self, "VirtuGhan", "Selected layer features have no valid polygon geometry.")
                         return
-                    self._aoi.replace_geometry(geom)
                     try:
                         self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
                     except Exception as exc:
@@ -1453,7 +1456,6 @@ class ExtractorDockWidget(QDockWidget):
             QMessageBox.warning(self, "VirtuGhan", "Selected layer feature has no valid polygon geometry.")
             return
 
-        self._aoi.replace_geometry(geom)
         self._aoi_bbox = specs[0].get("bbox")
         self._aoi_polygon_wgs84 = specs[0].get("polygon_wgs84")
         self._update_aoi_preview()
@@ -1462,7 +1464,6 @@ class ExtractorDockWidget(QDockWidget):
         self._batch_aoi_specs = list(specs or [])
         geom = combined_geometry(self._batch_aoi_specs)
         if geom is not None and not geom.isEmpty():
-            self._aoi.replace_geometry(geom)
             try:
                 self._aoi_bbox = geom_to_wgs84_bbox(geom, QgsProject.instance())
             except Exception as exc:
